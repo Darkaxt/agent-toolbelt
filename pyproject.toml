@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-toolbelt"
+version = "0.1.0"
+description = "A Windows-first toolbelt for Codex and Claude local-agent workflows."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "Darkaxt" }]
+keywords = ["agents", "windows", "gemini", "everything", "uv", "yt-dlp", "ffmpeg"]
+
+[project.scripts]
+agent-toolbelt = "agent_toolbelt.cli:entrypoint"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+agent_toolbelt = ["assets/*.py", "assets/*.ps1", "assets/*.bat", "assets/gemini-workspace/*.md"]

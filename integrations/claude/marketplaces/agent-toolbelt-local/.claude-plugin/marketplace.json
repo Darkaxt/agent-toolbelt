@@ -1,0 +1,60 @@
+{
+  "name": "agent-toolbelt-local",
+  "metadata": {
+    "description": "Local marketplace for agent-toolbelt Claude plugins."
+  },
+  "owner": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "plugins": [
+    {
+      "name": "gemini-public-inspector",
+      "description": "Uses Gemini CLI for public URL inspection, prioritizing YouTube and Reddit.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Darkaxt",
+        "email": "opensource@users.noreply.github.com"
+      },
+      "source": "./plugins/gemini-public-inspector",
+      "category": "productivity",
+      "strict": false
+    },
+    {
+      "name": "everything-search",
+      "description": "Uses Everything CLI for global filename and path lookup with safe fallbacks.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Darkaxt",
+        "email": "opensource@users.noreply.github.com"
+      },
+      "source": "./plugins/everything-search",
+      "category": "productivity",
+      "strict": false
+    },
+    {
+      "name": "uvrun-python",
+      "description": "Prefers uv for standalone local Python script execution with safe fallbacks.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Darkaxt",
+        "email": "opensource@users.noreply.github.com"
+      },
+      "source": "./plugins/uvrun-python",
+      "category": "productivity",
+      "strict": false
+    },
+    {
+      "name": "yt-dlp-ffmpeg",
+      "description": "Uses yt-dlp, ffprobe, and ffmpeg for public media download and local media operations.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Darkaxt",
+        "email": "opensource@users.noreply.github.com"
+      },
+      "source": "./plugins/yt-dlp-ffmpeg",
+      "category": "productivity",
+      "strict": false
+    }
+  ]
+}

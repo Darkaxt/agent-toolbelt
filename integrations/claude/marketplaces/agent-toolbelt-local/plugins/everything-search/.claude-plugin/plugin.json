@@ -1,0 +1,17 @@
+{
+  "name": "everything-search",
+  "version": "0.1.0",
+  "description": "Uses Everything CLI for global filename and path lookup with safe fallbacks.",
+  "author": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "everything",
+    "search",
+    "windows",
+    "files",
+    "paths"
+  ]
+}

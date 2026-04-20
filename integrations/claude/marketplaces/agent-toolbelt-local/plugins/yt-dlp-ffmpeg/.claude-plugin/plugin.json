@@ -1,0 +1,16 @@
+{
+  "name": "yt-dlp-ffmpeg",
+  "version": "0.1.0",
+  "description": "Uses yt-dlp, ffprobe, and ffmpeg for public media download and local media operations.",
+  "author": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "yt-dlp",
+    "ffmpeg",
+    "ffprobe",
+    "media"
+  ]
+}
