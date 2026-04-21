@@ -11,6 +11,7 @@ Start by choosing the one family you actually need:
 | UVRun | standalone local Python script routing through `uvrun.ps1` | `families/uvrun` | `agent-toolbelt-uvrun` |
 | Media | public media download and local media file operations | `families/media` | `agent-toolbelt-media` |
 | Outlook Classic Mail | local mail access through Outlook Classic COM with multi-account support | `families/outlook-classic-mail` | `agent-toolbelt-outlook-classic-mail` |
+| WhatsApp Local Read | read-only WhatsApp Desktop visible-chat follow-up support | `families/whatsapp-local-read` | `agent-toolbelt-whatsapp-local-read` |
 
 ## Repo layout
 

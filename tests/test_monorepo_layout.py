@@ -31,6 +31,11 @@ EXPECTED_FAMILIES = {
         "script_name": "agent-toolbelt-outlook-classic-mail",
         "package_dir": "agent_toolbelt_outlook_classic_mail",
     },
+    "whatsapp-local-read": {
+        "project_name": "agent-toolbelt-whatsapp-local-read",
+        "script_name": "agent-toolbelt-whatsapp-local-read",
+        "package_dir": "agent_toolbelt_whatsapp_local_read",
+    },
 }
 
 
@@ -48,6 +53,7 @@ class MonorepoLayoutTests(unittest.TestCase):
                 "families/uvrun",
                 "families/media",
                 "families/outlook-classic-mail",
+                "families/whatsapp-local-read",
             ],
         )
 

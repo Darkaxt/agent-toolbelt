@@ -30,6 +30,10 @@ FAMILY_IMPORTS = {
         REPO_ROOT / "families" / "outlook-classic-mail" / "src",
         "agent_toolbelt_outlook_classic_mail.cli",
     ),
+    "whatsapp-local-read": (
+        REPO_ROOT / "families" / "whatsapp-local-read" / "src",
+        "agent_toolbelt_whatsapp_local_read.cli",
+    ),
 }
 
 
@@ -183,6 +187,30 @@ class FamilyCLITests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["operation"], "accounts")
+
+    def test_whatsapp_local_read_cli_routes_status_command(self):
+        cli = import_family_cli("whatsapp-local-read")
+
+        original_invoke = cli.whatsapp_local_read.invoke_client
+        cli.whatsapp_local_read.invoke_client = lambda **kwargs: {
+            "ok": True,
+            "operation": "status",
+            "backend": "db-probe",
+            "result": {"usable_backend": "visible-ui"},
+            "warnings": [],
+            "stderr": "",
+            "exit_code": 0,
+        }
+        try:
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                exit_code = cli.main(["status"])
+                payload = json.loads(buffer.getvalue())
+        finally:
+            cli.whatsapp_local_read.invoke_client = original_invoke
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["operation"], "status")
+        self.assertEqual(payload["backend"], "db-probe")
 
 
 if __name__ == "__main__":
