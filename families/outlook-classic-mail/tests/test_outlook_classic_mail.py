@@ -196,6 +196,37 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
             ],
         )
 
+    def test_build_operation_args_routes_move_message(self):
+        parser = outlook_classic_mail.build_parser()
+        args = parser.parse_args(
+            [
+                "move-message",
+                "--account",
+                "demo@example.com",
+                "--message-id",
+                "msg-1",
+                "--target-folder",
+                "custom:Inbox/Projects",
+                "--confirm",
+            ]
+        )
+
+        operation_args = outlook_classic_mail.build_operation_args(args)
+
+        self.assertEqual(
+            operation_args,
+            [
+                "move-message",
+                "--account",
+                "demo@example.com",
+                "--message-id",
+                "msg-1",
+                "--target-folder",
+                "custom:Inbox/Projects",
+                "--confirm",
+            ],
+        )
+
     def test_codex_skill_documents_find_response_lookup(self):
         skill_path = (
             REPO_ROOT
@@ -212,6 +243,23 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("find-response", skill_text)
         self.assertIn("manual Sent/Drafts searches", skill_text)
         self.assertIn("anchor message", skill_text)
+
+    def test_codex_skill_documents_move_message_preview_flow(self):
+        skill_path = (
+            REPO_ROOT
+            / "families"
+            / "outlook-classic-mail"
+            / "codex"
+            / "skills"
+            / "outlook-classic-mail"
+            / "SKILL.md"
+        )
+
+        skill_text = skill_path.read_text(encoding="utf-8")
+
+        self.assertIn("move-message", skill_text)
+        self.assertIn("without `--confirm` as a preview", skill_text)
+        self.assertIn("explicit user approval", skill_text)
 
 
 if __name__ == "__main__":

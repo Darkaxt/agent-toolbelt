@@ -9,6 +9,7 @@ Use this family when an agent needs local mailbox access through Microsoft Outlo
 - normalizes JSON results for Codex-facing wrappers
 - exposes fast folder discovery before message search for rule-managed Outlook folders
 - exposes deterministic response lookup from the original recipient account's Sent and Drafts folders
+- exposes explicit folder move previews and confirmed message moves
 
 ## What it does not do
 
@@ -31,6 +32,8 @@ agent-toolbelt-outlook-classic-mail search --account demo@example.com --folder i
 agent-toolbelt-outlook-classic-mail search --all-folders --query lettre24 --all-accounts --folder-limit 10 --per-folder-limit 5
 agent-toolbelt-outlook-classic-mail read-thread --account demo@example.com --message-id <entry-id>
 agent-toolbelt-outlook-classic-mail find-response --account demo@example.com --message-id <entry-id>
+agent-toolbelt-outlook-classic-mail move-message --account demo@example.com --message-id <entry-id> --target-folder custom:Inbox/Projects
+agent-toolbelt-outlook-classic-mail move-message --account demo@example.com --message-id <entry-id> --target-folder custom:Inbox/Projects --confirm
 agent-toolbelt-outlook-classic-mail triage --all-accounts --days 7 --limit 20
 agent-toolbelt-outlook-classic-mail draft-reply --account demo@example.com --message-id <entry-id> --instruction "Confirm Tuesday works."
 ```
@@ -43,3 +46,5 @@ The family bridge uses the external client root in this order:
 For sender or service lookups such as "latest emails from X", prefer `find-folders` first. Outlook rules often move mail out of Inbox, and folder discovery is much cheaper than recursively scanning messages.
 
 For response lookups such as "find my response to this email", use `find-response` first. It resolves the anchor message, inspects its original recipients, checks the matching account/store's Sent and Drafts folders, and broadens only when `--fallback-all-accounts` is requested.
+
+For folder moves such as "move this email to X", use `find-folders` first when the destination is ambiguous, then run `move-message` without `--confirm` to preview the source and target. Add `--confirm` only after explicit user approval.

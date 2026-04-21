@@ -1,6 +1,6 @@
 interface:
   display_name: "Outlook Classic Mail"
   short_description: "Use Outlook Classic as the local multi-account mail path on Windows."
-  default_prompt: "Use $outlook-classic-mail for local inbox triage, thread reads, response lookup, reply drafting, and explicit mailbox actions through Outlook Classic."
+  default_prompt: "Use $outlook-classic-mail for local inbox triage, thread reads, response lookup, folder moves, reply drafting, and explicit mailbox actions through Outlook Classic."
 policy:
   allow_implicit_invocation: true

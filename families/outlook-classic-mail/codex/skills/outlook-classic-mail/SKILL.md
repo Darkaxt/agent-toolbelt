@@ -1,6 +1,6 @@
 ---
 name: outlook-classic-mail
-description: Use Outlook Classic on Windows as the default local mail path for inbox triage, mailbox search, thread reads, response lookup, follow-up analysis, reply drafting, forwarding, and explicit mailbox actions.
+description: Use Outlook Classic on Windows as the default local mail path for inbox triage, mailbox search, thread reads, response lookup, folder moves, follow-up analysis, reply drafting, forwarding, and explicit mailbox actions.
 ---
 
 # Outlook Classic Mail
@@ -30,6 +30,7 @@ Do not use this skill when:
 - Keep mailbox reads and triage non-mutating by default.
 - For "latest emails from X" or similar sender/service lookups, run `find-folders` first, then search matching folders.
 - For "find my response/reply" tasks tied to a received message, use `find-response` first; fall back to manual Sent/Drafts searches only if the command fails or the anchor message cannot be resolved.
+- For "move/file/put this email in folder X" tasks, use `find-folders` first when the target is ambiguous, run `move-message` without `--confirm` as a preview, and run `move-message --confirm` only after explicit user approval.
 - If folder discovery finds nothing, search Inbox and state that the scope was Inbox-only unless a bounded all-folder search is explicitly needed.
 - Use `search --all-folders` only as a bounded fallback, and report `matched_folders`, `searched_folders`, and `scope` when relevant.
 - Treat draft creation, send, move, delete, category changes, and mark-read changes as explicit actions that require confirmation.
@@ -45,6 +46,7 @@ python scripts/invoke_outlook_mail.py search --account <smtp|store> [--folder in
 python scripts/invoke_outlook_mail.py search --all-folders --query <text> [--account <smtp|store>|--all-accounts] [--folder-limit <n>] [--per-folder-limit <n>]
 python scripts/invoke_outlook_mail.py read-thread --account <smtp|store> --message-id <entry-id>
 python scripts/invoke_outlook_mail.py find-response --account <anchor-store> --message-id <entry-id> [--limit <n>] [--fallback-all-accounts] [--exclude-drafts]
+python scripts/invoke_outlook_mail.py move-message --account <smtp|store> --message-id <entry-id> --target-folder <folder-selector> [--confirm]
 python scripts/invoke_outlook_mail.py triage [--account <smtp|store> | --all-accounts] [--days <n>] [--limit <n>]
 python scripts/invoke_outlook_mail.py draft-reply --account <smtp|store> --message-id <entry-id> --instruction "<goal>"
 python scripts/invoke_outlook_mail.py draft-forward --account <smtp|store> --message-id <entry-id> --to "<recipient>" --instruction "<context>"

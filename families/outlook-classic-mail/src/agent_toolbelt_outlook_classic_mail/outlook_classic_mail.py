@@ -245,6 +245,12 @@ def build_parser() -> argparse.ArgumentParser:
     draft_forward.add_argument("--create-draft", action="store_true")
     draft_forward.add_argument("--confirm", action="store_true")
 
+    move_message = subparsers.add_parser("move-message", help="Preview or move a message to a folder.")
+    move_message.add_argument("--account", required=True)
+    move_message.add_argument("--message-id", required=True)
+    move_message.add_argument("--target-folder", required=True)
+    move_message.add_argument("--confirm", action="store_true")
+
     apply_action = subparsers.add_parser("apply-action", help="Apply an explicit mailbox mutation.")
     apply_action.add_argument("--account", required=True)
     apply_action.add_argument("--message-id")
@@ -336,6 +342,21 @@ def build_operation_args(args: argparse.Namespace) -> list[str]:
         append_optional_arg(parts, "--body", args.body)
         if args.create_draft:
             parts.append("--create-draft")
+        if args.confirm:
+            parts.append("--confirm")
+        return parts
+
+    if args.operation == "move-message":
+        parts.extend(
+            [
+                "--account",
+                args.account,
+                "--message-id",
+                args.message_id,
+                "--target-folder",
+                args.target_folder,
+            ]
+        )
         if args.confirm:
             parts.append("--confirm")
         return parts
