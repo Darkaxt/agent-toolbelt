@@ -1,0 +1,24 @@
+{
+  "name": "agent-toolbelt-local",
+  "metadata": {
+    "description": "Local marketplace for the agent-toolbelt Amazon CLI Claude plugin."
+  },
+  "owner": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "plugins": [
+    {
+      "name": "amazon-cli",
+      "description": "Uses the local Amazon CLI for Amazon search, reviews, specs, cross-market offers, and managed sessions.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Darkaxt",
+        "email": "opensource@users.noreply.github.com"
+      },
+      "source": "./plugins/amazon-cli",
+      "category": "productivity",
+      "strict": false
+    }
+  ]
+}

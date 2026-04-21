@@ -11,6 +11,7 @@ Start by choosing the one family you actually need:
 | UVRun | standalone local Python script routing through `uvrun.ps1` | `families/uvrun` | `agent-toolbelt-uvrun` |
 | Media | public media download and local media file operations | `families/media` | `agent-toolbelt-media` |
 | Outlook Classic Mail | local mail access through Outlook Classic COM with multi-account support | `families/outlook-classic-mail` | `agent-toolbelt-outlook-classic-mail` |
+| Amazon CLI | Amazon product search, specs, reviews, offers, and managed session workflows through the local Amazon CLI | `families/amazon-cli` | `agent-toolbelt-amazon-cli` |
 
 ## Repo layout
 

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Amazon CLI"
+  short_description: "Use the local Amazon CLI for Amazon search, reviews, specs, offers, and managed sessions."
+  default_prompt: "Use $amazon-cli for Amazon product search, exact model lookups, specs, reviews/comments, cross-market offers, and managed retail/business sessions."
+policy:
+  allow_implicit_invocation: true

@@ -31,6 +31,11 @@ EXPECTED_FAMILIES = {
         "script_name": "agent-toolbelt-outlook-classic-mail",
         "package_dir": "agent_toolbelt_outlook_classic_mail",
     },
+    "amazon-cli": {
+        "project_name": "agent-toolbelt-amazon-cli",
+        "script_name": "agent-toolbelt-amazon-cli",
+        "package_dir": "agent_toolbelt_amazon_cli",
+    },
 }
 
 
@@ -48,6 +53,7 @@ class MonorepoLayoutTests(unittest.TestCase):
                 "families/uvrun",
                 "families/media",
                 "families/outlook-classic-mail",
+                "families/amazon-cli",
             ],
         )
 

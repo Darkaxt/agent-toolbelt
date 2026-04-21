@@ -1,0 +1,17 @@
+{
+  "name": "amazon-cli",
+  "version": "0.1.0",
+  "description": "Uses the local Amazon CLI for Amazon search, reviews, specs, cross-market offers, and managed sessions.",
+  "author": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "amazon",
+    "shopping",
+    "reviews",
+    "offers",
+    "marketplaces"
+  ]
+}
