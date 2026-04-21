@@ -1,6 +1,0 @@
-interface:
-  display_name: "WhatsApp Local Read"
-  short_description: "Read-only WhatsApp Desktop visible-chat follow-up support."
-  default_prompt: "Use $whatsapp-local-read for read-only WhatsApp Desktop status checks, visible current-chat summaries, and response suggestions."
-policy:
-  allow_implicit_invocation: true

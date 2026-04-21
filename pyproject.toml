@@ -6,5 +6,4 @@ members = [
   "families/uvrun",
   "families/media",
   "families/outlook-classic-mail",
-  "families/whatsapp-local-read",
 ]
