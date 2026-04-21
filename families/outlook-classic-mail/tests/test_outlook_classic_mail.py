@@ -163,7 +163,40 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
             ],
         )
 
-    def test_codex_skill_documents_recipient_account_sent_lookup(self):
+    def test_build_operation_args_routes_find_response(self):
+        parser = outlook_classic_mail.build_parser()
+        args = parser.parse_args(
+            [
+                "find-response",
+                "--account",
+                "anchor@example.com",
+                "--message-id",
+                "anchor-1",
+                "--limit",
+                "7",
+                "--fallback-all-accounts",
+                "--exclude-drafts",
+            ]
+        )
+
+        operation_args = outlook_classic_mail.build_operation_args(args)
+
+        self.assertEqual(
+            operation_args,
+            [
+                "find-response",
+                "--account",
+                "anchor@example.com",
+                "--message-id",
+                "anchor-1",
+                "--limit",
+                "7",
+                "--fallback-all-accounts",
+                "--exclude-drafts",
+            ],
+        )
+
+    def test_codex_skill_documents_find_response_lookup(self):
         skill_path = (
             REPO_ROOT
             / "families"
@@ -176,9 +209,9 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
 
         skill_text = skill_path.read_text(encoding="utf-8")
 
-        self.assertIn("original recipient account", skill_text)
-        self.assertIn("Sent", skill_text)
-        self.assertIn("Drafts", skill_text)
+        self.assertIn("find-response", skill_text)
+        self.assertIn("manual Sent/Drafts searches", skill_text)
+        self.assertIn("anchor message", skill_text)
 
 
 if __name__ == "__main__":

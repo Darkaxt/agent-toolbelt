@@ -215,6 +215,13 @@ def build_parser() -> argparse.ArgumentParser:
     read_thread.add_argument("--account", required=True)
     read_thread.add_argument("--message-id", required=True)
 
+    find_response = subparsers.add_parser("find-response", help="Find sent or draft responses to a message.")
+    find_response.add_argument("--account", required=True)
+    find_response.add_argument("--message-id", required=True)
+    find_response.add_argument("--limit", type=int, default=20)
+    find_response.add_argument("--fallback-all-accounts", action="store_true")
+    find_response.add_argument("--exclude-drafts", action="store_true")
+
     triage = subparsers.add_parser("triage", help="Triage inbox mail.")
     triage.add_argument("--account")
     triage.add_argument("--all-accounts", action="store_true")
@@ -304,6 +311,14 @@ def build_operation_args(args: argparse.Namespace) -> list[str]:
 
     if args.operation == "read-thread":
         return [*parts, "--account", args.account, "--message-id", args.message_id]
+
+    if args.operation == "find-response":
+        parts.extend(["--account", args.account, "--message-id", args.message_id, "--limit", str(args.limit)])
+        if args.fallback_all_accounts:
+            parts.append("--fallback-all-accounts")
+        if args.exclude_drafts:
+            parts.append("--exclude-drafts")
+        return parts
 
     if args.operation == "triage":
         if args.account:

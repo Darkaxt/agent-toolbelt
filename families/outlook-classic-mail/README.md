@@ -8,6 +8,7 @@ Use this family when an agent needs local mailbox access through Microsoft Outlo
 - launches that client through `uv run --project ...`
 - normalizes JSON results for Codex-facing wrappers
 - exposes fast folder discovery before message search for rule-managed Outlook folders
+- exposes deterministic response lookup from the original recipient account's Sent and Drafts folders
 
 ## What it does not do
 
@@ -29,6 +30,7 @@ agent-toolbelt-outlook-classic-mail find-folders --query lettre24 --all-accounts
 agent-toolbelt-outlook-classic-mail search --account demo@example.com --folder inbox --query "approval" --days 7 --limit 10
 agent-toolbelt-outlook-classic-mail search --all-folders --query lettre24 --all-accounts --folder-limit 10 --per-folder-limit 5
 agent-toolbelt-outlook-classic-mail read-thread --account demo@example.com --message-id <entry-id>
+agent-toolbelt-outlook-classic-mail find-response --account demo@example.com --message-id <entry-id>
 agent-toolbelt-outlook-classic-mail triage --all-accounts --days 7 --limit 20
 agent-toolbelt-outlook-classic-mail draft-reply --account demo@example.com --message-id <entry-id> --instruction "Confirm Tuesday works."
 ```
@@ -40,4 +42,4 @@ The family bridge uses the external client root in this order:
 
 For sender or service lookups such as "latest emails from X", prefer `find-folders` first. Outlook rules often move mail out of Inbox, and folder discovery is much cheaper than recursively scanning messages.
 
-For response lookups such as "find my response to this email", use the original recipient account as the first search target. Check that account/store's Sent and Drafts folders before broadening to other Outlook stores.
+For response lookups such as "find my response to this email", use `find-response` first. It resolves the anchor message, inspects its original recipients, checks the matching account/store's Sent and Drafts folders, and broadens only when `--fallback-all-accounts` is requested.
