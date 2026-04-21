@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-toolbelt-media"
+version = "0.1.0"
+description = "Media helpers built on yt-dlp, ffmpeg, and ffprobe."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Darkaxt" }]
+dependencies = ["agent-toolbelt-core"]
+
+[project.scripts]
+agent-toolbelt-media = "agent_toolbelt_media.cli:entrypoint"
+
+[tool.uv.sources]
+agent-toolbelt-core = { workspace = true }
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

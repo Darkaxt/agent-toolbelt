@@ -1,31 +1,16 @@
-# Codex integration install
+# Codex install guide
 
-## Option 1: use the package only
+Each family ships its own Codex skill bundle. Install only the family you want.
 
-Install the package from a clone:
+## Skill locations
 
-```bash
-pip install -e .
-```
+- Gemini: `families/gemini/codex/skills/gemini-cli`
+- Everything: `families/everything/codex/skills/everything-search`
+- UVRun: `families/uvrun/codex/skills/uvrun-python`
+- Media: `families/media/codex/skills/yt-dlp-ffmpeg`
 
-Then call `agent-toolbelt` directly from your local workflow.
+## Install flow
 
-## Option 2: install the Codex skills from this repo
-
-The Codex-ready skill bundles live under `integrations/codex/skills/`.
-
-Copy the desired skill folders into your Codex home skills directory:
-
-- `gemini-cli`
-- `everything-search`
-- `uvrun-python`
-- `yt-dlp-ffmpeg`
-
-Each bundled wrapper script bootstraps the local `src/` tree from the clone, so the skill can run directly from the repository checkout.
-
-## Skill notes
-
-- `gemini-cli` includes both URL inspection and the research companion lane.
-- `everything-search` stays filename/path-only and does not replace `rg` for content search.
-- `uvrun-python` keeps project-managed Python workflows out of scope.
-- `yt-dlp-ffmpeg` handles acquisition and file-level media operations, not YouTube summarization.
+1. Open the family README you want.
+2. Copy that family skill folder into your Codex home skills directory.
+3. Keep the clone intact so the wrapper scripts can bootstrap the matching family package plus `packages/core`.

@@ -1,15 +1,15 @@
 # Windows prerequisites
 
-## Required tools by feature
+## Choose the family first
 
-- Gemini features: Node.js plus authenticated access for `@google/gemini-cli`
-- Everything lookup: `es.exe` available on `PATH` or under `%LOCALAPPDATA%\Tools`
-- `uvrun`: `uv` available on `PATH`
-- Media helpers: `yt-dlp`, `ffmpeg`, and `ffprobe` available on `PATH` or under `%LOCALAPPDATA%\Tools`
+- `families/gemini`: Node.js plus authenticated access for `@google/gemini-cli`
+- `families/everything`: `es.exe` available on `PATH` or under `%LOCALAPPDATA%\Tools`
+- `families/uvrun`: `uv` available on `PATH`, plus `uvrun.ps1` or deprecated `uvrun.bat`
+- `families/media`: `yt-dlp`, `ffmpeg`, and `ffprobe` available on `PATH` or under `%LOCALAPPDATA%\Tools`
 
-## Resolution order
+## Shared resolution order
 
-For external binaries, the package prefers:
+For external binaries, the family packages prefer:
 
 1. explicit CLI path override when supported
 2. tool-specific environment override
@@ -25,7 +25,7 @@ For external binaries, the package prefers:
 
 ## Gemini notes
 
-- The package calls `npx @google/gemini-cli` in headless JSON mode.
-- Authenticate Gemini CLI before using the Gemini commands.
-- URL inspection is public-web only.
-- The research companion is still helper-only and does not replace direct source checking.
+- The Gemini family calls `npx @google/gemini-cli` in headless JSON mode.
+- Authenticate Gemini CLI before using the Gemini family commands.
+- URL inspection stays public-web only.
+- The research companion remains Codex-only in v1.

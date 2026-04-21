@@ -1,48 +1,30 @@
 # agent-toolbelt
 
-`agent-toolbelt` packages a set of Windows-first local-agent utilities into one reusable Python package with Codex and Claude integration bundles.
+`agent-toolbelt` is a family-first monorepo for local agent utilities.
 
-## Included tool families
+Start by choosing the one family you actually need:
 
-- Gemini public URL inspection plus a Codex-oriented research companion cross-check
-- Everything-first filename and path lookup with safe fallbacks
-- `uvrun` routing for standalone local Python scripts
-- `yt-dlp`, `ffprobe`, and `ffmpeg` helpers for media acquisition and local file operations
-
-## Quick start
-
-Install from a clone:
-
-```bash
-pip install -e .
-```
-
-Primary CLI:
-
-```bash
-agent-toolbelt gemini-url --url "https://example.com" --instruction "Summarize this page."
-agent-toolbelt gemini-research --question "Going Medieval issues"
-agent-toolbelt everything --query "README.md"
-agent-toolbelt uvrun scratch.py --check
-agent-toolbelt media probe --input sample.mp4
-```
+| Family | Use it for | Folder | Primary CLI |
+| --- | --- | --- | --- |
+| Gemini | public URL inspection and Codex research cross-checks | `families/gemini` | `agent-toolbelt-gemini` |
+| Everything | global filename and path lookup | `families/everything` | `agent-toolbelt-everything` |
+| UVRun | standalone local Python script routing through `uvrun.ps1` | `families/uvrun` | `agent-toolbelt-uvrun` |
+| Media | public media download and local media file operations | `families/media` | `agent-toolbelt-media` |
 
 ## Repo layout
 
-- `src/agent_toolbelt/`: reusable package and packaged helper assets
-- `integrations/codex/`: Codex skill bundles backed by the package
-- `integrations/claude/`: Claude marketplace and plugin bundles backed by the package
-- `docs/`: prerequisites and install guides
-- `tests/`: package, CLI, and portability coverage
+- `families/`: independent tool families with their own package, tests, Codex skill, and Claude plugin
+- `packages/core/`: shared helpers and packaged assets
+- `docs/`: cross-cutting install and prerequisite guidance
+- `tests/`: repo-level layout, isolation, and portability checks
 
-## Installation guides
+## How to use this repo
 
-- [Windows prerequisites](docs/windows-prerequisites.md)
-- [Codex integration install](docs/codex-install.md)
-- [Claude integration install](docs/claude-install.md)
+1. Read [Windows prerequisites](docs/windows-prerequisites.md)
+2. Open the family folder you want
+3. Follow that family README for CLI usage and agent integrations
 
-## Notes
+## Cross-cutting guides
 
-- Third-party binaries are not vendored. Install `uv`, Everything CLI, Gemini CLI auth, `yt-dlp`, `ffmpeg`, and `ffprobe` separately.
-- The Codex Gemini skill includes the research companion lane.
-- The Claude Gemini plugin remains URL-focused in v1.
+- [Codex install guide](docs/codex-install.md)
+- [Claude install guide](docs/claude-install.md)

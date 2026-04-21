@@ -1,0 +1,24 @@
+{
+  "name": "agent-toolbelt-local",
+  "metadata": {
+    "description": "Local marketplace for the agent-toolbelt media Claude plugin."
+  },
+  "owner": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "plugins": [
+    {
+      "name": "yt-dlp-ffmpeg",
+      "description": "Uses yt-dlp, ffprobe, and ffmpeg for public media download and local media operations.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Darkaxt",
+        "email": "opensource@users.noreply.github.com"
+      },
+      "source": "./plugins/yt-dlp-ffmpeg",
+      "category": "productivity",
+      "strict": false
+    }
+  ]
+}
