@@ -50,7 +50,7 @@ class FakeService:
 
     def get(self, identifier: str, marketplace: str) -> dict:
         self.calls.append(("get", identifier, marketplace))
-        return {"command": "get", "item": {"asin": "B0TEST"}} 
+        return {"command": "get", "item": {"asin": "B0TEST"}}
 
     def reviews(
         self,
