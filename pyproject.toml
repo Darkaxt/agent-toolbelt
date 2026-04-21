@@ -6,4 +6,5 @@ members = [
   "families/uvrun",
   "families/media",
   "families/outlook-classic-mail",
+  "families/amazon-cli",
 ]

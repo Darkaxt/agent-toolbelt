@@ -5,7 +5,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 CHECKED_SUFFIXES = {".md", ".py", ".json", ".toml", ".yaml", ".yml"}
-FAMILY_NAMES = ("gemini", "everything", "uvrun", "media", "outlook-classic-mail")
+FAMILY_NAMES = ("gemini", "everything", "uvrun", "media", "outlook-classic-mail", "amazon-cli")
 
 
 class FamilyIsolationTests(unittest.TestCase):
