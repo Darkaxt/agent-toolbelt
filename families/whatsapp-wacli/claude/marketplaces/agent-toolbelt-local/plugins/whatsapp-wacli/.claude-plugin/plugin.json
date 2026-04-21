@@ -1,0 +1,17 @@
+{
+  "name": "whatsapp-wacli",
+  "version": "0.1.0",
+  "description": "Uses a curated local wacli adapter for WhatsApp chat lookup, latest messages, search, context, reply drafting, and confirmed visible actions.",
+  "author": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "whatsapp",
+    "wacli",
+    "chat",
+    "local",
+    "messaging"
+  ]
+}

@@ -7,4 +7,5 @@ members = [
   "families/media",
   "families/outlook-classic-mail",
   "families/amazon-cli",
+  "families/whatsapp-wacli",
 ]

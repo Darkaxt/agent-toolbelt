@@ -12,10 +12,11 @@ Start by choosing the one family you actually need:
 | Media | public media download and local media file operations | `families/media` | `agent-toolbelt-media` |
 | Outlook Classic Mail | local mail access through Outlook Classic COM with multi-account support | `families/outlook-classic-mail` | `agent-toolbelt-outlook-classic-mail` |
 | Amazon CLI | Amazon product search, specs, reviews, offers, and managed session workflows through the local Amazon CLI | `families/amazon-cli` | `agent-toolbelt-amazon-cli` |
+| WhatsApp wacli | experimental local WhatsApp access through a curated `wacli` adapter | `families/whatsapp-wacli` | `agent-toolbelt-whatsapp-wacli` |
 
 ## Repo layout
 
-- `families/`: independent tool families with their own package, tests, Codex skill, and Claude plugin
+- `families/`: independent tool families with their own package, tests, and agent integrations where stable
 - `packages/core/`: shared helpers and packaged assets
 - `docs/`: cross-cutting install and prerequisite guidance
 - `tests/`: repo-level layout, isolation, and portability checks

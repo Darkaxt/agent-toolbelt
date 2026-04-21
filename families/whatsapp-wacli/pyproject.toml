@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-toolbelt-whatsapp-wacli"
+version = "0.1.0"
+description = "Bridge for local WhatsApp access through a curated wacli adapter."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Darkaxt" }]
+dependencies = ["agent-toolbelt-core"]
+
+[project.scripts]
+agent-toolbelt-whatsapp-wacli = "agent_toolbelt_whatsapp_wacli.cli:entrypoint"
+
+[tool.uv.sources]
+agent-toolbelt-core = { workspace = true }
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

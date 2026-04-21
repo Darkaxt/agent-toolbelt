@@ -1,0 +1,24 @@
+{
+  "name": "agent-toolbelt-local",
+  "metadata": {
+    "description": "Local marketplace for the agent-toolbelt WhatsApp wacli Claude plugin."
+  },
+  "owner": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "plugins": [
+    {
+      "name": "whatsapp-wacli",
+      "description": "Uses a curated local wacli adapter for WhatsApp chat lookup, latest messages, search, context, reply drafting, and confirmed visible actions.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Darkaxt",
+        "email": "opensource@users.noreply.github.com"
+      },
+      "source": "./plugins/whatsapp-wacli",
+      "category": "productivity",
+      "strict": false
+    }
+  ]
+}

@@ -36,6 +36,11 @@ EXPECTED_FAMILIES = {
         "script_name": "agent-toolbelt-amazon-cli",
         "package_dir": "agent_toolbelt_amazon_cli",
     },
+    "whatsapp-wacli": {
+        "project_name": "agent-toolbelt-whatsapp-wacli",
+        "script_name": "agent-toolbelt-whatsapp-wacli",
+        "package_dir": "agent_toolbelt_whatsapp_wacli",
+    },
 }
 
 
@@ -54,6 +59,7 @@ class MonorepoLayoutTests(unittest.TestCase):
                 "families/media",
                 "families/outlook-classic-mail",
                 "families/amazon-cli",
+                "families/whatsapp-wacli",
             ],
         )
 

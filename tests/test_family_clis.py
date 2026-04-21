@@ -34,6 +34,10 @@ FAMILY_IMPORTS = {
         REPO_ROOT / "families" / "amazon-cli" / "src",
         "agent_toolbelt_amazon_cli.cli",
     ),
+    "whatsapp-wacli": (
+        REPO_ROOT / "families" / "whatsapp-wacli" / "src",
+        "agent_toolbelt_whatsapp_wacli.cli",
+    ),
 }
 
 
@@ -210,6 +214,29 @@ class FamilyCLITests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["operation"], "offers")
         self.assertEqual(payload["result"]["best_offer"]["marketplace"], "de")
+
+    def test_whatsapp_wacli_routes_latest_command(self):
+        cli = import_family_cli("whatsapp-wacli")
+
+        original_invoke = cli.whatsapp_wacli.invoke_client
+        cli.whatsapp_wacli.invoke_client = lambda **kwargs: {
+            "ok": True,
+            "operation": "latest",
+            "backend": "whatsapp-wacli-agent",
+            "result": {"payload": {"data": {"messages": []}}},
+            "warnings": [],
+            "stderr": "",
+            "exit_code": 0,
+        }
+        try:
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                exit_code = cli.main(["latest", "--chat", "Demo Contact", "--limit", "5"])
+                payload = json.loads(buffer.getvalue())
+        finally:
+            cli.whatsapp_wacli.invoke_client = original_invoke
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["operation"], "latest")
 
 
 if __name__ == "__main__":

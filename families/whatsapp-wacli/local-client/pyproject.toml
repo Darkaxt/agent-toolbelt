@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "whatsapp-wacli-agent"
+version = "0.1.0"
+description = "Curated agent-facing adapter for wacli with confirmed WhatsApp mutations."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+whatsapp-wacli-agent = "whatsapp_wacli_agent.cli:entrypoint"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
