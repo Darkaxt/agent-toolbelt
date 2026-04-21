@@ -28,6 +28,9 @@ Do not use this skill when:
 - Prefer Outlook Classic for generic local mail tasks.
 - Fall back to the Gmail connector only when the user explicitly asks for Gmail, Outlook Classic is unavailable, or the request truly depends on Gmail-only behavior.
 - Keep mailbox reads and triage non-mutating by default.
+- For "latest emails from X" or similar sender/service lookups, run `find-folders` first, then search matching folders.
+- If folder discovery finds nothing, search Inbox and state that the scope was Inbox-only unless a bounded all-folder search is explicitly needed.
+- Use `search --all-folders` only as a bounded fallback, and report `matched_folders`, `searched_folders`, and `scope` when relevant.
 - Treat draft creation, send, move, delete, category changes, and mark-read changes as explicit actions that require confirmation.
 - Remember that Gmail-backed accounts are accessed through Outlook stores, not through Gmail-native APIs.
 - Mention Outlook Object Model Guard prompts when they materially affect an action.
@@ -36,7 +39,9 @@ Do not use this skill when:
 
 ```bash
 python scripts/invoke_outlook_mail.py accounts
+python scripts/invoke_outlook_mail.py find-folders --query <text> [--account <smtp|store>|--all-accounts] [--limit <n>]
 python scripts/invoke_outlook_mail.py search --account <smtp|store> [--folder inbox|sent|drafts|trash|custom:<path>] [--query <text>] [--unread] [--from <email>] [--to <email>] [--days <n>] [--limit <n>]
+python scripts/invoke_outlook_mail.py search --all-folders --query <text> [--account <smtp|store>|--all-accounts] [--folder-limit <n>] [--per-folder-limit <n>]
 python scripts/invoke_outlook_mail.py read-thread --account <smtp|store> --message-id <entry-id>
 python scripts/invoke_outlook_mail.py triage [--account <smtp|store> | --all-accounts] [--days <n>] [--limit <n>]
 python scripts/invoke_outlook_mail.py draft-reply --account <smtp|store> --message-id <entry-id> --instruction "<goal>"

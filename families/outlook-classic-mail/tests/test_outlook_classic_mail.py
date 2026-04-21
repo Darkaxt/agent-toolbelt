@@ -117,6 +117,52 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertEqual(result["exit_code"], 127)
         self.assertIn("uv", result["stderr"].lower())
 
+    def test_build_operation_args_routes_find_folders(self):
+        parser = outlook_classic_mail.build_parser()
+        args = parser.parse_args(["find-folders", "--query", "lettre24", "--all-accounts", "--limit", "5"])
+
+        operation_args = outlook_classic_mail.build_operation_args(args)
+
+        self.assertEqual(
+            operation_args,
+            ["find-folders", "--query", "lettre24", "--all-accounts", "--limit", "5"],
+        )
+
+    def test_build_operation_args_routes_search_all_folders(self):
+        parser = outlook_classic_mail.build_parser()
+        args = parser.parse_args(
+            [
+                "search",
+                "--all-folders",
+                "--query",
+                "lettre24",
+                "--all-accounts",
+                "--folder-limit",
+                "10",
+                "--per-folder-limit",
+                "5",
+            ]
+        )
+
+        operation_args = outlook_classic_mail.build_operation_args(args)
+
+        self.assertEqual(
+            operation_args,
+            [
+                "search",
+                "--all-folders",
+                "--query",
+                "lettre24",
+                "--all-accounts",
+                "--limit",
+                "20",
+                "--folder-limit",
+                "10",
+                "--per-folder-limit",
+                "5",
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

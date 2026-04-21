@@ -190,15 +190,26 @@ def build_parser() -> argparse.ArgumentParser:
     folders = subparsers.add_parser("folders", help="List folders for one Outlook account.")
     folders.add_argument("--account", required=True)
 
+    find_folders = subparsers.add_parser("find-folders", help="Find folders by name or path.")
+    find_folders.add_argument("--query", required=True)
+    find_folders.add_argument("--account")
+    find_folders.add_argument("--all-accounts", action="store_true")
+    find_folders.add_argument("--limit", type=int, default=20)
+
     search = subparsers.add_parser("search", help="Search mail in a specific account and folder.")
-    search.add_argument("--account", required=True)
+    search.add_argument("--account")
     search.add_argument("--folder", default="inbox")
     search.add_argument("--query")
+    search.add_argument("--all-folders", action="store_true")
+    search.add_argument("--all-accounts", action="store_true")
     search.add_argument("--unread", action="store_true")
     search.add_argument("--from", dest="sender")
     search.add_argument("--to", dest="recipient")
     search.add_argument("--days", type=int)
     search.add_argument("--limit", type=int, default=20)
+    search.add_argument("--folder-limit", type=int, default=10)
+    search.add_argument("--per-folder-limit", type=int, default=5)
+    search.add_argument("--no-update-hints", action="store_true")
 
     read_thread = subparsers.add_parser("read-thread", help="Read a thread anchored to one message ID.")
     read_thread.add_argument("--account", required=True)
@@ -260,14 +271,35 @@ def build_operation_args(args: argparse.Namespace) -> list[str]:
     if args.operation == "folders":
         return [*parts, "--account", args.account]
 
+    if args.operation == "find-folders":
+        parts.extend(["--query", args.query])
+        append_optional_arg(parts, "--account", args.account)
+        if args.all_accounts:
+            parts.append("--all-accounts")
+        parts.extend(["--limit", str(args.limit)])
+        return parts
+
     if args.operation == "search":
-        parts.extend(["--account", args.account, "--folder", args.folder, "--limit", str(args.limit)])
+        if args.account:
+            parts.extend(["--account", args.account])
+        if not args.all_folders:
+            parts.extend(["--folder", args.folder])
+        if args.all_folders:
+            parts.append("--all-folders")
         append_optional_arg(parts, "--query", args.query)
+        if args.all_accounts:
+            parts.append("--all-accounts")
+        parts.extend(["--limit", str(args.limit)])
         if args.unread:
             parts.append("--unread")
         append_optional_arg(parts, "--from", args.sender)
         append_optional_arg(parts, "--to", args.recipient)
         append_optional_arg(parts, "--days", args.days)
+        if args.all_folders:
+            parts.extend(["--folder-limit", str(args.folder_limit)])
+            parts.extend(["--per-folder-limit", str(args.per_folder_limit)])
+        if args.no_update_hints:
+            parts.append("--no-update-hints")
         return parts
 
     if args.operation == "read-thread":
