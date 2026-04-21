@@ -391,7 +391,54 @@ def test_exact_search_uses_resolver_with_structured_query() -> None:
     )
 
     assert resolver.calls == [("tv LG C4", "de", IntentMode.EXACT, False)]
+    assert result["search_query"] == "tv LG C4"
     assert [item["asin"] for item in result["results"]] == ["B0GOOD", "B0ALT"]
+
+
+def test_exact_search_uses_deduplicated_structured_query() -> None:
+    resolver = StaticResolver(
+        IntentProfile(
+            query="Pilexil Forte Max",
+            marketplace="de",
+            mode=IntentMode.EXACT,
+            canonical_brand="Pilexil",
+            canonical_family="Forte Max",
+            family_tokens=["forte", "max"],
+            allowed_variants=["drinkable"],
+            allowed_fallback_models=[],
+            excluded_brands=[],
+            similar_families=[],
+            confidence=1.0,
+            created_at=datetime.now(UTC),
+        )
+    )
+    service = DummyService(
+        resolver=resolver,
+        session_store=MemorySessionStore(),
+        first_records=[
+            build_record(
+                "B0DHVGHPF9",
+                "Pilexil Forte Max Drinkable Anti-Hair Loss Pack 2 x 45 Units",
+                "PILEXIL",
+                price=144.14,
+                reviews=2,
+                rating=2.8,
+            )
+        ],
+        second_records=[],
+    )
+
+    result = service.search(
+        "Pilexil Forte Max",
+        "de",
+        refresh_intent=False,
+        mode="exact",
+        brand="PILEXIL",
+        model="Forte Max",
+    )
+
+    assert resolver.calls == [("Pilexil Forte Max", "de", IntentMode.EXACT, False)]
+    assert result["search_query"] == "Pilexil Forte Max"
 
 
 def test_exact_search_discloses_requested_and_resolved_model_variant() -> None:
@@ -441,6 +488,40 @@ def test_exact_search_discloses_requested_and_resolved_model_variant() -> None:
     assert item["resolved_model"] == "OLED65C54LA"
     assert item["model_match"] == "variant"
     assert "Requested OLED65C5ELB" in item["model_disclosure"]
+
+
+def test_detail_enrichment_preserves_search_brand_when_detail_brand_is_generic() -> None:
+    service = AmazonService(resolver=FailingResolver(), session_store=MemorySessionStore())
+    search_record = build_record(
+        "B0DHVGHPF9",
+        "Pilexil Forte Max Drinkable Anti-Hair Loss Pack 2 x 45 Units",
+        "PILEXIL",
+        price=144.14,
+        reviews=2,
+        rating=2.8,
+    )
+    detail_record = build_record(
+        "B0DHVGHPF9",
+        "Pilexil Forte Max Drinkable Anti-Hair Loss Pack 2 x 45 Units",
+        "Brand",
+        price=144.14,
+        reviews=2,
+        rating=2.8,
+    )
+    detail_record.specs = {"Brand Name": "PILEXIL"}
+    detail_record.specs_normalized = {"brand_name": "PILEXIL"}
+
+    class GenericBrandDetailScraper:
+        def get(self, identifier: str) -> ProductRecord:
+            return detail_record
+
+    enriched = service._enrich_records_with_detail_targets(
+        GenericBrandDetailScraper(),
+        [search_record],
+        [search_record],
+    )
+
+    assert enriched[0].brand == "PILEXIL"
 
 
 def test_search_auto_bootstraps_when_results_are_empty_without_session() -> None:
@@ -648,6 +729,173 @@ def test_offers_ranks_by_total_when_shipping_is_included_and_keeps_failures() ->
         ("fr", "B0TEST1234", "business"),
         ("es", "B0TEST1234", "business"),
     ]
+
+
+def test_business_offers_auto_vat_mode_ranks_by_ex_vat_plus_shipping() -> None:
+    service = AmazonService(resolver=FailingResolver(), session_store=MemorySessionStore())
+    offers = {
+        "de": OfferRecord(
+            marketplace="de",
+            domain="www.amazon.de",
+            url="https://www.amazon.de/dp/B0TEST1234",
+            asin="B0TEST1234",
+            price=121.0,
+            price_ex_vat=100.0,
+            price_incl_vat=121.0,
+            currency="EUR",
+            shipping=12.0,
+            total=133.0,
+            status="ok",
+        ),
+        "es": OfferRecord(
+            marketplace="es",
+            domain="www.amazon.es",
+            url="https://www.amazon.es/dp/B0TEST1234",
+            asin="B0TEST1234",
+            price=114.0,
+            price_ex_vat=120.0,
+            price_incl_vat=114.0,
+            currency="EUR",
+            shipping=0.0,
+            total=114.0,
+            status="ok",
+        ),
+    }
+    service._fetch_offer = lambda target_marketplace, asin, *, portal: offers[target_marketplace]
+
+    result = service.offers(
+        "B0TEST1234",
+        "de",
+        portal="business",
+        marketplaces=["de", "es"],
+        include_shipping=True,
+        vat_mode="auto",
+    )
+
+    assert result["trusted_best_offer"]["marketplace"] == "de"
+    assert result["raw_best_offer"]["marketplace"] == "de"
+    assert result["best_offer"]["marketplace"] == "de"
+    assert result["offers"][0]["comparison_basis"] == "ex_vat"
+    assert result["offers"][0]["comparison_price"] == 100.0
+    assert result["offers"][0]["comparison_total"] == 112.0
+
+
+def test_offers_excludes_address_mismatch_from_trusted_best() -> None:
+    service = AmazonService(resolver=FailingResolver(), session_store=MemorySessionStore())
+    offers = {
+        "de": OfferRecord(
+            marketplace="de",
+            domain="www.amazon.de",
+            url="https://www.amazon.de/dp/B0TEST1234",
+            asin="B0TEST1234",
+            price=120.0,
+            currency="EUR",
+            shipping=0.0,
+            total=120.0,
+            delivery_address={"line2": "Almería 04006", "postal_code": "04006", "normalized_key": "almeria 04006"},
+            status="ok",
+        ),
+        "fr": OfferRecord(
+            marketplace="fr",
+            domain="www.amazon.fr",
+            url="https://www.amazon.fr/dp/B0TEST1234",
+            asin="B0TEST1234",
+            price=80.0,
+            currency="EUR",
+            shipping=0.0,
+            total=80.0,
+            delivery_address={"line2": "Paris 75001", "postal_code": "75001", "normalized_key": "paris 75001"},
+            status="ok",
+        ),
+    }
+    service._fetch_offer = lambda target_marketplace, asin, *, portal: offers[target_marketplace]
+
+    result = service.offers(
+        "B0TEST1234",
+        "de",
+        marketplaces=["de", "fr"],
+        include_shipping=True,
+    )
+
+    assert result["raw_best_offer"]["marketplace"] == "fr"
+    assert result["trusted_best_offer"]["marketplace"] == "de"
+    assert result["best_offer"]["marketplace"] == "de"
+    assert result["address_consistency"]["status"] == "mismatch"
+    assert result["address_consistency"]["mismatched_marketplaces"] == ["fr"]
+    fr_offer = next(offer for offer in result["offers"] if offer["marketplace"] == "fr")
+    assert fr_offer["address_match"] is False
+    assert fr_offer["eligible_for_best"] is False
+    assert "address_mismatch" in fr_offer["exclusion_reasons"]
+
+
+def test_address_inspect_reports_missing_sessions_with_login_hints() -> None:
+    service = AmazonService(resolver=FailingResolver(), session_store=MemorySessionStore())
+
+    result = service.address_inspect(
+        portal="business",
+        marketplaces=["de", "fr"],
+        reference_marketplace="de",
+    )
+
+    assert result["command"] == "address.inspect"
+    assert result["address_consistency"]["status"] == "unknown"
+    assert [record["status"] for record in result["addresses"]] == ["missing_session", "missing_session"]
+    assert result["addresses"][0]["login_hint"] == "Run `amazon-cli session login --marketplace de --portal business`."
+    assert result["addresses"][1]["login_hint"] == "Run `amazon-cli session login --marketplace fr --portal business`."
+
+
+def test_address_inspect_treats_isolated_sessions_as_missing_managed_sessions() -> None:
+    store = MemorySessionStore()
+    session = managed_session("fr", portal="retail")
+    session.session_source = "isolated"
+    store.save(session)
+    service = AmazonService(resolver=FailingResolver(), session_store=store)
+
+    result = service.address_inspect(
+        portal="retail",
+        marketplaces=["fr"],
+        reference_marketplace="fr",
+    )
+
+    assert result["address_consistency"]["status"] == "unknown"
+    assert result["addresses"][0]["status"] == "missing_session"
+    assert result["addresses"][0]["session_source"] == "isolated"
+    assert result["addresses"][0]["failure_reason"] == "No managed retail session is available."
+    assert result["addresses"][0]["login_hint"] == "Run `amazon-cli session login --marketplace fr --portal retail`."
+
+
+def test_address_inspect_extracts_managed_session_addresses(monkeypatch) -> None:
+    store = MemorySessionStore()
+    store.save(managed_session("de", portal="business"))
+    store.save(managed_session("fr", portal="business"))
+    service = AmazonService(resolver=FailingResolver(), session_store=store)
+
+    class FakeHttpClient:
+        def __init__(self, marketplace, session=None) -> None:
+            self.marketplace = marketplace
+
+        def fetch_url_details(self, url: str) -> tuple[str, str]:
+            return (
+                """
+                <html>
+                  <span id="glow-ingress-line1">Deliver to José</span>
+                  <span id="glow-ingress-line2">Almería 04006‌</span>
+                </html>
+                """,
+                url,
+            )
+
+    monkeypatch.setattr("amazon_intent_cli.service.AmazonHttpClient", FakeHttpClient)
+
+    result = service.address_inspect(
+        portal="business",
+        marketplaces=["de", "fr"],
+        reference_marketplace="de",
+    )
+
+    assert result["address_consistency"]["status"] == "match"
+    assert result["addresses"][0]["delivery_address"]["normalized_key"] == "almeria 04006"
+    assert result["addresses"][1]["delivery_address"]["normalized_key"] == "almeria 04006"
 
 
 def test_offers_ranks_by_price_when_shipping_is_excluded() -> None:

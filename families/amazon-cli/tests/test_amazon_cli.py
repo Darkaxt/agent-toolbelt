@@ -325,7 +325,15 @@ class AmazonCLIBridgeTests(unittest.TestCase):
         self.assertIn("managed sessions", skill_text)
         self.assertIn("read-only", skill_text)
         self.assertIn("variant mismatch", skill_text)
+        self.assertIn("address inspect", skill_text)
+        self.assertIn("--vat-mode auto", skill_text)
+        self.assertIn("trusted_best_offer", skill_text)
+        self.assertIn("address_consistency", skill_text)
         self.assertIn("Do not add products to cart", skill_text)
+        self.assertIn("Repurchase workflow", skill_text)
+        self.assertIn("primary marketplace exact search", skill_text)
+        self.assertIn("same-format candidate ASIN", skill_text)
+        self.assertIn("Run `offers` only after selecting that ASIN", skill_text)
 
     def test_claude_plugin_manifest_and_marketplace_exist(self):
         marketplace_root = (

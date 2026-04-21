@@ -92,22 +92,48 @@ def render_text(payload: dict) -> str:
     if payload.get("command") == "offers":
         if payload.get("asin"):
             lines.append(f"ASIN: {payload['asin']}")
-        best_offer = payload.get("best_offer")
-        if best_offer:
+        if payload.get("vat_mode"):
+            lines.append(f"VAT mode: {payload['vat_mode']}")
+        address_consistency = payload.get("address_consistency") or {}
+        if address_consistency:
+            lines.append(f"Address consistency: {address_consistency.get('status')}")
+        trusted_best_offer = payload.get("trusted_best_offer")
+        if trusted_best_offer:
             lines.append(
-                "Best offer: "
-                f"{best_offer['marketplace']} {best_offer.get('total') if payload.get('include_shipping') else best_offer.get('price')} "
-                f"{best_offer.get('currency')}"
+                "Trusted best offer: "
+                f"{trusted_best_offer['marketplace']} "
+                f"{trusted_best_offer.get('comparison_total') if payload.get('include_shipping') else trusted_best_offer.get('comparison_price')} "
+                f"{trusted_best_offer.get('currency')}"
+            )
+        raw_best_offer = payload.get("raw_best_offer")
+        if raw_best_offer:
+            lines.append(
+                "Raw best offer: "
+                f"{raw_best_offer['marketplace']} "
+                f"{raw_best_offer.get('comparison_total') if payload.get('include_shipping') else raw_best_offer.get('comparison_price')} "
+                f"{raw_best_offer.get('currency')}"
             )
         current_offer = payload.get("current_offer")
         if current_offer:
             lines.append(f"Current marketplace offer: {current_offer['marketplace']} status={current_offer.get('status')}")
         for offer in payload.get("offers", []):
-            value = offer.get("total") if payload.get("include_shipping") else offer.get("price")
+            value = offer.get("comparison_total") if payload.get("include_shipping") else offer.get("comparison_price")
             lines.append(
                 f"- {offer['marketplace']}: status={offer.get('status')}, "
-                f"price={offer.get('price')}, shipping={offer.get('shipping')}, total={value}, "
-                f"seller_amazon={offer.get('sold_by_amazon')}"
+                f"price={offer.get('price')}, ex_vat={offer.get('price_ex_vat')}, "
+                f"incl_vat={offer.get('price_incl_vat')}, shipping={offer.get('shipping')}, "
+                f"total={value}, basis={offer.get('comparison_basis')}, "
+                f"delivery={offer.get('delivery_date_text')}, address_match={offer.get('address_match')}, "
+                f"eligible={offer.get('eligible_for_best')}, seller_amazon={offer.get('sold_by_amazon')}"
+            )
+    if payload.get("command") == "address.inspect":
+        lines.append(f"Address consistency: {(payload.get('address_consistency') or {}).get('status')}")
+        for record in payload.get("addresses", []):
+            address = record.get("delivery_address") or {}
+            lines.append(
+                f"- {record['marketplace']}: status={record.get('status')}, "
+                f"address={address.get('line2') or address.get('raw')}, "
+                f"hint={record.get('login_hint')}"
             )
     if "items" in payload and "results" not in payload:
         for item in payload["items"]:

@@ -19,12 +19,19 @@ from .amazon import (
 from .intent import GeminiIntentResolver
 from .marketplaces import get_marketplace
 from .models import IntentMode, ProductRecord, SearchPage
-from .offers import DEFAULT_OFFER_MARKETPLACES, OfferRecord, build_offer_url, parse_offer_html
+from .offers import (
+    DEFAULT_OFFER_MARKETPLACES,
+    OfferRecord,
+    build_offer_url,
+    extract_delivery_address_from_html,
+    parse_offer_html,
+)
 from .ranking import rank_plain_records, rank_records
 from .session import BrowserSessionBootstrapper, BrowserSessionError, BrowserSessionStore, make_session_key
 
 
 DETAIL_FETCH_LIMIT = 5
+VAT_MODES = {"auto", "incl", "excl"}
 
 POSITIVE_TERM_ALIASES: dict[str, tuple[str, ...]] = {
     "image quality": ("image quality", "picture quality", "bildqualität", "qualité d'image", "calidad de imagen"),
@@ -43,6 +50,28 @@ CRITICAL_TERM_ALIASES: dict[str, tuple[str, ...]] = {
     "ads or prompts": ("advertising", "publicitaire", "prompts", "redirection"),
     "complex controls": ("complicated", "complex", "kompliziert", "compliqué", "gewöhnungsbedürftig"),
 }
+
+
+GENERIC_BRAND_VALUES = {"", "brand", "marca", "marque"}
+
+
+def _is_generic_brand(value: str | None) -> bool:
+    return normalize_text(value or "") in GENERIC_BRAND_VALUES
+
+
+def _detail_brand(detail: ProductRecord, fallback: str) -> str:
+    if not _is_generic_brand(detail.brand):
+        return detail.brand
+
+    normalized_brand = detail.specs_normalized.get("brand_name")
+    if normalized_brand and not _is_generic_brand(str(normalized_brand)):
+        return str(normalized_brand)
+
+    spec_brand = find_spec_value(detail.specs, "Brand Name", "Brand", "Marca", "Marque")
+    if spec_brand and not _is_generic_brand(str(spec_brand)):
+        return str(spec_brand)
+
+    return fallback
 
 
 def _review_text(review: dict[str, Any]) -> str:
@@ -252,6 +281,7 @@ class AmazonService:
                 detail,
                 asin=record.asin or detail.asin,
                 url=record.url or detail.url,
+                brand=_detail_brand(detail, record.brand),
                 marketplace=record.marketplace,
                 is_sponsored=record.is_sponsored,
                 price=detail.price if detail.price is not None else record.price,
@@ -686,6 +716,7 @@ class AmazonService:
             "min_price": min_price,
             "max_price": max_price,
         }
+        search_query = compose_search_query(base, brand=brand, model=model)
         scraper, records, pagination = self._search_pages_with_recovery(
             marketplace,
             base=base,
@@ -713,9 +744,8 @@ class AmazonService:
             ranked = rank_plain_records(final_records)
             profile = None
         else:
-            structured_query = compose_search_query(base, brand=brand, model=model)
             intent_mode = IntentMode(mode)
-            profile = self.resolver.resolve(structured_query, marketplace, intent_mode, refresh=refresh_intent)
+            profile = self.resolver.resolve(search_query, marketplace, intent_mode, refresh=refresh_intent)
             enriched_records = self._enrich_with_detail_pass(scraper, records, profile)
             final_records = self._apply_price_filter(
                 enriched_records,
@@ -732,6 +762,7 @@ class AmazonService:
             "marketplace": marketplace,
             "mode": mode,
             "filters": filters,
+            "search_query": search_query,
             "pagination": pagination,
             "intent": profile.to_dict() if profile is not None else None,
             "results": [record.to_dict(include_specs=False) for record in ranked],
@@ -754,6 +785,142 @@ class AmazonService:
             if code not in normalized:
                 normalized.append(code)
         return normalized
+
+    def _select_comparison_price(self, offer: OfferRecord, *, portal: str, vat_mode: str) -> tuple[float | None, str | None]:
+        if vat_mode == "excl":
+            if offer.price_ex_vat is not None:
+                return offer.price_ex_vat, "ex_vat"
+            return offer.price, "price"
+        if vat_mode == "incl":
+            if offer.price_incl_vat is not None:
+                return offer.price_incl_vat, "incl_vat"
+            return offer.price, "price"
+        if portal == "business" and offer.price_ex_vat is not None:
+            return offer.price_ex_vat, "ex_vat"
+        if offer.price_incl_vat is not None:
+            return offer.price_incl_vat, "incl_vat"
+        return offer.price, "price" if offer.price is not None else None
+
+    def _address_key(self, address: dict[str, str] | None) -> str:
+        return (address or {}).get("normalized_key", "")
+
+    def _build_address_consistency(
+        self,
+        addresses: dict[str, dict[str, str] | None],
+        *,
+        reference_marketplace: str,
+    ) -> dict[str, Any]:
+        reference_address = addresses.get(reference_marketplace)
+        reference_key = self._address_key(reference_address)
+        missing = [marketplace for marketplace, address in addresses.items() if not self._address_key(address)]
+        mismatched = [
+            marketplace
+            for marketplace, address in addresses.items()
+            if reference_key and self._address_key(address) and self._address_key(address) != reference_key
+        ]
+        if not reference_key:
+            status = "unknown"
+        elif mismatched:
+            status = "mismatch"
+        elif missing:
+            status = "unknown"
+        else:
+            status = "match"
+        return {
+            "status": status,
+            "reference_marketplace": reference_marketplace,
+            "reference_key": reference_key or None,
+            "reference_address": reference_address,
+            "mismatched_marketplaces": mismatched,
+            "missing_marketplaces": missing,
+        }
+
+    def _prepare_offer_for_ranking(
+        self,
+        offer: OfferRecord,
+        *,
+        portal: str,
+        vat_mode: str,
+        include_shipping: bool,
+        reference_address_key: str,
+    ) -> None:
+        comparison_price, basis = self._select_comparison_price(offer, portal=portal, vat_mode=vat_mode)
+        offer.comparison_price = comparison_price
+        offer.comparison_basis = basis
+        if comparison_price is not None:
+            shipping = offer.shipping or 0.0
+            offer.comparison_total = round(comparison_price + shipping, 2) if include_shipping else comparison_price
+        else:
+            offer.comparison_total = None
+
+        reasons: list[str] = []
+        address_key = self._address_key(offer.delivery_address)
+        if reference_address_key and address_key:
+            offer.address_match = address_key == reference_address_key
+            if not offer.address_match:
+                reasons.append("address_mismatch")
+        elif reference_address_key:
+            offer.address_match = None
+        else:
+            offer.address_match = None
+        if offer.deliverable is False:
+            reasons.append("not_deliverable")
+        if offer.status != "ok":
+            reasons.append(offer.status)
+        if comparison_price is None:
+            reasons.append("missing_comparison_price")
+        offer.exclusion_reasons = reasons
+        offer.eligible_for_best = offer.status == "ok" and comparison_price is not None and not any(
+            reason in {"address_mismatch", "not_deliverable"} for reason in reasons
+        )
+
+    def _fetch_address_record(self, target_marketplace: str, *, portal: str) -> dict[str, Any]:
+        market = get_marketplace(target_marketplace)
+        session = self.session_store.load(target_marketplace, portal=portal)
+        login_hint = self._session_login_hint(target_marketplace, portal)
+        if session is None or session.session_source != "managed_profile":
+            return {
+                "marketplace": target_marketplace,
+                "domain": market.domain,
+                "status": "missing_session",
+                "session_source": session.session_source if session is not None else None,
+                "delivery_address": None,
+                "login_hint": login_hint,
+                "failure_reason": f"No managed {portal} session is available.",
+            }
+        client = AmazonHttpClient(market, session=session)
+        url = f"https://{market.domain}/"
+        try:
+            html, final_url = client.fetch_url_details(url)
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "marketplace": target_marketplace,
+                "domain": market.domain,
+                "status": "fetch_failed",
+                "session_source": session.session_source,
+                "delivery_address": None,
+                "login_hint": login_hint,
+                "failure_reason": str(exc),
+            }
+        if is_probably_blocked_html(html):
+            status = "blocked"
+            address = None
+        elif is_probably_sign_in_html(html):
+            status = "expired"
+            address = None
+        else:
+            address = extract_delivery_address_from_html(html)
+            status = "ok" if address else "missing_address"
+        return {
+            "marketplace": target_marketplace,
+            "domain": market.domain,
+            "status": status,
+            "session_source": session.session_source,
+            "url": url,
+            "final_url": final_url,
+            "delivery_address": address,
+            "login_hint": None if status == "ok" else login_hint,
+        }
 
     def _fetch_offer(self, target_marketplace: str, asin: str, *, portal: str = "retail") -> OfferRecord:
         market = get_marketplace(target_marketplace)
@@ -803,7 +970,11 @@ class AmazonService:
         portal: str = "retail",
         marketplaces: list[str] | None = None,
         include_shipping: bool = True,
+        vat_mode: str = "auto",
     ) -> dict:
+        if vat_mode not in VAT_MODES:
+            supported = ", ".join(sorted(VAT_MODES))
+            raise ValueError(f"Unsupported VAT mode `{vat_mode}`. Supported modes: {supported}.")
         make_session_key(marketplace, portal)
         resolved_marketplace = marketplace_from_identifier(identifier, marketplace)
         asin = extract_asin(identifier)
@@ -815,18 +986,40 @@ class AmazonService:
         for index, target_marketplace in enumerate(target_marketplaces):
             indexed_offers.append((index, self._fetch_offer(target_marketplace, asin, portal=portal)))
 
+        addresses = {
+            offer.marketplace: offer.delivery_address
+            for _, offer in indexed_offers
+            if offer.status == "ok"
+        }
+        address_consistency = self._build_address_consistency(
+            addresses,
+            reference_marketplace=resolved_marketplace,
+        )
+        reference_address_key = str(address_consistency.get("reference_key") or "")
+        for _, offer in indexed_offers:
+            self._prepare_offer_for_ranking(
+                offer,
+                portal=portal,
+                vat_mode=vat_mode,
+                include_shipping=include_shipping,
+                reference_address_key=reference_address_key,
+            )
+
         def rank_key(item: tuple[int, OfferRecord]) -> tuple[int, float, int]:
             index, offer = item
-            if offer.status != "ok" or offer.price is None:
+            if offer.status != "ok" or offer.comparison_price is None:
                 return (1, float("inf"), index)
-            value = offer.total if include_shipping else offer.price
+            value = offer.comparison_total if include_shipping else offer.comparison_price
             return (0, value if value is not None else float("inf"), index)
 
         sorted_offers = [offer for _, offer in sorted(indexed_offers, key=rank_key)]
-        ok_offers = [offer for offer in sorted_offers if offer.status == "ok" and offer.price is not None]
+        ok_offers = [offer for offer in sorted_offers if offer.status == "ok" and offer.comparison_price is not None]
+        trusted_offers = [offer for offer in ok_offers if offer.eligible_for_best]
         failures = [offer for offer in sorted_offers if offer.status != "ok"]
         current_offer = next((offer for offer in sorted_offers if offer.marketplace == resolved_marketplace), None)
-        best_offer = ok_offers[0] if ok_offers else None
+        raw_best_offer = ok_offers[0] if ok_offers else None
+        trusted_best_offer = trusted_offers[0] if trusted_offers else None
+        best_offer = trusted_best_offer
 
         return {
             "command": "offers",
@@ -834,11 +1027,45 @@ class AmazonService:
             "portal": portal,
             "asin": asin,
             "include_shipping": include_shipping,
+            "vat_mode": vat_mode,
             "requested_marketplaces": target_marketplaces,
             "best_offer": best_offer.to_dict() if best_offer is not None else None,
+            "trusted_best_offer": trusted_best_offer.to_dict() if trusted_best_offer is not None else None,
+            "raw_best_offer": raw_best_offer.to_dict() if raw_best_offer is not None else None,
             "current_offer": current_offer.to_dict() if current_offer is not None else None,
+            "address_consistency": address_consistency,
             "offers": [offer.to_dict() for offer in sorted_offers],
             "failures": [offer.to_dict() for offer in failures],
+        }
+
+    def address_inspect(
+        self,
+        *,
+        portal: str = "retail",
+        marketplaces: list[str] | None = None,
+        reference_marketplace: str = "de",
+    ) -> dict:
+        make_session_key(reference_marketplace, portal)
+        target_marketplaces = self._normalize_offer_marketplaces(marketplaces)
+        reference_marketplace = reference_marketplace.strip().lower()
+        get_marketplace(reference_marketplace)
+        if reference_marketplace not in target_marketplaces:
+            target_marketplaces.insert(0, reference_marketplace)
+        records = [self._fetch_address_record(target_marketplace, portal=portal) for target_marketplace in target_marketplaces]
+        addresses = {
+            record["marketplace"]: record.get("delivery_address")
+            for record in records
+        }
+        return {
+            "command": "address.inspect",
+            "portal": portal,
+            "reference_marketplace": reference_marketplace,
+            "requested_marketplaces": target_marketplaces,
+            "address_consistency": self._build_address_consistency(
+                addresses,
+                reference_marketplace=reference_marketplace,
+            ),
+            "addresses": records,
         }
 
     def reviews(
