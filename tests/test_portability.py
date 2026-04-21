@@ -45,6 +45,57 @@ class PortabilityTests(unittest.TestCase):
 
         self.assertEqual(offenders, [])
 
+    def test_bundled_assets_exclude_runtime_artifacts(self):
+        forbidden_parts = {
+            ".venv",
+            "__pycache__",
+            ".pytest_cache",
+            ".mypy_cache",
+            ".ruff_cache",
+            "browser-profiles",
+            "sessions",
+        }
+        forbidden_names = {
+            "Cookies",
+            "Local State",
+            "uv.lock",
+            "todo.md",
+            "derived_todo.md",
+        }
+        forbidden_suffixes = {
+            ".db",
+            ".sqlite",
+            ".sqlite3",
+            ".ldb",
+            ".log",
+            ".pyc",
+            ".pyo",
+        }
+        asset_roots = [
+            REPO_ROOT
+            / "families"
+            / "amazon-cli"
+            / "src"
+            / "agent_toolbelt_amazon_cli"
+            / "assets"
+            / "amazon-intent-cli",
+        ]
+
+        offenders = []
+        for asset_root in asset_roots:
+            if not asset_root.exists():
+                continue
+            for path in asset_root.rglob("*"):
+                relative = path.relative_to(REPO_ROOT)
+                if any(part in forbidden_parts for part in relative.parts):
+                    offenders.append(str(relative))
+                if path.name in forbidden_names:
+                    offenders.append(str(relative))
+                if path.is_file() and path.suffix.lower() in forbidden_suffixes:
+                    offenders.append(str(relative))
+
+        self.assertEqual(offenders, [])
+
 
 if __name__ == "__main__":
     unittest.main()

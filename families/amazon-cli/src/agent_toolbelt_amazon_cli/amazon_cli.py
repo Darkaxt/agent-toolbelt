@@ -15,6 +15,23 @@ CLIENT_ENTRYPOINT = "amazon-cli"
 DEFAULT_TIMEOUT_SEC = 600
 
 
+def package_root() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def bundled_client_home() -> Path:
+    return package_root() / "assets" / "amazon-intent-cli"
+
+
+def runtime_venv_dir() -> Path:
+    local_appdata = os.getenv("LOCALAPPDATA")
+    if local_appdata:
+        return Path(local_appdata) / "agent-toolbelt" / "amazon-cli" / "uv-env"
+    cache_home = os.getenv("XDG_CACHE_HOME")
+    root = Path(cache_home).expanduser() if cache_home else Path.home() / ".cache"
+    return root / "agent-toolbelt" / "amazon-cli" / "uv-env"
+
+
 def make_result(
     *,
     ok: bool,
@@ -46,6 +63,10 @@ def resolve_client_home(explicit_home: str | None = None) -> Path | None:
         if candidate.is_dir():
             return candidate
 
+    bundled_home = bundled_client_home().resolve()
+    if (bundled_home / "pyproject.toml").is_file():
+        return bundled_home
+
     tools_dir = windows_local_tools_dir()
     if tools_dir is None:
         return None
@@ -69,7 +90,8 @@ def build_client_command(
     return [
         uv_executable,
         "run",
-        "--project",
+        "--no-project",
+        "--with-editable",
         str(client_home),
         CLIENT_ENTRYPOINT,
         *operation_args,
@@ -79,6 +101,8 @@ def build_client_command(
 def build_client_env() -> dict[str, str]:
     env = os.environ.copy()
     env.pop("VIRTUAL_ENV", None)
+    env["UV_PROJECT_ENVIRONMENT"] = str(runtime_venv_dir())
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     return env
 
 
@@ -129,7 +153,8 @@ def invoke_client(
             operation=operation,
             stderr=(
                 "Amazon CLI client not available. "
-                f"Set {CLIENT_HOME_ENV} or install it under %LOCALAPPDATA%\\Tools\\{CLIENT_FOLDER_NAME}."
+                f"Set {CLIENT_HOME_ENV}, restore the bundled client, or install it under "
+                f"%LOCALAPPDATA%\\Tools\\{CLIENT_FOLDER_NAME}."
             ),
             exit_code=127,
         )

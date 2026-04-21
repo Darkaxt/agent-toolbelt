@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -9,6 +10,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CORE_SRC = REPO_ROOT / "packages" / "core" / "src"
 FAMILY_SRC = REPO_ROOT / "families" / "amazon-cli" / "src"
+SOURCE_BUNDLED_CLIENT_ROOT = (
+    FAMILY_SRC / "agent_toolbelt_amazon_cli" / "assets" / "amazon-intent-cli"
+)
 CLAUDE_PLUGIN_META_DIR = "." + "claude-plugin"
 for path in (CORE_SRC, FAMILY_SRC):
     if str(path) not in sys.path:
@@ -52,10 +56,10 @@ class AmazonCLIBridgeTests(unittest.TestCase):
 
         self.assertEqual(resolved, env_home.resolve())
 
-    def test_resolve_client_home_uses_local_tools_default(self):
+    def test_resolve_client_home_uses_bundled_client_before_local_tools_default(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            expected = Path(temp_dir) / "Tools" / "amazon-intent-cli"
-            expected.mkdir(parents=True)
+            default_home = Path(temp_dir) / "Tools" / "amazon-intent-cli"
+            default_home.mkdir(parents=True)
 
             original_env_home = os.environ.get("AMAZON_INTENT_CLI_HOME")
             original_local_appdata = os.environ.get("LOCALAPPDATA")
@@ -73,7 +77,67 @@ class AmazonCLIBridgeTests(unittest.TestCase):
                 else:
                     os.environ["LOCALAPPDATA"] = original_local_appdata
 
+        self.assertEqual(resolved, amazon_cli.bundled_client_home().resolve())
+
+    def test_resolve_client_home_uses_local_tools_default(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            expected = Path(temp_dir) / "Tools" / "amazon-intent-cli"
+            expected.mkdir(parents=True)
+
+            original_env_home = os.environ.get("AMAZON_INTENT_CLI_HOME")
+            original_local_appdata = os.environ.get("LOCALAPPDATA")
+            os.environ.pop("AMAZON_INTENT_CLI_HOME", None)
+            os.environ["LOCALAPPDATA"] = temp_dir
+            original_bundled_client_home = amazon_cli.bundled_client_home
+            amazon_cli.bundled_client_home = lambda: Path(temp_dir) / "missing-bundled-client"
+            try:
+                resolved = amazon_cli.resolve_client_home()
+            finally:
+                amazon_cli.bundled_client_home = original_bundled_client_home
+                if original_env_home is None:
+                    os.environ.pop("AMAZON_INTENT_CLI_HOME", None)
+                else:
+                    os.environ["AMAZON_INTENT_CLI_HOME"] = original_env_home
+                if original_local_appdata is None:
+                    os.environ.pop("LOCALAPPDATA", None)
+                else:
+                    os.environ["LOCALAPPDATA"] = original_local_appdata
+
         self.assertEqual(resolved, expected.resolve())
+
+    def test_bundled_client_source_is_present_without_runtime_artifacts(self):
+        client_root = SOURCE_BUNDLED_CLIENT_ROOT
+
+        self.assertTrue((client_root / "pyproject.toml").is_file())
+        self.assertTrue((client_root / "amazon_intent_cli" / "cli.py").is_file())
+        self.assertTrue((client_root / "amazon_intent_cli" / "offers.py").is_file())
+        self.assertTrue((client_root / "tests" / "test_cli.py").is_file())
+
+        forbidden_parts = {".venv", "__pycache__", ".pytest_cache", "browser-profiles", "sessions"}
+        forbidden_names = {"Cookies", "Local State", "uv.lock", "todo.md", "derived_todo.md"}
+        forbidden_suffixes = {".db", ".sqlite", ".sqlite3", ".ldb", ".log", ".pyc", ".pyo"}
+        offenders = []
+        for path in client_root.rglob("*"):
+            relative = path.relative_to(client_root)
+            if any(part in forbidden_parts for part in relative.parts):
+                offenders.append(str(relative))
+            if path.name in forbidden_names:
+                offenders.append(str(relative))
+            if path.is_file() and path.suffix.lower() in forbidden_suffixes:
+                offenders.append(str(relative))
+
+        self.assertEqual(offenders, [])
+
+    def test_package_data_uses_explicit_bundled_client_allowlist(self):
+        pyproject = tomllib.loads((REPO_ROOT / "families" / "amazon-cli" / "pyproject.toml").read_text(encoding="utf-8"))
+        package_data = pyproject["tool"]["setuptools"]["package-data"]["agent_toolbelt_amazon_cli"]
+
+        self.assertIn("assets/amazon-intent-cli/pyproject.toml", package_data)
+        self.assertIn("assets/amazon-intent-cli/amazon_intent_cli/*.py", package_data)
+        self.assertIn("assets/amazon-intent-cli/tests/fixtures/*.html", package_data)
+        self.assertNotIn("assets/amazon-intent-cli/**/*", package_data)
+        self.assertFalse(any("uv.lock" in pattern for pattern in package_data))
+        self.assertFalse(any(".venv" in pattern for pattern in package_data))
 
     def test_build_client_command_uses_uv_run_project_and_amazon_cli_entrypoint(self):
         client_home = Path(r"C:\Temp\Tools\amazon-intent-cli")
@@ -83,8 +147,17 @@ class AmazonCLIBridgeTests(unittest.TestCase):
             uv_executable="uv.exe",
         )
 
-        self.assertEqual(command[:5], ["uv.exe", "run", "--project", str(client_home), "amazon-cli"])
+        self.assertEqual(command[:5], ["uv.exe", "run", "--no-project", "--with-editable", str(client_home)])
+        self.assertEqual(command[5], "amazon-cli")
         self.assertEqual(command[-4:], ["offers", "B0F2JCZPB4", "--marketplace", "de"])
+
+    def test_runtime_venv_dir_is_outside_bundled_client_source(self):
+        runtime_dir = amazon_cli.runtime_venv_dir()
+        bundled_home = SOURCE_BUNDLED_CLIENT_ROOT.resolve()
+
+        self.assertFalse(runtime_dir.resolve().is_relative_to(bundled_home))
+        self.assertIn("agent-toolbelt", runtime_dir.parts)
+        self.assertEqual(runtime_dir.name, "uv-env")
 
     def test_invoke_client_normalizes_json_success(self):
         original_run = amazon_cli.run_process
@@ -144,6 +217,8 @@ class AmazonCLIBridgeTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertNotIn("VIRTUAL_ENV", captured_env)
+        self.assertEqual(captured_env["UV_PROJECT_ENVIRONMENT"], str(amazon_cli.runtime_venv_dir()))
+        self.assertEqual(captured_env["PYTHONDONTWRITEBYTECODE"], "1")
 
     def test_invoke_client_preserves_nonzero_json_error(self):
         original_run = amazon_cli.run_process

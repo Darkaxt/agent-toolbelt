@@ -20,6 +20,16 @@ agent-toolbelt-core = { workspace = true }
 
 [tool.setuptools]
 package-dir = { "" = "src" }
+include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+agent_toolbelt_amazon_cli = [
+  "assets/amazon-intent-cli/pyproject.toml",
+  "assets/amazon-intent-cli/amazon_intent_cli/*.py",
+  "assets/amazon-intent-cli/scripts/*.ps1",
+  "assets/amazon-intent-cli/tests/*.py",
+  "assets/amazon-intent-cli/tests/fixtures/*.html",
+]

@@ -7,9 +7,9 @@ description: Use the local Amazon CLI for Amazon product search, exact model loo
 
 ## Overview
 
-Use `scripts/invoke_amazon_cli.py` to call the local Amazon CLI. The wrapper delegates into the `amazon-cli` family package in this repo, which then bridges into the standalone Amazon CLI project under `%LOCALAPPDATA%\Tools\amazon-intent-cli`.
+Use `scripts/invoke_amazon_cli.py` to call the bundled Amazon CLI client. The wrapper delegates into the `amazon-cli` family package in this repo, which runs the packaged client under `agent_toolbelt_amazon_cli/assets/amazon-intent-cli`.
 
-This skill does not vendor Amazon scraping code and must not package browser profiles, cookies, managed sessions, or user account data.
+This skill vendors the Amazon CLI source code, but must not package browser profiles, cookies, managed sessions, generated virtual environments, or user account data. Runtime state stays outside the repo.
 
 ## Routing Rules
 

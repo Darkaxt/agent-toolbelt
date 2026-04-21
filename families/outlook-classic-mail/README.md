@@ -15,7 +15,7 @@ Use this family when an agent needs local mailbox access through Microsoft Outlo
 
 - it does not implement COM directly inside the repo package
 - it does not reproduce Gmail query syntax, labels, or archive semantics
-- it does not ship a Claude plugin in v1
+- it does not manage Outlook rules or automatic future filtering
 
 ## Prerequisites
 
