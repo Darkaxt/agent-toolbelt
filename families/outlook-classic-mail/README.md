@@ -10,6 +10,7 @@ Use this family when an agent needs local mailbox access through Microsoft Outlo
 - exposes fast folder discovery before message search for rule-managed Outlook folders
 - exposes deterministic response lookup from the original recipient account's Sent and Drafts folders
 - exposes explicit folder move previews and confirmed message moves
+- forwards optional send-account selection for reply and forward drafts
 
 ## What it does not do
 
@@ -36,6 +37,7 @@ agent-toolbelt-outlook-classic-mail move-message --account demo@example.com --me
 agent-toolbelt-outlook-classic-mail move-message --account demo@example.com --message-id <entry-id> --target-folder custom:Inbox/Projects --confirm
 agent-toolbelt-outlook-classic-mail triage --all-accounts --days 7 --limit 20
 agent-toolbelt-outlook-classic-mail draft-reply --account demo@example.com --message-id <entry-id> --instruction "Confirm Tuesday works."
+agent-toolbelt-outlook-classic-mail draft-reply --account anchor@example.com --send-using-account reply@example.com --message-id <entry-id> --instruction "Confirm Tuesday works."
 ```
 
 The family bridge uses the external client root in this order:
@@ -49,3 +51,5 @@ For sender or service lookups such as "latest emails from X", prefer `find-folde
 For response lookups such as "find my response to this email", use `find-response` first. It resolves the anchor message, inspects its original recipients, checks the matching account/store's Sent and Drafts folders, and broadens only when `--fallback-all-accounts` is requested.
 
 For folder moves such as "move this email to X", use `find-folders` first when the destination is ambiguous, then run `move-message` without `--confirm` to preview the source and target. Add `--confirm` only after explicit user approval.
+
+For draft replies or forwards, `--account` resolves the original message. Use `--send-using-account` when the outgoing draft should be sent from a different configured Outlook account.

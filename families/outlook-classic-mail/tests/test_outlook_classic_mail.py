@@ -228,6 +228,47 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
             ],
         )
 
+    def test_build_operation_args_routes_draft_send_using_account(self):
+        parser = outlook_classic_mail.build_parser()
+        args = parser.parse_args(
+            [
+                "draft-reply",
+                "--account",
+                "anchor@example.com",
+                "--send-using-account",
+                "reply@example.com",
+                "--message-id",
+                "anchor-1",
+                "--instruction",
+                "Confirm the schedule.",
+                "--body",
+                "Confirmed.",
+                "--create-draft",
+                "--confirm",
+            ]
+        )
+
+        operation_args = outlook_classic_mail.build_operation_args(args)
+
+        self.assertEqual(
+            operation_args,
+            [
+                "draft-reply",
+                "--account",
+                "anchor@example.com",
+                "--message-id",
+                "anchor-1",
+                "--instruction",
+                "Confirm the schedule.",
+                "--send-using-account",
+                "reply@example.com",
+                "--body",
+                "Confirmed.",
+                "--create-draft",
+                "--confirm",
+            ],
+        )
+
     def test_codex_skill_documents_find_response_lookup(self):
         skill_path = (
             REPO_ROOT
