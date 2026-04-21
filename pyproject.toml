@@ -9,3 +9,8 @@ members = [
   "families/amazon-cli",
   "families/whatsapp-wacli",
 ]
+
+[tool.pytest.ini_options]
+norecursedirs = [
+  "families/amazon-cli/src/agent_toolbelt_amazon_cli/assets/amazon-intent-cli/tests",
+]

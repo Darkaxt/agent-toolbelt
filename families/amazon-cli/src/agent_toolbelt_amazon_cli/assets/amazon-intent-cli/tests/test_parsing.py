@@ -346,6 +346,14 @@ def test_compose_search_query_orders_base_brand_model() -> None:
     assert compose_search_query("tv", brand="LG", model="C4") == "tv LG C4"
 
 
+def test_compose_search_query_skips_brand_and_model_already_present_in_base() -> None:
+    assert compose_search_query("Pilexil Forte Max", brand="PILEXIL", model="Forte Max") == "Pilexil Forte Max"
+
+
+def test_compose_search_query_keeps_missing_brand_and_model_context() -> None:
+    assert compose_search_query("hair loss", brand="PILEXIL", model="Forte Max") == "hair loss PILEXIL Forte Max"
+
+
 def test_parse_search_results_extracts_pagination_links() -> None:
     parser = AmazonParser(get_marketplace("de"))
     html = """

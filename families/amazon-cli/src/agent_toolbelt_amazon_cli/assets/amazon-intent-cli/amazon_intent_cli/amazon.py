@@ -157,7 +157,17 @@ def compose_search_query(
     brand: str | None = None,
     model: str | None = None,
 ) -> str:
-    parts = [part.strip() for part in (base, brand, model) if part and part.strip()]
+    parts: list[str] = []
+    normalized_query = ""
+    for part in (base, brand, model):
+        cleaned = part.strip() if part else ""
+        if not cleaned:
+            continue
+        normalized_part = normalize_text(cleaned)
+        if parts and normalized_part and f" {normalized_part} " in f" {normalized_query} ":
+            continue
+        parts.append(cleaned)
+        normalized_query = normalize_text(" ".join(parts))
     return " ".join(parts)
 
 

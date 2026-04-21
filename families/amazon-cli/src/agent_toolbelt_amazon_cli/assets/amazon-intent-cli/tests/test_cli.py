@@ -95,19 +95,40 @@ class FakeService:
         portal: str = "retail",
         marketplaces: list[str] | None = None,
         include_shipping: bool = True,
+        vat_mode: str = "auto",
     ) -> dict:
-        self.calls.append(("offers", identifier, marketplace, portal, marketplaces, include_shipping))
+        self.calls.append(("offers", identifier, marketplace, portal, marketplaces, include_shipping, vat_mode))
         return {
             "command": "offers",
             "marketplace": marketplace,
             "portal": portal,
             "asin": "B0TEST",
             "include_shipping": include_shipping,
+            "vat_mode": vat_mode,
             "requested_marketplaces": marketplaces or ["de", "fr", "es"],
             "best_offer": None,
+            "trusted_best_offer": None,
+            "raw_best_offer": None,
             "current_offer": None,
             "offers": [],
             "failures": [],
+        }
+
+    def address_inspect(
+        self,
+        *,
+        portal: str = "retail",
+        marketplaces: list[str] | None = None,
+        reference_marketplace: str = "de",
+    ) -> dict:
+        self.calls.append(("address_inspect", portal, marketplaces, reference_marketplace))
+        return {
+            "command": "address.inspect",
+            "portal": portal,
+            "reference_marketplace": reference_marketplace,
+            "requested_marketplaces": marketplaces or ["de", "fr", "es"],
+            "address_consistency": {"status": "match"},
+            "addresses": [],
         }
 
     def bootstrap_session(
@@ -265,7 +286,8 @@ def test_offers_outputs_json_with_default_marketplaces(monkeypatch, capsys) -> N
     assert payload["marketplace"] == "de"
     assert payload["portal"] == "retail"
     assert payload["include_shipping"] is True
-    assert service.calls[0] == ("offers", "B0TEST0001", "de", "retail", None, True)
+    assert payload["vat_mode"] == "auto"
+    assert service.calls[0] == ("offers", "B0TEST0001", "de", "retail", None, True, "auto")
 
 
 def test_offers_accepts_marketplace_csv_portal_and_no_shipping(monkeypatch, capsys) -> None:
@@ -280,12 +302,15 @@ def test_offers_accepts_marketplace_csv_portal_and_no_shipping(monkeypatch, caps
             "de,fr,es,uk",
             "--portal",
             "business",
+            "--vat-mode",
+            "excl",
             "--no-include-shipping",
         ]
     )
     payload = json.loads(capsys.readouterr().out)
 
     assert payload["include_shipping"] is False
+    assert payload["vat_mode"] == "excl"
     assert service.calls[0] == (
         "offers",
         "https://www.amazon.de/dp/B0TEST0001",
@@ -293,7 +318,15 @@ def test_offers_accepts_marketplace_csv_portal_and_no_shipping(monkeypatch, caps
         "business",
         ["de", "fr", "es", "uk"],
         False,
+        "excl",
     )
+
+
+def test_offers_rejects_invalid_vat_mode(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "build_service", lambda: FakeService())
+
+    with pytest.raises(SystemExit):
+        cli.main(["offers", "B0TEST0001", "--vat-mode", "net"])
 
 
 def test_offers_rejects_unknown_marketplace_in_csv(monkeypatch) -> None:
@@ -301,6 +334,30 @@ def test_offers_rejects_unknown_marketplace_in_csv(monkeypatch) -> None:
 
     with pytest.raises(SystemExit):
         cli.main(["offers", "B0TEST0001", "--marketplaces", "de,xx"])
+
+
+def test_address_inspect_outputs_json(monkeypatch, capsys) -> None:
+    service = FakeService()
+    monkeypatch.setattr(cli, "build_service", lambda: service)
+
+    cli.main(
+        [
+            "address",
+            "inspect",
+            "--portal",
+            "business",
+            "--marketplaces",
+            "de,es,fr,it",
+            "--reference-marketplace",
+            "de",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["command"] == "address.inspect"
+    assert payload["portal"] == "business"
+    assert payload["requested_marketplaces"] == ["de", "es", "fr", "it"]
+    assert service.calls[0] == ("address_inspect", "business", ["de", "es", "fr", "it"], "de")
 
 
 def test_reviews_outputs_json_without_default_limit(monkeypatch, capsys) -> None:

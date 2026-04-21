@@ -75,6 +75,7 @@ def _build_parser() -> argparse.ArgumentParser:
     offers_parser.add_argument("identifier")
     offers_parser.add_argument("--portal", default="retail", choices=sorted(SUPPORTED_PORTALS))
     offers_parser.add_argument("--marketplaces")
+    offers_parser.add_argument("--vat-mode", choices=["auto", "incl", "excl"], default="auto")
     offers_parser.add_argument("--include-shipping", dest="include_shipping", action="store_true", default=True)
     offers_parser.add_argument("--no-include-shipping", dest="include_shipping", action="store_false")
     add_common_flags(offers_parser)
@@ -82,6 +83,14 @@ def _build_parser() -> argparse.ArgumentParser:
     compare_parser = subparsers.add_parser("compare")
     compare_parser.add_argument("identifiers", nargs="+")
     add_common_flags(compare_parser)
+
+    address_parser = subparsers.add_parser("address")
+    address_subparsers = address_parser.add_subparsers(dest="address_command", required=True)
+    address_inspect_parser = address_subparsers.add_parser("inspect")
+    address_inspect_parser.add_argument("--portal", default="retail", choices=sorted(SUPPORTED_PORTALS))
+    address_inspect_parser.add_argument("--marketplaces")
+    address_inspect_parser.add_argument("--reference-marketplace", default=DEFAULT_MARKETPLACE)
+    address_inspect_parser.add_argument("--text", action="store_true")
 
     session_parser = subparsers.add_parser("session")
     session_subparsers = session_parser.add_subparsers(dest="session_command", required=True)
@@ -171,6 +180,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "offers":
         _validate_portal_args(parser, args)
         args.marketplaces = _parse_marketplaces_csv(parser, args.marketplaces)
+    if args.command == "address":
+        _validate_portal_args(parser, args)
+        args.marketplaces = _parse_marketplaces_csv(parser, args.marketplaces)
+        try:
+            get_marketplace(args.reference_marketplace)
+        except ValueError as exc:
+            parser.error(str(exc))
     if args.command == "session":
         _validate_portal_args(parser, args)
         _validate_managed_session_args(parser, args)
@@ -221,9 +237,16 @@ def main(argv: list[str] | None = None) -> int:
                 portal=args.portal,
                 marketplaces=args.marketplaces,
                 include_shipping=args.include_shipping,
+                vat_mode=args.vat_mode,
             )
         elif args.command == "compare":
             payload = service.compare(args.identifiers, args.marketplace)
+        elif args.command == "address":
+            payload = service.address_inspect(
+                portal=args.portal,
+                marketplaces=args.marketplaces,
+                reference_marketplace=args.reference_marketplace,
+            )
         else:
             payload = service.bootstrap_session(
                 args.marketplace,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import re
 from typing import Any
 from urllib.parse import urlencode
@@ -37,6 +37,45 @@ UNAVAILABLE_MARKERS = (
     "för närvarande inte tillgänglig",
 )
 
+NON_DELIVERABLE_MARKERS = (
+    "cannot be shipped to your selected delivery location",
+    "can't be shipped to your selected delivery location",
+    "cannot be delivered to your selected delivery location",
+    "not deliverable to your selected delivery location",
+    "kann nicht an den ausgewählten lieferort versendet werden",
+    "kann nicht an ihren lieferort versendet werden",
+    "no se puede enviar a la ubicación de entrega seleccionada",
+    "no se puede entregar en la ubicación seleccionada",
+    "ne peut pas être expédié à l'adresse de livraison sélectionnée",
+    "non può essere spedito all'indirizzo selezionato",
+    "kan niet worden verzonden naar je geselecteerde bezorglocatie",
+    "kan inte levereras till din valda leveransadress",
+    "nie można wysłać na wybrany adres dostawy",
+)
+
+FREE_DELIVERY_MARKERS = (
+    "free",
+    "gratis",
+    "gratuit",
+    "kostenlos",
+    "bezplat",
+    "fri frakt",
+)
+
+ZERO_WIDTH_TRANSLATION = str.maketrans("", "", "\u200b\u200c\u200d\ufeff")
+DELIVERY_PREFIX_PATTERNS = (
+    r"^deliver(?:y|ing)?\s+to\s+",
+    r"^ship(?:ping)?\s+to\s+",
+    r"^liefer(?:n|ung)?\s+(?:nach|an)\s+",
+    r"^env(?:i|í)ar\s+a\s+",
+    r"^entregar\s+a\s+",
+    r"^livr(?:er|aison)\s+(?:à|a)\s+",
+    r"^consegna\s+a\s+",
+    r"^bezorgen\s+in\s+",
+    r"^leverera\s+till\s+",
+    r"^dostarcz\s+do\s+",
+)
+
 
 @dataclass(slots=True)
 class OfferRecord:
@@ -46,13 +85,26 @@ class OfferRecord:
     asin: str
     title: str = ""
     price: float | None = None
+    price_ex_vat: float | None = None
+    price_incl_vat: float | None = None
+    vat_amount: float | None = None
+    vat_rate: float | None = None
     currency: str | None = None
     shipping: float | None = None
     total: float | None = None
+    comparison_price: float | None = None
+    comparison_total: float | None = None
+    comparison_basis: str | None = None
     store_slug: str = ""
     seller_summary: str = ""
     sold_by_amazon: bool = False
     image: str = ""
+    delivery_address: dict[str, str] | None = None
+    delivery_date_text: str = ""
+    deliverable: bool | None = None
+    address_match: bool | None = None
+    eligible_for_best: bool = True
+    exclusion_reasons: list[str] = field(default_factory=list)
     status: str = "ok"
     failure_reason: str | None = None
 
@@ -66,7 +118,20 @@ def build_offer_url(asin: str, marketplace: str) -> str:
 
 
 def _text(node) -> str:
-    return node.get_text(" ", strip=True) if node is not None else ""
+    return _clean_text(node.get_text(" ", strip=True)) if node is not None else ""
+
+
+def _clean_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value.translate(ZERO_WIDTH_TRANSLATION).replace("\xa0", " ")).strip()
+
+
+def _strip_delivery_prefix(value: str) -> str:
+    cleaned = _clean_text(value)
+    for pattern in DELIVERY_PREFIX_PATTERNS:
+        updated = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
+        if updated != cleaned:
+            return _clean_text(updated)
+    return cleaned
 
 
 def _parse_price_whole_fraction(soup: BeautifulSoup) -> float | None:
@@ -112,6 +177,38 @@ def _extract_price(soup: BeautifulSoup) -> tuple[float | None, str]:
     return None, ""
 
 
+def _extract_vat_prices(soup: BeautifulSoup, fallback_price: float | None) -> tuple[float | None, float | None]:
+    ex_vat_node = soup.select_one("#price_vat_excl .a-offscreen, #price_vat_excl")
+    price_ex_vat = parse_float_from_text(_text(ex_vat_node)) if ex_vat_node is not None else None
+    price_incl_vat = None
+
+    price_vat_excl = soup.select_one("#price_vat_excl")
+    if price_vat_excl is not None:
+        for sibling in price_vat_excl.find_next_siblings():
+            sibling_text = _text(sibling)
+            normalized = normalize_text(sibling_text)
+            if "incl vat" not in normalized:
+                continue
+            price_node = sibling.select_one(".a-offscreen")
+            price_incl_vat = parse_float_from_text(_text(price_node) or sibling_text)
+            if price_incl_vat is not None:
+                break
+
+    if price_incl_vat is None and price_ex_vat is not None and fallback_price is not None:
+        price_incl_vat = fallback_price if fallback_price >= price_ex_vat else None
+    if price_incl_vat is None and price_ex_vat is None:
+        price_incl_vat = fallback_price
+    return price_ex_vat, price_incl_vat
+
+
+def _calculate_vat(price_ex_vat: float | None, price_incl_vat: float | None) -> tuple[float | None, float | None]:
+    if price_ex_vat is None or price_incl_vat is None or price_ex_vat <= 0 or price_incl_vat < price_ex_vat:
+        return None, None
+    vat_amount = round(price_incl_vat - price_ex_vat, 2)
+    vat_rate = round((vat_amount / price_ex_vat) * 100, 2)
+    return vat_amount, vat_rate
+
+
 def _extract_title(soup: BeautifulSoup) -> str:
     for selector in ("#productTitle", ".a-size-large.product-title-word-break"):
         node = soup.select_one(selector)
@@ -135,18 +232,87 @@ def _extract_image(soup: BeautifulSoup) -> str:
     return node.get("src", "") if node is not None else ""
 
 
-def _extract_shipping(soup: BeautifulSoup) -> float:
-    delivery = soup.select_one("#mir-layout-DELIVERY_BLOCK-slot-PRIMARY_DELIVERY_MESSAGE_LARGE")
+def _has_non_deliverable_marker(soup: BeautifulSoup) -> bool:
+    body = normalize_text(soup.get_text(" ", strip=True))
+    return any(normalize_text(marker) in body for marker in NON_DELIVERABLE_MARKERS)
+
+
+def _extract_delivery_info(soup: BeautifulSoup) -> tuple[float, str, bool | None]:
+    delivery = soup.select_one(
+        "#mir-layout-DELIVERY_BLOCK-slot-PRIMARY_DELIVERY_MESSAGE_LARGE, "
+        "#deliveryBlockMessage, "
+        "#deliveryBlock_feature_div"
+    )
     price_text = ""
+    date_text = ""
+    deliverable: bool | None = False if _has_non_deliverable_marker(soup) else None
     if delivery is not None:
         priced = delivery.select_one("[data-csa-c-delivery-price]")
         if priced is not None:
             price_text = priced.get("data-csa-c-delivery-price", "") or _text(priced)
+            date_text = _clean_text(priced.get("data-csa-c-delivery-time", "") or "")
         else:
             price_text = _text(delivery)
-    if not price_text or "free" in normalize_text(price_text):
-        return 0.0
-    return parse_float_from_text(price_text) or 0.0
+        if deliverable is not False:
+            deliverable = True
+    normalized_price_text = normalize_text(price_text)
+    if not price_text or any(marker in normalized_price_text for marker in FREE_DELIVERY_MARKERS):
+        return 0.0, date_text, deliverable
+    return parse_float_from_text(price_text) or 0.0, date_text, deliverable
+
+
+def _address_from_lines(line1: str, line2: str, raw: str | None = None) -> dict[str, str] | None:
+    line1 = _clean_text(line1)
+    line2 = _strip_delivery_prefix(line2)
+    raw = _clean_text(raw or " ".join(part for part in (line1, line2) if part))
+    if not line1 and not line2 and not raw:
+        return None
+    location_line = line2 or raw
+    postal_match = re.search(r"\b\d{4,6}\b", location_line)
+    postal_code = postal_match.group(0) if postal_match else ""
+    location = _clean_text(re.sub(r"\b\d{4,6}\b", "", location_line).strip(" -,\u2013\u2014"))
+    normalized_key = normalize_text(" ".join(part for part in (location, postal_code) if part) or location_line)
+    return {
+        "line1": line1,
+        "line2": line2 or location_line,
+        "raw": raw,
+        "location": location,
+        "postal_code": postal_code,
+        "normalized_key": normalized_key,
+    }
+
+
+def _split_contextual_address(value: str) -> tuple[str, str]:
+    cleaned = _clean_text(value)
+    for separator in (" - ", " – ", " — "):
+        if separator in cleaned:
+            line1, line2 = cleaned.rsplit(separator, 1)
+            return line1, line2
+    return "", cleaned
+
+
+def extract_delivery_address_from_html(html: str) -> dict[str, str] | None:
+    soup = BeautifulSoup(html, "html.parser")
+    return _extract_delivery_address(soup)
+
+
+def _extract_delivery_address(soup: BeautifulSoup) -> dict[str, str] | None:
+    contextual = _text(soup.select_one("#contextualIngressPtLabel_deliveryShortLine"))
+    if contextual:
+        line1, line2 = _split_contextual_address(contextual)
+        return _address_from_lines(line1, line2, contextual)
+
+    contextual_link = soup.select_one("#contextualIngressPtLink[aria-label]")
+    if contextual_link is not None:
+        value = contextual_link.get("aria-label", "")
+        line1, line2 = _split_contextual_address(value)
+        return _address_from_lines(line1, line2, value)
+
+    header_line1 = _text(soup.select_one("#glow-ingress-line1"))
+    header_line2 = _text(soup.select_one("#glow-ingress-line2"))
+    if header_line1 or header_line2:
+        return _address_from_lines(header_line1, header_line2)
+    return None
 
 
 def _extract_seller_summary(soup: BeautifulSoup) -> str:
@@ -186,8 +352,12 @@ def parse_offer_html(html: str, *, marketplace: str, asin: str, url: str) -> Off
         )
 
     price, price_text = _extract_price(soup)
+    price_ex_vat, price_incl_vat = _extract_vat_prices(soup, price)
+    if price is None:
+        price = price_incl_vat or price_ex_vat
+    vat_amount, vat_rate = _calculate_vat(price_ex_vat, price_incl_vat)
     currency = detect_currency(price_text) or market.currency
-    shipping = _extract_shipping(soup)
+    shipping, delivery_date_text, deliverable = _extract_delivery_info(soup)
     title = _extract_title(soup)
     seller_summary = _extract_seller_summary(soup)
     status = "ok"
@@ -203,6 +373,10 @@ def parse_offer_html(html: str, *, marketplace: str, asin: str, url: str) -> Off
         asin=asin,
         title=title,
         price=price,
+        price_ex_vat=price_ex_vat,
+        price_incl_vat=price_incl_vat,
+        vat_amount=vat_amount,
+        vat_rate=vat_rate,
         currency=currency,
         shipping=shipping if price is not None else None,
         total=round(price + shipping, 2) if price is not None else None,
@@ -210,6 +384,10 @@ def parse_offer_html(html: str, *, marketplace: str, asin: str, url: str) -> Off
         seller_summary=seller_summary,
         sold_by_amazon=_sold_by_amazon(soup, marketplace, seller_summary),
         image=_extract_image(soup),
+        delivery_address=_extract_delivery_address(soup),
+        delivery_date_text=delivery_date_text,
+        deliverable=deliverable,
+        eligible_for_best=status == "ok",
         status=status,
         failure_reason=failure_reason,
     )
