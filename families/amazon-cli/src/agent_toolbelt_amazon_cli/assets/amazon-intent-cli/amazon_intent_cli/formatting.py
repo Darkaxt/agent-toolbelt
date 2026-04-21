@@ -135,6 +135,60 @@ def render_text(payload: dict) -> str:
                 f"address={address.get('line2') or address.get('raw')}, "
                 f"hint={record.get('login_hint')}"
             )
+    if payload.get("command") == "cart.add":
+        lines.append(
+            f"Cart add: status={payload.get('status')}, "
+            f"asin={payload.get('asin')}, quantity={payload.get('quantity')}"
+        )
+        lines.append(f"Confirmation detected: {payload.get('cart_confirmation_detected')}")
+        if payload.get("wait_strategy") or payload.get("detected_marker") or payload.get("action_timing_ms") is not None:
+            lines.append(
+                f"Wait strategy: {payload.get('wait_strategy')}, "
+                f"marker={payload.get('detected_marker')}, "
+                f"timing_ms={payload.get('action_timing_ms')}"
+            )
+        if payload.get("quantity_select_method"):
+            lines.append(f"Quantity select method: {payload.get('quantity_select_method')}")
+        phase_timing = payload.get("phase_timing_ms") or {}
+        if phase_timing:
+            phase_order = (
+                "navigate",
+                "dismiss_cookie_banner",
+                "safety_parse",
+                "quantity_select",
+                "add_button_wait",
+                "add_click",
+                "confirmation_wait",
+                "browser_close",
+            )
+            phase_parts = [f"{key}={phase_timing.get(key)}" for key in phase_order if key in phase_timing]
+            lines.append("Phase timing ms: " + ", ".join(phase_parts))
+        if payload.get("warnings"):
+            lines.append("Warnings: " + ", ".join(str(item) for item in payload["warnings"]))
+        if payload.get("final_url"):
+            lines.append(f"Final URL: {payload.get('final_url')}")
+    if payload.get("command") == "cart.remove":
+        lines.append(
+            f"Cart remove: status={payload.get('status')}, "
+            f"asin={payload.get('asin')}, "
+            f"requested={payload.get('quantity_requested')}, "
+            f"removed={payload.get('quantity_removed')}"
+        )
+        lines.append(
+            f"Quantity: before={payload.get('quantity_before')}, "
+            f"after={payload.get('quantity_after')}"
+        )
+        lines.append(f"Removal detected: {payload.get('cart_removal_detected')}")
+        if payload.get("wait_strategy") or payload.get("detected_marker") or payload.get("action_timing_ms") is not None:
+            lines.append(
+                f"Wait strategy: {payload.get('wait_strategy')}, "
+                f"marker={payload.get('detected_marker')}, "
+                f"timing_ms={payload.get('action_timing_ms')}"
+            )
+        if payload.get("warnings"):
+            lines.append("Warnings: " + ", ".join(str(item) for item in payload["warnings"]))
+        if payload.get("final_url"):
+            lines.append(f"Final URL: {payload.get('final_url')}")
     if "items" in payload and "results" not in payload:
         for item in payload["items"]:
             lines.append(f"- {item['asin']}")
@@ -154,4 +208,10 @@ def render_text(payload: dict) -> str:
             f"Session bootstrap for {payload['marketplace']}: "
             f"usable={payload.get('usable')}, source={payload.get('session_source')}"
         )
+        if payload.get("wait_strategy") or payload.get("detected_marker"):
+            lines.append(
+                f"Login detection: strategy={payload.get('wait_strategy')}, "
+                f"marker={payload.get('detected_marker')}, "
+                f"manual_confirm={payload.get('manual_confirm')}"
+            )
     return "\n".join(lines)

@@ -50,7 +50,7 @@ class FakeService:
 
     def get(self, identifier: str, marketplace: str) -> dict:
         self.calls.append(("get", identifier, marketplace))
-        return {"command": "get", "item": {"asin": "B0TEST"}}
+        return {"command": "get", "item": {"asin": "B0TEST"}} 
 
     def reviews(
         self,
@@ -131,6 +131,65 @@ class FakeService:
             "addresses": [],
         }
 
+    def cart_add(
+        self,
+        identifier: str,
+        marketplace: str,
+        *,
+        portal: str = "retail",
+        quantity: int = 1,
+        confirm_cart_add: bool = False,
+    ) -> dict:
+        self.calls.append(("cart_add", identifier, marketplace, portal, quantity, confirm_cart_add))
+        return {
+            "command": "cart.add",
+            "status": "added",
+            "asin": "B0TEST0001",
+            "marketplace": marketplace,
+            "portal": portal,
+            "quantity": quantity,
+            "title": "Pilexil Forte Max",
+            "url": f"https://www.amazon.{marketplace}/dp/B0TEST0001",
+            "final_url": f"https://www.amazon.{marketplace}/cart/smart-wagon",
+            "cart_confirmation_detected": True,
+            "warnings": [],
+            "safety": {
+                "checkout_performed": False,
+                "buy_now_clicked": False,
+            },
+        }
+
+    def cart_remove(
+        self,
+        identifier: str,
+        marketplace: str,
+        *,
+        portal: str = "retail",
+        quantity: int = 1,
+        confirm_cart_remove: bool = False,
+    ) -> dict:
+        self.calls.append(("cart_remove", identifier, marketplace, portal, quantity, confirm_cart_remove))
+        return {
+            "command": "cart.remove",
+            "status": "removed",
+            "asin": "B0TEST0001",
+            "marketplace": marketplace,
+            "portal": portal,
+            "quantity_requested": quantity,
+            "quantity_removed": quantity,
+            "quantity_before": quantity,
+            "quantity_after": 0,
+            "title": "Pilexil Forte Max",
+            "url": f"https://www.amazon.{marketplace}/cart",
+            "final_url": f"https://www.amazon.{marketplace}/cart",
+            "cart_removal_detected": True,
+            "warnings": [],
+            "safety": {
+                "checkout_performed": False,
+                "buy_now_clicked": False,
+            },
+        }
+
     def bootstrap_session(
         self,
         marketplace: str,
@@ -142,6 +201,8 @@ class FakeService:
         user_data_dir: str | None = None,
         profile_directory: str | None = None,
         isolated: bool = False,
+        login_timeout_sec: int = 300,
+        manual_confirm: bool = False,
     ) -> dict:
         self.calls.append(
             (
@@ -154,6 +215,8 @@ class FakeService:
                 user_data_dir,
                 profile_directory,
                 isolated,
+                login_timeout_sec,
+                manual_confirm,
             )
         )
         return {
@@ -360,6 +423,111 @@ def test_address_inspect_outputs_json(monkeypatch, capsys) -> None:
     assert service.calls[0] == ("address_inspect", "business", ["de", "es", "fr", "it"], "de")
 
 
+def test_cart_add_requires_confirmation(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "build_service", lambda: FakeService())
+
+    with pytest.raises(SystemExit):
+        cli.main(["cart", "add", "B0TEST0001", "--marketplace", "es", "--portal", "business"])
+
+
+def test_cart_add_rejects_invalid_quantity(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "build_service", lambda: FakeService())
+
+    with pytest.raises(SystemExit):
+        cli.main(
+            [
+                "cart",
+                "add",
+                "B0TEST0001",
+                "--marketplace",
+                "es",
+                "--quantity",
+                "0",
+                "--confirm-cart-add",
+            ]
+        )
+
+
+def test_cart_add_outputs_json_after_explicit_confirmation(monkeypatch, capsys) -> None:
+    service = FakeService()
+    monkeypatch.setattr(cli, "build_service", lambda: service)
+
+    cli.main(
+        [
+            "cart",
+            "add",
+            "B0TEST0001",
+            "--marketplace",
+            "es",
+            "--portal",
+            "business",
+            "--quantity",
+            "2",
+            "--confirm-cart-add",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["command"] == "cart.add"
+    assert payload["status"] == "added"
+    assert payload["safety"]["checkout_performed"] is False
+    assert payload["safety"]["buy_now_clicked"] is False
+    assert service.calls[0] == ("cart_add", "B0TEST0001", "es", "business", 2, True)
+
+
+def test_cart_remove_requires_confirmation(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "build_service", lambda: FakeService())
+
+    with pytest.raises(SystemExit):
+        cli.main(["cart", "remove", "B0TEST0001", "--marketplace", "es", "--portal", "business"])
+
+
+def test_cart_remove_rejects_invalid_quantity(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "build_service", lambda: FakeService())
+
+    with pytest.raises(SystemExit):
+        cli.main(
+            [
+                "cart",
+                "remove",
+                "B0TEST0001",
+                "--marketplace",
+                "es",
+                "--quantity",
+                "0",
+                "--confirm-cart-remove",
+            ]
+        )
+
+
+def test_cart_remove_outputs_json_after_explicit_confirmation(monkeypatch, capsys) -> None:
+    service = FakeService()
+    monkeypatch.setattr(cli, "build_service", lambda: service)
+
+    cli.main(
+        [
+            "cart",
+            "remove",
+            "B0TEST0001",
+            "--marketplace",
+            "es",
+            "--portal",
+            "business",
+            "--quantity",
+            "2",
+            "--confirm-cart-remove",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["command"] == "cart.remove"
+    assert payload["status"] == "removed"
+    assert payload["cart_removal_detected"] is True
+    assert payload["safety"]["checkout_performed"] is False
+    assert payload["safety"]["buy_now_clicked"] is False
+    assert service.calls[0] == ("cart_remove", "B0TEST0001", "es", "business", 2, True)
+
+
 def test_reviews_outputs_json_without_default_limit(monkeypatch, capsys) -> None:
     service = FakeService()
     monkeypatch.setattr(cli, "build_service", lambda: service)
@@ -476,6 +644,7 @@ def test_session_login_outputs_json(monkeypatch, capsys) -> None:
     assert payload["session_key"] == "de:retail"
     assert service.calls[0][0] == "bootstrap_session"
     assert service.calls[0][3] == r"C:\Chrome\chrome.exe"
+    assert service.calls[0][-2:] == (300, False)
 
 
 def test_session_bootstrap_outputs_json_as_login_alias(monkeypatch, capsys) -> None:
@@ -491,6 +660,40 @@ def test_session_bootstrap_outputs_json_as_login_alias(monkeypatch, capsys) -> N
     assert service.calls[0][0] == "bootstrap_session"
     assert service.calls[0][1] == "fr"
     assert service.calls[0][2] == "retail"
+    assert service.calls[0][-2:] == (300, False)
+
+
+def test_session_login_accepts_auto_detection_timeout_and_manual_fallback(monkeypatch, capsys) -> None:
+    service = FakeService()
+    monkeypatch.setattr(cli, "build_service", lambda: service)
+
+    cli.main(
+        [
+            "session",
+            "login",
+            "--marketplace",
+            "es",
+            "--portal",
+            "business",
+            "--login-timeout-sec",
+            "30",
+            "--manual-confirm",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["session_key"] == "es:business"
+    assert service.calls[0][1] == "es"
+    assert service.calls[0][2] == "business"
+    assert service.calls[0][-2:] == (30, True)
+
+
+@pytest.mark.parametrize("timeout", ["0", "-1"])
+def test_session_login_rejects_invalid_login_timeout(monkeypatch, timeout: str) -> None:
+    monkeypatch.setattr(cli, "build_service", lambda: FakeService())
+
+    with pytest.raises(SystemExit):
+        cli.main(["session", "login", "--login-timeout-sec", timeout])
 
 
 def test_session_login_accepts_business_portal_for_fr(monkeypatch, capsys) -> None:

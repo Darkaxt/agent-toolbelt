@@ -329,7 +329,16 @@ class AmazonCLIBridgeTests(unittest.TestCase):
         self.assertIn("--vat-mode auto", skill_text)
         self.assertIn("trusted_best_offer", skill_text)
         self.assertIn("address_consistency", skill_text)
-        self.assertIn("Do not add products to cart", skill_text)
+        self.assertIn("cart add", skill_text)
+        self.assertIn("--confirm-cart-add", skill_text)
+        self.assertIn("cart remove", skill_text)
+        self.assertIn("--confirm-cart-remove", skill_text)
+        self.assertIn("auto-detected", skill_text)
+        self.assertIn("--manual-confirm", skill_text)
+        self.assertIn("--login-timeout-sec", skill_text)
+        self.assertIn("targeted waits", skill_text)
+        self.assertIn("action_timing_ms", skill_text)
+        self.assertIn("never checkout", skill_text.lower())
         self.assertIn("Repurchase workflow", skill_text)
         self.assertIn("primary marketplace exact search", skill_text)
         self.assertIn("same-format candidate ASIN", skill_text)
@@ -353,6 +362,33 @@ class AmazonCLIBridgeTests(unittest.TestCase):
         self.assertEqual(manifest["license"], "MIT")
         self.assertEqual(marketplace["plugins"][0]["name"], "amazon-cli")
         self.assertEqual(marketplace["plugins"][0]["source"], "./plugins/amazon-cli")
+
+    def test_claude_skill_documents_explicit_cart_safety(self):
+        skill_path = (
+            REPO_ROOT
+            / "families"
+            / "amazon-cli"
+            / "claude"
+            / "marketplaces"
+            / "agent-toolbelt-local"
+            / "plugins"
+            / "amazon-cli"
+            / "skills"
+            / "amazon-cli"
+            / "SKILL.md"
+        )
+
+        skill_text = skill_path.read_text(encoding="utf-8")
+
+        self.assertIn("cart add", skill_text)
+        self.assertIn("--confirm-cart-add", skill_text)
+        self.assertIn("cart remove", skill_text)
+        self.assertIn("--confirm-cart-remove", skill_text)
+        self.assertIn("trusted_best_offer", skill_text)
+        self.assertIn("auto-detected", skill_text)
+        self.assertIn("--manual-confirm", skill_text)
+        self.assertIn("targeted waits", skill_text)
+        self.assertIn("never checkout", skill_text.lower())
 
     def test_claude_wrapper_bootstraps_family_package(self):
         wrapper_path = (

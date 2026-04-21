@@ -975,6 +975,129 @@ def test_fetch_offer_uses_target_marketplace_session_and_amazon_url(monkeypatch)
     assert "eurosaver" not in str(captured).lower()
 
 
+def test_cart_add_requires_managed_session() -> None:
+    service = AmazonService(resolver=FailingResolver(), session_store=MemorySessionStore())
+
+    try:
+        service.cart_add("B0TEST1234", "es", portal="business", confirm_cart_add=True)
+    except BrowserSessionError as exc:
+        assert "amazon-cli session login --marketplace es --portal business" in str(exc)
+    else:
+        raise AssertionError("Expected missing managed session to be rejected")
+
+
+def test_cart_add_delegates_to_managed_browser_action() -> None:
+    store = MemorySessionStore()
+    store.save(managed_session("es", portal="business"))
+    service = AmazonService(resolver=FailingResolver(), session_store=store)
+    calls: list[tuple] = []
+
+    class FakeBootstrapper:
+        def add_to_cart(self, marketplace: str, asin: str, *, portal: str, quantity: int) -> dict:
+            calls.append((marketplace, asin, portal, quantity))
+            return {
+                "status": "added",
+                "asin": asin,
+                "marketplace": marketplace,
+                "portal": portal,
+                "quantity": quantity,
+                "title": "Pilexil Forte Max",
+                "url": f"https://www.amazon.es/dp/{asin}",
+                "final_url": f"https://www.amazon.es/cart/smart-wagon",
+                "cart_confirmation_detected": True,
+                "warnings": [],
+                "safety": {
+                    "checkout_performed": False,
+                    "buy_now_clicked": False,
+                },
+            }
+
+    service.bootstrapper = FakeBootstrapper()
+
+    result = service.cart_add("B0TEST1234", "es", portal="business", quantity=2, confirm_cart_add=True)
+
+    assert result["command"] == "cart.add"
+    assert result["status"] == "added"
+    assert result["safety"]["checkout_performed"] is False
+    assert calls == [("es", "B0TEST1234", "business", 2)]
+
+
+def test_cart_add_rejects_missing_confirmation() -> None:
+    store = MemorySessionStore()
+    store.save(managed_session("es", portal="business"))
+    service = AmazonService(resolver=FailingResolver(), session_store=store)
+
+    try:
+        service.cart_add("B0TEST1234", "es", portal="business", confirm_cart_add=False)
+    except ValueError as exc:
+        assert "--confirm-cart-add" in str(exc)
+    else:
+        raise AssertionError("Expected cart add confirmation to be required")
+
+
+def test_cart_remove_requires_managed_session() -> None:
+    service = AmazonService(resolver=FailingResolver(), session_store=MemorySessionStore())
+
+    try:
+        service.cart_remove("B0TEST1234", "es", portal="business", confirm_cart_remove=True)
+    except BrowserSessionError as exc:
+        assert "amazon-cli session login --marketplace es --portal business" in str(exc)
+    else:
+        raise AssertionError("Expected missing managed session to be rejected")
+
+
+def test_cart_remove_delegates_to_managed_browser_action() -> None:
+    store = MemorySessionStore()
+    store.save(managed_session("es", portal="business"))
+    service = AmazonService(resolver=FailingResolver(), session_store=store)
+    calls: list[tuple] = []
+
+    class FakeBootstrapper:
+        def remove_from_cart(self, marketplace: str, asin: str, *, portal: str, quantity: int) -> dict:
+            calls.append((marketplace, asin, portal, quantity))
+            return {
+                "status": "removed",
+                "asin": asin,
+                "marketplace": marketplace,
+                "portal": portal,
+                "quantity_requested": quantity,
+                "quantity_removed": quantity,
+                "quantity_before": quantity,
+                "quantity_after": 0,
+                "title": "Pilexil Forte Max",
+                "url": "https://www.amazon.es/cart",
+                "final_url": "https://www.amazon.es/cart",
+                "cart_removal_detected": True,
+                "warnings": [],
+                "safety": {
+                    "checkout_performed": False,
+                    "buy_now_clicked": False,
+                },
+            }
+
+    service.bootstrapper = FakeBootstrapper()
+
+    result = service.cart_remove("B0TEST1234", "es", portal="business", quantity=2, confirm_cart_remove=True)
+
+    assert result["command"] == "cart.remove"
+    assert result["status"] == "removed"
+    assert result["safety"]["checkout_performed"] is False
+    assert calls == [("es", "B0TEST1234", "business", 2)]
+
+
+def test_cart_remove_rejects_missing_confirmation() -> None:
+    store = MemorySessionStore()
+    store.save(managed_session("es", portal="business"))
+    service = AmazonService(resolver=FailingResolver(), session_store=store)
+
+    try:
+        service.cart_remove("B0TEST1234", "es", portal="business", confirm_cart_remove=False)
+    except ValueError as exc:
+        assert "--confirm-cart-remove" in str(exc)
+    else:
+        raise AssertionError("Expected cart remove confirmation to be required")
+
+
 def test_pagination_returns_partial_results_when_later_page_fails() -> None:
     service = DummyService(
         resolver=FailingResolver(),
