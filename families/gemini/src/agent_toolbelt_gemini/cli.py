@@ -14,6 +14,7 @@ def build_parser() -> argparse.ArgumentParser:
     url_parser.add_argument("--instruction", required=True)
     url_parser.add_argument("--model")
     url_parser.add_argument("--timeout-sec", type=int, default=180)
+    url_parser.add_argument("--allow-env-credentials", action="store_true")
     url_parser.add_argument("--output", choices=("json", "text"), default="json")
 
     research_parser = subparsers.add_parser(
@@ -23,6 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
     research_parser.add_argument("--question", required=True)
     research_parser.add_argument("--model")
     research_parser.add_argument("--timeout-sec", type=int, default=180)
+    research_parser.add_argument("--allow-env-credentials", action="store_true")
     research_parser.add_argument("--output", choices=("json", "text"), default="json")
     return parser
 
@@ -36,12 +38,14 @@ def main(argv: list[str] | None = None) -> int:
             instruction=args.instruction,
             model=args.model,
             timeout_sec=args.timeout_sec,
+            allow_env_credentials=args.allow_env_credentials,
         )
     else:
         result = gemini.invoke_gemini_research(
             question=args.question,
             model=args.model,
             timeout_sec=args.timeout_sec,
+            allow_env_credentials=args.allow_env_credentials,
         )
 
     if args.output == "text":

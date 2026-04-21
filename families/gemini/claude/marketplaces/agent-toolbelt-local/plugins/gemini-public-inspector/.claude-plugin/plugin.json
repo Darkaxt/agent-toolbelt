@@ -1,6 +1,6 @@
 {
   "name": "gemini-public-inspector",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Uses Gemini CLI for public URL inspection, prioritizing trusted handling for YouTube and Reddit.",
   "author": {
     "name": "Darkaxt",
