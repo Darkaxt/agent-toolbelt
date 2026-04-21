@@ -5,4 +5,5 @@ members = [
   "families/everything",
   "families/uvrun",
   "families/media",
+  "families/outlook-classic-mail",
 ]

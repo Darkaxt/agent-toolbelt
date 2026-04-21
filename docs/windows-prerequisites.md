@@ -6,6 +6,7 @@
 - `families/everything`: `es.exe` available on `PATH` or under `%LOCALAPPDATA%\Tools`
 - `families/uvrun`: `uv` available on `PATH`, plus `uvrun.ps1` or deprecated `uvrun.bat`
 - `families/media`: `yt-dlp`, `ffmpeg`, and `ffprobe` available on `PATH` or under `%LOCALAPPDATA%\Tools`
+- `families/outlook-classic-mail`: Outlook Classic installed and configured locally, `uv` available on `PATH`, and the local client project under `%LOCALAPPDATA%\Tools\outlook-classic-mail`
 
 ## Shared resolution order
 

@@ -10,6 +10,7 @@ Start by choosing the one family you actually need:
 | Everything | global filename and path lookup | `families/everything` | `agent-toolbelt-everything` |
 | UVRun | standalone local Python script routing through `uvrun.ps1` | `families/uvrun` | `agent-toolbelt-uvrun` |
 | Media | public media download and local media file operations | `families/media` | `agent-toolbelt-media` |
+| Outlook Classic Mail | local mail access through Outlook Classic COM with multi-account support | `families/outlook-classic-mail` | `agent-toolbelt-outlook-classic-mail` |
 
 ## Repo layout
 

@@ -26,6 +26,10 @@ FAMILY_IMPORTS = {
         REPO_ROOT / "families" / "media" / "src",
         "agent_toolbelt_media.cli",
     ),
+    "outlook-classic-mail": (
+        REPO_ROOT / "families" / "outlook-classic-mail" / "src",
+        "agent_toolbelt_outlook_classic_mail.cli",
+    ),
 }
 
 
@@ -155,6 +159,30 @@ class FamilyCLITests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["operation"], "download")
+
+    def test_outlook_classic_mail_cli_routes_accounts_command(self):
+        cli = import_family_cli("outlook-classic-mail")
+
+        original_invoke = cli.outlook_classic_mail.invoke_client
+        cli.outlook_classic_mail.invoke_client = lambda **kwargs: {
+            "ok": True,
+            "operation": "accounts",
+            "account": None,
+            "store": None,
+            "result": {"accounts": [{"smtp_address": "demo@example.com"}]},
+            "warnings": [],
+            "stderr": "",
+            "exit_code": 0,
+        }
+        try:
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                exit_code = cli.main(["accounts"])
+                payload = json.loads(buffer.getvalue())
+        finally:
+            cli.outlook_classic_mail.invoke_client = original_invoke
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["operation"], "accounts")
 
 
 if __name__ == "__main__":

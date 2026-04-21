@@ -26,6 +26,11 @@ EXPECTED_FAMILIES = {
         "script_name": "agent-toolbelt-media",
         "package_dir": "agent_toolbelt_media",
     },
+    "outlook-classic-mail": {
+        "project_name": "agent-toolbelt-outlook-classic-mail",
+        "script_name": "agent-toolbelt-outlook-classic-mail",
+        "package_dir": "agent_toolbelt_outlook_classic_mail",
+    },
 }
 
 
@@ -42,6 +47,7 @@ class MonorepoLayoutTests(unittest.TestCase):
                 "families/everything",
                 "families/uvrun",
                 "families/media",
+                "families/outlook-classic-mail",
             ],
         )
 
