@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -13,6 +14,113 @@ CLIENT_HOME_ENV = "AMAZON_INTENT_CLI_HOME"
 CLIENT_FOLDER_NAME = "amazon-intent-cli"
 CLIENT_ENTRYPOINT = "amazon-cli"
 DEFAULT_TIMEOUT_SEC = 600
+BUNDLED_RUNTIME_CLIENT_FOLDER_NAME = "agent-toolbelt-amazon-cli-client"
+BUNDLED_VENV_FOLDER_NAME = "agent-toolbelt-amazon-cli-venv"
+
+
+def package_root() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def bundled_client_home() -> Path:
+    return package_root() / "assets" / "amazon-intent-cli"
+
+
+def bundled_runtime_client_root() -> Path:
+    tools_dir = windows_local_tools_dir()
+    if tools_dir is not None:
+        return tools_dir / BUNDLED_RUNTIME_CLIENT_FOLDER_NAME
+    return Path.home() / ".agent-toolbelt" / BUNDLED_RUNTIME_CLIENT_FOLDER_NAME
+
+
+def bundled_runtime_venv() -> Path:
+    tools_dir = windows_local_tools_dir()
+    if tools_dir is not None:
+        return tools_dir / BUNDLED_VENV_FOLDER_NAME
+    return Path.home() / ".agent-toolbelt" / BUNDLED_VENV_FOLDER_NAME
+
+
+def should_exclude_bundled_client_path(path: Path) -> bool:
+    excluded_names = {
+        ".venv",
+        ".pytest_cache",
+        "__pycache__",
+        "Cookies",
+        "Local State",
+        "todo.md",
+        "derived_todo.md",
+    }
+    excluded_suffixes = {".pyc", ".pyo", ".db", ".sqlite", ".sqlite3", ".ldb", ".log"}
+    return (
+        any(part in excluded_names or part.endswith(".egg-info") for part in path.parts)
+        or path.name in excluded_names
+        or path.suffix.lower() in excluded_suffixes
+    )
+
+
+def bundled_client_fingerprint(source: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(candidate for candidate in source.rglob("*") if candidate.is_file()):
+        relative = path.relative_to(source)
+        if should_exclude_bundled_client_path(relative):
+            continue
+        digest.update(relative.as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def prepare_bundled_runtime_client() -> Path | None:
+    source = bundled_client_home().resolve()
+    if not (source / "pyproject.toml").is_file():
+        return None
+
+    fingerprint = bundled_client_fingerprint(source)
+    root = bundled_runtime_client_root().resolve()
+    target = root / fingerprint
+    if (target / "pyproject.toml").is_file():
+        return target
+
+    root.mkdir(parents=True, exist_ok=True)
+    temp_target = root / f".{fingerprint}.{os.getpid()}.tmp"
+    if temp_target.exists():
+        shutil.rmtree(temp_target)
+    shutil.copytree(
+        source,
+        temp_target,
+        ignore=shutil.ignore_patterns(
+            ".venv",
+            ".pytest_cache",
+            "__pycache__",
+            "*.egg-info",
+            "*.pyc",
+            "*.pyo",
+            "*.db",
+            "*.sqlite",
+            "*.sqlite3",
+            "*.ldb",
+            "*.log",
+            "Cookies",
+            "Local State",
+            "todo.md",
+            "derived_todo.md",
+        ),
+    )
+    try:
+        temp_target.rename(target)
+    except FileExistsError:
+        shutil.rmtree(temp_target)
+    return target
+
+
+def is_bundled_runtime_client(client_home: Path) -> bool:
+    root = bundled_runtime_client_root().resolve()
+    try:
+        client_home.resolve().relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def make_result(
@@ -46,6 +154,10 @@ def resolve_client_home(explicit_home: str | None = None) -> Path | None:
         if candidate.is_dir():
             return candidate
 
+    bundled_home = prepare_bundled_runtime_client()
+    if bundled_home is not None:
+        return bundled_home
+
     tools_dir = windows_local_tools_dir()
     if tools_dir is None:
         return None
@@ -76,9 +188,11 @@ def build_client_command(
     ]
 
 
-def build_client_env() -> dict[str, str]:
+def build_client_env(*, client_home: Path) -> dict[str, str]:
     env = os.environ.copy()
     env.pop("VIRTUAL_ENV", None)
+    if is_bundled_runtime_client(client_home):
+        env["UV_PROJECT_ENVIRONMENT"] = str(bundled_runtime_venv())
     return env
 
 
@@ -149,7 +263,7 @@ def invoke_client(
         uv_executable=uv_executable,
     )
     try:
-        completed = run_process(command, timeout_sec=timeout_sec, env=build_client_env())
+        completed = run_process(command, timeout_sec=timeout_sec, env=build_client_env(client_home=resolved_home))
     except FileNotFoundError as exc:
         return make_result(
             ok=False,

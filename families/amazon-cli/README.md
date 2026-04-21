@@ -1,8 +1,8 @@
 # Amazon CLI
 
-`agent-toolbelt-amazon-cli` bridges agent-toolbelt into the standalone Amazon CLI installed under `%LOCALAPPDATA%\Tools\amazon-intent-cli`.
+`agent-toolbelt-amazon-cli` bridges agent-toolbelt into the bundled Amazon CLI client shipped with this family.
 
-The family does not vendor Amazon scraping code or copy managed browser sessions. It only delegates commands to the local `amazon-cli` project with `uv run --project`.
+The family vendors the Amazon CLI source under `src/agent_toolbelt_amazon_cli/assets/amazon-intent-cli` and delegates commands to that client with `uv run --project`. It does not copy managed browser sessions, browser profiles, cookies, or local runtime storage.
 
 ```powershell
 uv run agent-toolbelt-amazon-cli -- offers B0F2JCZPB4 --marketplace de --marketplaces de,fr,es

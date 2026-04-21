@@ -5,7 +5,7 @@ description: Use the local Amazon CLI for Amazon product search, exact model loo
 
 # Amazon CLI
 
-Use `scripts/invoke_amazon_cli.py` for read-only Amazon marketplace workflows through the local Amazon CLI under `%LOCALAPPDATA%\Tools\amazon-intent-cli`.
+Use `scripts/invoke_amazon_cli.py` for read-only Amazon marketplace workflows through the bundled Amazon CLI client under `agent_toolbelt_amazon_cli/assets/amazon-intent-cli`.
 
 - Prefer `search`, `similar`, `get`, `compare`, `reviews`, and `offers`.
 - Run `session login` only when the user can interact with a headed managed browser.
