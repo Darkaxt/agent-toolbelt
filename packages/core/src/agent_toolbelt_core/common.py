@@ -65,6 +65,11 @@ def resolve_windows_tool(
     path_names: tuple[str, ...] = (),
     local_tool_name: str | None = None,
 ) -> str | None:
+    """Resolve a Windows tool with PATH as the primary machine-wide mechanism.
+
+    The `%LOCALAPPDATA%\\Tools` lookup is kept as a compatibility fallback for
+    older local installs; public docs should not present it as a required path.
+    """
     if explicit_path:
         candidate = Path(explicit_path).expanduser().resolve()
         if candidate.exists():

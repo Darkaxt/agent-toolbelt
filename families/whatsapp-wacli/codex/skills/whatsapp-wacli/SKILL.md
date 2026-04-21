@@ -7,7 +7,7 @@ description: Use local WhatsApp access through the experimental wacli adapter fo
 
 ## Overview
 
-Use `scripts/invoke_whatsapp_wacli.py` for local WhatsApp access through the curated local adapter under `%LOCALAPPDATA%\Tools\whatsapp-wacli-agent`. The adapter uses `steipete/wacli` with an explicit local store and JSON output.
+Use `scripts/invoke_whatsapp_wacli.py` for local WhatsApp access through the curated local adapter project. The wrapper resolves the project through `--client-home`, `WHATSAPP_WACLI_AGENT_HOME`, or the legacy local compatibility project root. The adapter uses `steipete/wacli` with an explicit local store and JSON output.
 
 This skill is experimental and local-first. Use the curated adapter and structured JSON output; do not expose raw `wacli` passthrough or package WhatsApp sessions, message stores, or local database files.
 

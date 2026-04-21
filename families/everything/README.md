@@ -10,7 +10,7 @@ Use this family if you want:
 
 External requirements:
 
-- `es.exe` from Everything for full global lookup
+- `es.exe` from Everything available on `PATH` for full global lookup
 - `rg` for repo-local fallback
 
 CLI:

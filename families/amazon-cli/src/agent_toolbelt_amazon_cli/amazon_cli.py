@@ -153,8 +153,9 @@ def invoke_client(
             operation=operation,
             stderr=(
                 "Amazon CLI client not available. "
-                f"Set {CLIENT_HOME_ENV}, restore the bundled client, or install it under "
-                f"%LOCALAPPDATA%\\Tools\\{CLIENT_FOLDER_NAME}."
+                f"Restore the bundled client, set the {CLIENT_HOME_ENV} environment override, "
+                "or provide the client project root with --client-home. The legacy "
+                "%LOCALAPPDATA%\\Tools project root remains a compatibility fallback."
             ),
             exit_code=127,
         )

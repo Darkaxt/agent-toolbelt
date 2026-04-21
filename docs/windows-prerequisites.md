@@ -3,10 +3,10 @@
 ## Choose the family first
 
 - `families/gemini`: Node.js plus authenticated access for `@google/gemini-cli`
-- `families/everything`: `es.exe` available on `PATH` or under `%LOCALAPPDATA%\Tools`
+- `families/everything`: `es.exe` available on `PATH`
 - `families/uvrun`: `uv` available on `PATH`, plus `uvrun.ps1` or deprecated `uvrun.bat`
-- `families/media`: `yt-dlp`, `ffmpeg`, and `ffprobe` available on `PATH` or under `%LOCALAPPDATA%\Tools`
-- `families/outlook-classic-mail`: Outlook Classic installed and configured locally, `uv` available on `PATH`, and the local client project under `%LOCALAPPDATA%\Tools\outlook-classic-mail`
+- `families/media`: `yt-dlp`, `ffmpeg`, and `ffprobe` available on `PATH`
+- `families/outlook-classic-mail`: Outlook Classic installed and configured locally, `uv` available on `PATH`, and a local Outlook COM client project
 - `families/amazon-cli`: `uv` available on `PATH`; the Amazon CLI client source is bundled, while browser/session runtime state remains under local app data
 
 ## Shared resolution order
@@ -16,7 +16,10 @@ For external binaries, the family packages prefer:
 1. explicit CLI path override when supported
 2. tool-specific environment override
 3. `PATH`
-4. `%LOCALAPPDATA%\Tools`
+
+On Windows, binary families keep `%LOCALAPPDATA%\Tools` as a final compatibility fallback for older local installs. Do not treat it as required when that directory is already on `PATH`.
+
+Project-style clients such as Outlook, WhatsApp, and Amazon need a project root for `uv run --project` or editable execution. Use the documented environment override or `--client-home` when the default project root is not suitable.
 
 ## Suggested environment overrides
 

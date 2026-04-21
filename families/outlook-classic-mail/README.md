@@ -4,7 +4,7 @@ Use this family when an agent needs local mailbox access through Microsoft Outlo
 
 ## What it does
 
-- discovers a standalone Outlook Classic COM client under `%LOCALAPPDATA%\Tools\outlook-classic-mail`
+- discovers a standalone Outlook Classic COM client project from an explicit override or default local project root
 - launches that client through `uv run --project ...`
 - normalizes JSON results for Codex-facing wrappers
 - exposes fast folder discovery before message search for rule-managed Outlook folders
@@ -21,7 +21,7 @@ Use this family when an agent needs local mailbox access through Microsoft Outlo
 
 - Outlook Classic installed and configured with the accounts you want to use
 - `uv` available on `PATH`
-- local client project present at `%LOCALAPPDATA%\Tools\outlook-classic-mail`
+- local client project available through `OUTLOOK_CLASSIC_MAIL_HOME`, `--client-home`, or the default compatibility project root
 
 ## CLI
 
@@ -40,8 +40,9 @@ agent-toolbelt-outlook-classic-mail draft-reply --account demo@example.com --mes
 
 The family bridge uses the external client root in this order:
 
-1. `OUTLOOK_CLASSIC_MAIL_HOME`
-2. `%LOCALAPPDATA%\Tools\outlook-classic-mail`
+1. `--client-home`
+2. `OUTLOOK_CLASSIC_MAIL_HOME`
+3. the legacy `%LOCALAPPDATA%\Tools\outlook-classic-mail` compatibility project root
 
 For sender or service lookups such as "latest emails from X", prefer `find-folders` first. Outlook rules often move mail out of Inbox, and folder discovery is much cheaper than recursively scanning messages.
 

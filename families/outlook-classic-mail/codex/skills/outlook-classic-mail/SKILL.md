@@ -7,7 +7,7 @@ description: Use Outlook Classic on Windows as the default local mail path for i
 
 ## Overview
 
-Use `scripts/invoke_outlook_mail.py` for local mailbox access through Outlook Classic. The wrapper delegates into the `outlook-classic-mail` family package in this repo, which then bridges into the standalone COM client under `%LOCALAPPDATA%\Tools\outlook-classic-mail`.
+Use `scripts/invoke_outlook_mail.py` for local mailbox access through Outlook Classic. The wrapper delegates into the `outlook-classic-mail` family package in this repo, which then bridges into a standalone COM client project resolved by `--client-home`, `OUTLOOK_CLASSIC_MAIL_HOME`, or the legacy local compatibility project root.
 
 ## Routing Rules
 
