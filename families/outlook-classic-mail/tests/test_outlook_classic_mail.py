@@ -9,6 +9,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CORE_SRC = REPO_ROOT / "packages" / "core" / "src"
 FAMILY_SRC = REPO_ROOT / "families" / "outlook-classic-mail" / "src"
+CLAUDE_PLUGIN_META_DIR = "." + "claude-plugin"
 for path in (CORE_SRC, FAMILY_SRC):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
@@ -260,6 +261,72 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("move-message", skill_text)
         self.assertIn("without `--confirm` as a preview", skill_text)
         self.assertIn("explicit user approval", skill_text)
+
+    def test_claude_plugin_manifest_and_marketplace_exist(self):
+        marketplace_root = (
+            REPO_ROOT
+            / "families"
+            / "outlook-classic-mail"
+            / "claude"
+            / "marketplaces"
+            / "agent-toolbelt-local"
+        )
+        plugin_root = marketplace_root / "plugins" / "outlook-classic-mail"
+
+        marketplace = json.loads((marketplace_root / CLAUDE_PLUGIN_META_DIR / "marketplace.json").read_text(encoding="utf-8"))
+        manifest = json.loads((plugin_root / CLAUDE_PLUGIN_META_DIR / "plugin.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(manifest["name"], "outlook-classic-mail")
+        self.assertEqual(manifest["license"], "MIT")
+        self.assertEqual(marketplace["plugins"][0]["name"], "outlook-classic-mail")
+        self.assertEqual(marketplace["plugins"][0]["source"], "./plugins/outlook-classic-mail")
+
+    def test_claude_wrapper_bootstraps_family_package(self):
+        wrapper_path = (
+            REPO_ROOT
+            / "families"
+            / "outlook-classic-mail"
+            / "claude"
+            / "marketplaces"
+            / "agent-toolbelt-local"
+            / "plugins"
+            / "outlook-classic-mail"
+            / "skills"
+            / "outlook-classic-mail"
+            / "scripts"
+            / "invoke_outlook_mail.py"
+        )
+
+        wrapper_text = wrapper_path.read_text(encoding="utf-8")
+
+        self.assertIn("bootstrap_family_package", wrapper_text)
+        self.assertIn('family_name="outlook-classic-mail"', wrapper_text)
+        self.assertIn('package_dir_name="agent_toolbelt_outlook_classic_mail"', wrapper_text)
+        self.assertIn("from agent_toolbelt_outlook_classic_mail import cli", wrapper_text)
+        self.assertNotIn("win32com", wrapper_text.lower())
+
+    def test_claude_skill_documents_outlook_workflows(self):
+        skill_path = (
+            REPO_ROOT
+            / "families"
+            / "outlook-classic-mail"
+            / "claude"
+            / "marketplaces"
+            / "agent-toolbelt-local"
+            / "plugins"
+            / "outlook-classic-mail"
+            / "skills"
+            / "outlook-classic-mail"
+            / "SKILL.md"
+        )
+
+        skill_text = skill_path.read_text(encoding="utf-8")
+
+        self.assertIn("find-folders", skill_text)
+        self.assertIn("find-response", skill_text)
+        self.assertIn("move-message", skill_text)
+        self.assertIn("Gmail", skill_text)
+        self.assertIn("explicit confirmation", skill_text)
 
 
 if __name__ == "__main__":

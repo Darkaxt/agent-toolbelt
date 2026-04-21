@@ -1,0 +1,24 @@
+{
+  "name": "agent-toolbelt-local",
+  "metadata": {
+    "description": "Local marketplace for the agent-toolbelt Outlook Classic Mail Claude plugin."
+  },
+  "owner": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "plugins": [
+    {
+      "name": "outlook-classic-mail",
+      "description": "Uses Outlook Classic on Windows for local multi-account mailbox search, triage, response lookup, drafts, and safe folder moves.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Darkaxt",
+        "email": "opensource@users.noreply.github.com"
+      },
+      "source": "./plugins/outlook-classic-mail",
+      "category": "productivity",
+      "strict": false
+    }
+  ]
+}

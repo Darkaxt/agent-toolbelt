@@ -1,0 +1,17 @@
+{
+  "name": "outlook-classic-mail",
+  "version": "0.1.0",
+  "description": "Uses Outlook Classic on Windows for local multi-account mailbox search, triage, response lookup, drafts, and safe folder moves.",
+  "author": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "outlook",
+    "mail",
+    "email",
+    "windows",
+    "office"
+  ]
+}
