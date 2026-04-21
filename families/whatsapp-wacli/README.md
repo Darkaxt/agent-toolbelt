@@ -1,8 +1,8 @@
 # WhatsApp wacli
 
-Bridge for local WhatsApp access through [`steipete/wacli`](https://github.com/steipete/wacli) and the local curated adapter at `%LOCALAPPDATA%\Tools\whatsapp-wacli-agent`.
+Bridge for local WhatsApp access through [`steipete/wacli`](https://github.com/steipete/wacli) and a local curated adapter project.
 
-This family is intentionally local-first and experimental. Do not publish or install it as a normal plugin until the local acceptance workflow succeeds on the target machine.
+This family is intentionally local-first and experimental. Install the Codex/Claude integrations only after the local adapter authenticates and returns structured chat data on the target machine.
 
 ## Scope
 
@@ -16,12 +16,12 @@ This family is intentionally local-first and experimental. Do not publish or ins
 The family package only bridges into the local client:
 
 ```powershell
-uv run --project "$env:LOCALAPPDATA\Tools\whatsapp-wacli-agent" whatsapp-wacli-agent status
+uv run --project <path-to-whatsapp-wacli-agent> whatsapp-wacli-agent status
 ```
 
-Set `WHATSAPP_WACLI_AGENT_HOME` to override the client location.
+Set `WHATSAPP_WACLI_AGENT_HOME` to point the bridge at the client project.
 
-The sanitized local client source is included under `local-client/` for backup and installation. Install it under `%LOCALAPPDATA%\Tools\whatsapp-wacli-agent` or point `WHATSAPP_WACLI_AGENT_HOME` at another checkout. The repo does not include `wacli`, WhatsApp sessions, message stores, or local database files.
+The sanitized local client source is included under `local-client/` for backup and installation. Use `WHATSAPP_WACLI_AGENT_HOME` or `--client-home` for non-default locations. The legacy `%LOCALAPPDATA%\Tools\whatsapp-wacli-agent` project root remains a compatibility fallback. The repo does not include `wacli`, WhatsApp sessions, message stores, or local database files.
 
 ## CLI
 

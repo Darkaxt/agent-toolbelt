@@ -228,7 +228,10 @@ def missing_binary_result(tool: str, operation: str) -> dict[str, Any]:
         tool=tool,
         operation=operation,
         exit_code=127,
-        stderr=f"{tool} is not available via explicit path, environment override, PATH, or %LOCALAPPDATA%\\Tools.",
+        stderr=(
+            f"{tool} is not available via explicit path, environment override, or PATH. "
+            "%LOCALAPPDATA%\\Tools remains a Windows compatibility fallback for older local installs."
+        ),
     )
 
 

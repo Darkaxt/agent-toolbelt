@@ -90,6 +90,37 @@ class WhatsAppWacliAgentTests(unittest.TestCase):
         self.assertEqual(kwargs["encoding"], "utf-8")
         self.assertEqual(kwargs["errors"], "replace")
 
+    def test_resolve_config_prefers_path_before_local_tools_fallback(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            local_wacli = root / "Tools" / "wacli" / "wacli.exe"
+            path_wacli = root / "path-bin" / "wacli.exe"
+            local_wacli.parent.mkdir(parents=True)
+            path_wacli.parent.mkdir(parents=True)
+            local_wacli.write_text("legacy fallback", encoding="utf-8")
+            path_wacli.write_text("path tool", encoding="utf-8")
+
+            original_local_appdata = agent.os.environ.get("LOCALAPPDATA")
+            original_path = agent.os.environ.get("PATH")
+            agent.os.environ.pop(agent.WACLI_PATH_ENV, None)
+            agent.os.environ.pop(agent.WACLI_STORE_ENV, None)
+            agent.os.environ["LOCALAPPDATA"] = str(root)
+            agent.os.environ["PATH"] = str(path_wacli.parent)
+            try:
+                with patch.object(agent.shutil, "which", side_effect=lambda name: str(path_wacli) if name == "wacli.exe" else None):
+                    cfg = agent.resolve_config()
+            finally:
+                if original_local_appdata is None:
+                    agent.os.environ.pop("LOCALAPPDATA", None)
+                else:
+                    agent.os.environ["LOCALAPPDATA"] = original_local_appdata
+                if original_path is None:
+                    agent.os.environ.pop("PATH", None)
+                else:
+                    agent.os.environ["PATH"] = original_path
+
+        self.assertEqual(cfg.wacli_path, path_wacli.resolve())
+
     def test_find_chat_resolves_single_match(self):
         runner = FakeRunner(
             [

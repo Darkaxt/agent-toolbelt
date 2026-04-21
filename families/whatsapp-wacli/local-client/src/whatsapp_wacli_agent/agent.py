@@ -50,17 +50,13 @@ def resolve_config(
     wacli_path: str | None = None,
     store_dir: str | None = None,
 ) -> Config:
-    path_candidate = (
-        Path(wacli_path)
-        if wacli_path
-        else Path(os.getenv(WACLI_PATH_ENV, ""))
-        if os.getenv(WACLI_PATH_ENV)
-        else local_tools_dir() / "wacli" / "wacli.exe"
-    )
-    if not path_candidate.exists():
+    if wacli_path:
+        path_candidate = Path(wacli_path)
+    elif os.getenv(WACLI_PATH_ENV):
+        path_candidate = Path(os.getenv(WACLI_PATH_ENV, ""))
+    else:
         discovered = shutil.which("wacli.exe") or shutil.which("wacli")
-        if discovered:
-            path_candidate = Path(discovered)
+        path_candidate = Path(discovered) if discovered else local_tools_dir() / "wacli" / "wacli.exe"
 
     store_candidate = (
         Path(store_dir)

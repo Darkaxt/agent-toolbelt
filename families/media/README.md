@@ -11,9 +11,9 @@ Use this family if you want:
 
 External requirements:
 
-- `yt-dlp`
-- `ffmpeg`
-- `ffprobe`
+- `yt-dlp` available on `PATH`
+- `ffmpeg` available on `PATH`
+- `ffprobe` available on `PATH`
 
 CLI:
 

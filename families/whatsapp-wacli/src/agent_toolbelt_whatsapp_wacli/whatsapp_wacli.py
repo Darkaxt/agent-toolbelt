@@ -134,7 +134,9 @@ def invoke_client(
             warnings=["client_missing"],
             stderr=(
                 "WhatsApp wacli agent client not available. "
-                f"Set {CLIENT_HOME_ENV} or install it under %LOCALAPPDATA%\\Tools\\{CLIENT_FOLDER_NAME}."
+                f"Set the {CLIENT_HOME_ENV} environment override or provide the client project root "
+                "with --client-home. The legacy %LOCALAPPDATA%\\Tools project root remains a "
+                "compatibility fallback."
             ),
             exit_code=127,
         )
