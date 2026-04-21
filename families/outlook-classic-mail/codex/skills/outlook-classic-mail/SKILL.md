@@ -30,6 +30,7 @@ Do not use this skill when:
 - Keep mailbox reads and triage non-mutating by default.
 - For "latest emails from X" or similar sender/service lookups, run `find-folders` first, then search matching folders.
 - For "find my response/reply" tasks tied to a received message, use `find-response` first; fall back to manual Sent/Drafts searches only if the command fails or the anchor message cannot be resolved.
+- For reply or forward drafts, `--account` resolves the original message. Add `--send-using-account` when the outgoing draft should use another configured Outlook account, especially when the original recipient account differs from the anchor store.
 - For "move/file/put this email in folder X" tasks, use `find-folders` first when the target is ambiguous, run `move-message` without `--confirm` as a preview, and run `move-message --confirm` only after explicit user approval.
 - If folder discovery finds nothing, search Inbox and state that the scope was Inbox-only unless a bounded all-folder search is explicitly needed.
 - Use `search --all-folders` only as a bounded fallback, and report `matched_folders`, `searched_folders`, and `scope` when relevant.
@@ -48,7 +49,7 @@ python scripts/invoke_outlook_mail.py read-thread --account <smtp|store> --messa
 python scripts/invoke_outlook_mail.py find-response --account <anchor-store> --message-id <entry-id> [--limit <n>] [--fallback-all-accounts] [--exclude-drafts]
 python scripts/invoke_outlook_mail.py move-message --account <smtp|store> --message-id <entry-id> --target-folder <folder-selector> [--confirm]
 python scripts/invoke_outlook_mail.py triage [--account <smtp|store> | --all-accounts] [--days <n>] [--limit <n>]
-python scripts/invoke_outlook_mail.py draft-reply --account <smtp|store> --message-id <entry-id> --instruction "<goal>"
-python scripts/invoke_outlook_mail.py draft-forward --account <smtp|store> --message-id <entry-id> --to "<recipient>" --instruction "<context>"
+python scripts/invoke_outlook_mail.py draft-reply --account <smtp|store> [--send-using-account <smtp|store>] --message-id <entry-id> --instruction "<goal>"
+python scripts/invoke_outlook_mail.py draft-forward --account <smtp|store> [--send-using-account <smtp|store>] --message-id <entry-id> --to "<recipient>" --instruction "<context>"
 python scripts/invoke_outlook_mail.py apply-action --account <smtp|store> --message-id <entry-id> --action <create-draft|send|move|delete|category|mark-read> --confirm
 ```

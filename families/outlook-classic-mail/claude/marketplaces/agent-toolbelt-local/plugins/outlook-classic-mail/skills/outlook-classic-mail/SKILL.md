@@ -21,6 +21,7 @@ Use `scripts/invoke_outlook_mail.py` for local mailbox access through Outlook Cl
 - If folder discovery finds nothing, search Inbox and state the scope unless a bounded all-folder search is needed.
 - Use `search --all-folders` only as a bounded fallback, and report `matched_folders`, `searched_folders`, and `scope` when relevant.
 - For "find my response/reply" tasks tied to a received message, use `find-response` before manual Sent/Drafts searches.
+- For reply or forward drafts, `--account` resolves the original message. Add `--send-using-account` when the outgoing draft should use another configured Outlook account.
 - For "move/file/put this email in folder X" tasks, run `find-folders` when the target is ambiguous, then run `move-message` without `--confirm` as a preview.
 - Run `move-message --confirm` only after explicit confirmation from the user.
 
@@ -42,7 +43,7 @@ python scripts/invoke_outlook_mail.py read-thread --account <smtp|store> --messa
 python scripts/invoke_outlook_mail.py find-response --account <anchor-store> --message-id <entry-id> [--limit <n>] [--fallback-all-accounts] [--exclude-drafts]
 python scripts/invoke_outlook_mail.py move-message --account <smtp|store> --message-id <entry-id> --target-folder <folder-selector> [--confirm]
 python scripts/invoke_outlook_mail.py triage [--account <smtp|store> | --all-accounts] [--days <n>] [--limit <n>]
-python scripts/invoke_outlook_mail.py draft-reply --account <smtp|store> --message-id <entry-id> --instruction "<goal>"
-python scripts/invoke_outlook_mail.py draft-forward --account <smtp|store> --message-id <entry-id> --to "<recipient>" --instruction "<context>"
+python scripts/invoke_outlook_mail.py draft-reply --account <smtp|store> [--send-using-account <smtp|store>] --message-id <entry-id> --instruction "<goal>"
+python scripts/invoke_outlook_mail.py draft-forward --account <smtp|store> [--send-using-account <smtp|store>] --message-id <entry-id> --to "<recipient>" --instruction "<context>"
 python scripts/invoke_outlook_mail.py apply-action --account <smtp|store> --message-id <entry-id> --action <create-draft|send|move|delete|category|mark-read> --confirm
 ```
