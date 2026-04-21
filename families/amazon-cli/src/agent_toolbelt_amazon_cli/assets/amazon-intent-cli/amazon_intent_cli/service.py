@@ -1038,6 +1038,74 @@ class AmazonService:
             "failures": [offer.to_dict() for offer in failures],
         }
 
+    def cart_add(
+        self,
+        identifier: str,
+        marketplace: str,
+        *,
+        portal: str = "retail",
+        quantity: int = 1,
+        confirm_cart_add: bool = False,
+    ) -> dict:
+        if not confirm_cart_add:
+            raise ValueError("cart add requires --confirm-cart-add")
+        if quantity < 1 or quantity > 99:
+            raise ValueError("--quantity must be between 1 and 99")
+        make_session_key(marketplace, portal)
+        resolved_marketplace = marketplace_from_identifier(identifier, marketplace)
+        asin = extract_asin(identifier)
+        if not asin:
+            raise ValueError(f"Could not determine ASIN from identifier: {identifier}")
+
+        session = self.session_store.load(resolved_marketplace, portal=portal)
+        if session is None or session.session_source != "managed_profile":
+            raise BrowserSessionError(
+                f"Managed {portal} session is missing. "
+                f"{self._session_login_hint(resolved_marketplace, portal)}"
+            )
+
+        receipt = self.bootstrapper.add_to_cart(
+            resolved_marketplace,
+            asin,
+            portal=portal,
+            quantity=quantity,
+        )
+        return {"command": "cart.add", **receipt}
+
+    def cart_remove(
+        self,
+        identifier: str,
+        marketplace: str,
+        *,
+        portal: str = "retail",
+        quantity: int = 1,
+        confirm_cart_remove: bool = False,
+    ) -> dict:
+        if not confirm_cart_remove:
+            raise ValueError("cart remove requires --confirm-cart-remove")
+        if quantity < 1 or quantity > 99:
+            raise ValueError("--quantity must be between 1 and 99")
+        make_session_key(marketplace, portal)
+        resolved_marketplace = marketplace_from_identifier(identifier, marketplace)
+        asin = extract_asin(identifier)
+        if not asin:
+            raise ValueError(f"Could not determine ASIN from identifier: {identifier}")
+
+        session = self.session_store.load(resolved_marketplace, portal=portal)
+        if session is None or session.session_source != "managed_profile":
+            raise BrowserSessionError(
+                f"Managed {portal} session is missing. "
+                f"{self._session_login_hint(resolved_marketplace, portal)}"
+            )
+
+        receipt = self.bootstrapper.remove_from_cart(
+            resolved_marketplace,
+            asin,
+            portal=portal,
+            quantity=quantity,
+        )
+        return {"command": "cart.remove", **receipt}
+
     def address_inspect(
         self,
         *,
@@ -1356,6 +1424,8 @@ class AmazonService:
         user_data_dir: str | None = None,
         profile_directory: str | None = None,
         isolated: bool = False,
+        login_timeout_sec: int = 300,
+        manual_confirm: bool = False,
     ) -> dict:
         return self.bootstrapper.login(
             marketplace,
@@ -1363,4 +1433,6 @@ class AmazonService:
             portal=portal,
             headless=headless,
             url=url,
+            login_timeout_sec=login_timeout_sec,
+            manual_confirm=manual_confirm,
         )

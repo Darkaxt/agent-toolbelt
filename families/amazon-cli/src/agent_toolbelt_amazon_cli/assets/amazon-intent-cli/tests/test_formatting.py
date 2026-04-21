@@ -67,3 +67,63 @@ def test_offers_text_renders_vat_delivery_and_address_status() -> None:
     assert "basis=ex_vat" in output
     assert "delivery=28 - 29 April" in output
     assert "address_match=True" in output
+
+
+def test_cart_add_text_renders_targeted_wait_diagnostics() -> None:
+    output = render_text(
+        {
+            "command": "cart.add",
+            "status": "added",
+            "asin": "B0DHVGHPF9",
+            "quantity": 1,
+            "cart_confirmation_detected": True,
+            "action_timing_ms": 1234,
+            "wait_strategy": "targeted",
+            "detected_marker": "url:cart",
+            "quantity_select_method": "aui_dropdown",
+            "phase_timing_ms": {
+                "navigate": 500,
+                "dismiss_cookie_banner": 1,
+                "safety_parse": 2,
+                "quantity_select": 100,
+                "add_button_wait": 0,
+                "add_click": 30,
+                "confirmation_wait": 550,
+                "browser_close": 50,
+            },
+            "warnings": [],
+            "final_url": "https://www.amazon.es/cart/smart-wagon",
+        }
+    )
+
+    assert "Wait strategy: targeted, marker=url:cart, timing_ms=1234" in output
+    assert "Quantity select method: aui_dropdown" in output
+    assert (
+        "Phase timing ms: navigate=500, dismiss_cookie_banner=1, safety_parse=2, "
+        "quantity_select=100, add_button_wait=0, add_click=30, confirmation_wait=550, browser_close=50"
+    ) in output
+
+
+def test_cart_remove_text_renders_quantity_and_targeted_wait_diagnostics() -> None:
+    output = render_text(
+        {
+            "command": "cart.remove",
+            "status": "removed",
+            "asin": "B0DHVGHPF9",
+            "quantity_requested": 1,
+            "quantity_removed": 1,
+            "quantity_before": 1,
+            "quantity_after": 0,
+            "cart_removal_detected": True,
+            "action_timing_ms": 4321,
+            "wait_strategy": "targeted",
+            "detected_marker": "row_removed",
+            "warnings": [],
+            "final_url": "https://www.amazon.es/cart",
+        }
+    )
+
+    assert "Cart remove: status=removed, asin=B0DHVGHPF9, requested=1, removed=1" in output
+    assert "Quantity: before=1, after=0" in output
+    assert "Removal detected: True" in output
+    assert "Wait strategy: targeted, marker=row_removed, timing_ms=4321" in output

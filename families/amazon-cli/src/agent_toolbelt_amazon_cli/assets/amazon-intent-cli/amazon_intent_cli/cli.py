@@ -92,6 +92,21 @@ def _build_parser() -> argparse.ArgumentParser:
     address_inspect_parser.add_argument("--reference-marketplace", default=DEFAULT_MARKETPLACE)
     address_inspect_parser.add_argument("--text", action="store_true")
 
+    cart_parser = subparsers.add_parser("cart")
+    cart_subparsers = cart_parser.add_subparsers(dest="cart_command", required=True)
+    cart_add_parser = cart_subparsers.add_parser("add")
+    cart_add_parser.add_argument("identifier")
+    cart_add_parser.add_argument("--portal", default="retail", choices=sorted(SUPPORTED_PORTALS))
+    cart_add_parser.add_argument("--quantity", type=int, default=1)
+    cart_add_parser.add_argument("--confirm-cart-add", action="store_true")
+    add_common_flags(cart_add_parser)
+    cart_remove_parser = cart_subparsers.add_parser("remove")
+    cart_remove_parser.add_argument("identifier")
+    cart_remove_parser.add_argument("--portal", default="retail", choices=sorted(SUPPORTED_PORTALS))
+    cart_remove_parser.add_argument("--quantity", type=int, default=1)
+    cart_remove_parser.add_argument("--confirm-cart-remove", action="store_true")
+    add_common_flags(cart_remove_parser)
+
     session_parser = subparsers.add_parser("session")
     session_subparsers = session_parser.add_subparsers(dest="session_command", required=True)
 
@@ -102,6 +117,8 @@ def _build_parser() -> argparse.ArgumentParser:
         command_parser.add_argument("--browser-executable")
         command_parser.add_argument("--headless", action="store_true")
         command_parser.add_argument("--url")
+        command_parser.add_argument("--login-timeout-sec", type=int, default=300)
+        command_parser.add_argument("--manual-confirm", action="store_true")
         command_parser.add_argument("--user-data-dir", help=argparse.SUPPRESS)
         command_parser.add_argument("--profile-directory", help=argparse.SUPPRESS)
         command_parser.add_argument("--isolated", action="store_true", help=argparse.SUPPRESS)
@@ -165,6 +182,18 @@ def _validate_managed_session_args(parser: argparse.ArgumentParser, args: argpar
             "--user-data-dir, --profile-directory, and --isolated are no longer supported. "
             "Use managed sessions with `amazon-cli session login --marketplace <code> --portal retail`."
         )
+    login_timeout_sec = getattr(args, "login_timeout_sec", 300)
+    if login_timeout_sec < 1:
+        parser.error("--login-timeout-sec must be at least 1")
+
+
+def _validate_cart_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if getattr(args, "quantity", 1) < 1 or getattr(args, "quantity", 1) > 99:
+        parser.error("--quantity must be between 1 and 99")
+    if getattr(args, "cart_command", None) == "add" and not getattr(args, "confirm_cart_add", False):
+        parser.error("cart add requires --confirm-cart-add")
+    if getattr(args, "cart_command", None) == "remove" and not getattr(args, "confirm_cart_remove", False):
+        parser.error("cart remove requires --confirm-cart-remove")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -187,6 +216,9 @@ def main(argv: list[str] | None = None) -> int:
             get_marketplace(args.reference_marketplace)
         except ValueError as exc:
             parser.error(str(exc))
+    if args.command == "cart":
+        _validate_portal_args(parser, args)
+        _validate_cart_args(parser, args)
     if args.command == "session":
         _validate_portal_args(parser, args)
         _validate_managed_session_args(parser, args)
@@ -247,6 +279,23 @@ def main(argv: list[str] | None = None) -> int:
                 marketplaces=args.marketplaces,
                 reference_marketplace=args.reference_marketplace,
             )
+        elif args.command == "cart":
+            if args.cart_command == "add":
+                payload = service.cart_add(
+                    args.identifier,
+                    args.marketplace,
+                    portal=args.portal,
+                    quantity=args.quantity,
+                    confirm_cart_add=args.confirm_cart_add,
+                )
+            else:
+                payload = service.cart_remove(
+                    args.identifier,
+                    args.marketplace,
+                    portal=args.portal,
+                    quantity=args.quantity,
+                    confirm_cart_remove=args.confirm_cart_remove,
+                )
         else:
             payload = service.bootstrap_session(
                 args.marketplace,
@@ -257,6 +306,8 @@ def main(argv: list[str] | None = None) -> int:
                 user_data_dir=args.user_data_dir,
                 profile_directory=args.profile_directory,
                 isolated=args.isolated,
+                login_timeout_sec=args.login_timeout_sec,
+                manual_confirm=args.manual_confirm,
             )
     except (AmazonBlockedError, IntentResolutionError, BrowserSessionError, ValueError) as exc:
         marketplace = getattr(args, "marketplace", "de")
