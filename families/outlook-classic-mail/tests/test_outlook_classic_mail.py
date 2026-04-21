@@ -163,6 +163,23 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
             ],
         )
 
+    def test_codex_skill_documents_recipient_account_sent_lookup(self):
+        skill_path = (
+            REPO_ROOT
+            / "families"
+            / "outlook-classic-mail"
+            / "codex"
+            / "skills"
+            / "outlook-classic-mail"
+            / "SKILL.md"
+        )
+
+        skill_text = skill_path.read_text(encoding="utf-8")
+
+        self.assertIn("original recipient account", skill_text)
+        self.assertIn("Sent", skill_text)
+        self.assertIn("Drafts", skill_text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -39,3 +39,5 @@ The family bridge uses the external client root in this order:
 2. `%LOCALAPPDATA%\Tools\outlook-classic-mail`
 
 For sender or service lookups such as "latest emails from X", prefer `find-folders` first. Outlook rules often move mail out of Inbox, and folder discovery is much cheaper than recursively scanning messages.
+
+For response lookups such as "find my response to this email", use the original recipient account as the first search target. Check that account/store's Sent and Drafts folders before broadening to other Outlook stores.

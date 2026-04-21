@@ -29,6 +29,7 @@ Do not use this skill when:
 - Fall back to the Gmail connector only when the user explicitly asks for Gmail, Outlook Classic is unavailable, or the request truly depends on Gmail-only behavior.
 - Keep mailbox reads and triage non-mutating by default.
 - For "latest emails from X" or similar sender/service lookups, run `find-folders` first, then search matching folders.
+- For "find my response/reply" tasks tied to a received message, identify the original recipient account first and check that account/store's Sent and Drafts folders before searching other accounts.
 - If folder discovery finds nothing, search Inbox and state that the scope was Inbox-only unless a bounded all-folder search is explicitly needed.
 - Use `search --all-folders` only as a bounded fallback, and report `matched_folders`, `searched_folders`, and `scope` when relevant.
 - Treat draft creation, send, move, delete, category changes, and mark-read changes as explicit actions that require confirmation.
