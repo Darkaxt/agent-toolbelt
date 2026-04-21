@@ -6,12 +6,12 @@ Start by choosing the one family you actually need:
 
 | Family | Use it for | Folder | Primary CLI |
 | --- | --- | --- | --- |
-| Gemini | public URL inspection and Codex research cross-checks | `families/gemini` | `agent-toolbelt-gemini` |
+| Amazon CLI | Amazon product search, specs, reviews, offers, and managed session workflows through a bundled Amazon CLI client | `families/amazon-cli` | `agent-toolbelt-amazon-cli` |
 | Everything | global filename and path lookup | `families/everything` | `agent-toolbelt-everything` |
-| UVRun | standalone local Python script routing through `uvrun.ps1` | `families/uvrun` | `agent-toolbelt-uvrun` |
+| Gemini | public URL inspection and Codex research cross-checks | `families/gemini` | `agent-toolbelt-gemini` |
 | Media | public media download and local media file operations | `families/media` | `agent-toolbelt-media` |
 | Outlook Classic Mail | local mail access through Outlook Classic COM with multi-account support | `families/outlook-classic-mail` | `agent-toolbelt-outlook-classic-mail` |
-| Amazon CLI | Amazon product search, specs, reviews, offers, and managed session workflows through a bundled Amazon CLI client | `families/amazon-cli` | `agent-toolbelt-amazon-cli` |
+| UVRun | standalone local Python script routing through `uvrun.ps1` | `families/uvrun` | `agent-toolbelt-uvrun` |
 | WhatsApp wacli | experimental local WhatsApp access through a curated `wacli` adapter | `families/whatsapp-wacli` | `agent-toolbelt-whatsapp-wacli` |
 
 ## Repo layout
