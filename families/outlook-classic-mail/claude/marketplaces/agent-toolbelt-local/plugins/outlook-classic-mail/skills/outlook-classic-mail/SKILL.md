@@ -21,6 +21,8 @@ Use `scripts/invoke_outlook_mail.py` for local mailbox access through Outlook Cl
 - If folder discovery finds nothing, search Inbox and state the scope unless a bounded all-folder search is needed.
 - Use `search --all-folders` only as a bounded fallback, and report `matched_folders`, `searched_folders`, and `scope` when relevant.
 - For "find my response/reply" tasks tied to a received message, use `find-response` before manual Sent/Drafts searches.
+- For domain age or blocklist evidence, use `inspect-domains` for one message or `scan-domain-refs` for a bounded folder scan; these commands are read-only.
+- Use `blocklists status` to inspect the local DNS blocklist cache and `blocklists refresh` only when cache maintenance is explicitly needed.
 - For reply or forward drafts, `--account` resolves the original message. Add `--send-using-account` when the outgoing draft should use another configured Outlook account.
 - For "move/file/put this email in folder X" tasks, run `find-folders` when the target is ambiguous, then run `move-message` without `--confirm` as a preview.
 - Run `move-message --confirm` only after explicit confirmation from the user.
@@ -41,6 +43,9 @@ python scripts/invoke_outlook_mail.py search --account <smtp|store> [--folder in
 python scripts/invoke_outlook_mail.py search --all-folders --query <text> [--account <smtp|store>|--all-accounts] [--folder-limit <n>] [--per-folder-limit <n>]
 python scripts/invoke_outlook_mail.py read-thread --account <smtp|store> --message-id <entry-id>
 python scripts/invoke_outlook_mail.py find-response --account <anchor-store> --message-id <entry-id> [--limit <n>] [--fallback-all-accounts] [--exclude-drafts]
+python scripts/invoke_outlook_mail.py inspect-domains --account <smtp|store> --message-id <entry-id> [--with-rdap] [--young-days <n>] [--rdap-cache <sqlite-path>] [--with-blocklists] [--blocklist-profile threat|debug-all] [--blocklist-cache <sqlite-path>]
+python scripts/invoke_outlook_mail.py scan-domain-refs --account <smtp|store> --folder inbox|custom:<path> [--days <n>] [--limit <n>] [--with-rdap] [--young-days <n>] [--rdap-cache <sqlite-path>] [--with-blocklists] [--blocklist-profile threat|debug-all] [--blocklist-cache <sqlite-path>]
+python scripts/invoke_outlook_mail.py blocklists status|refresh [--blocklist-profile threat|debug-all] [--blocklist-cache <sqlite-path>] [--force]
 python scripts/invoke_outlook_mail.py move-message --account <smtp|store> --message-id <entry-id> --target-folder <folder-selector> [--confirm]
 python scripts/invoke_outlook_mail.py triage [--account <smtp|store> | --all-accounts] [--days <n>] [--limit <n>]
 python scripts/invoke_outlook_mail.py draft-reply --account <smtp|store> [--send-using-account <smtp|store>] --message-id <entry-id> --instruction "<goal>"

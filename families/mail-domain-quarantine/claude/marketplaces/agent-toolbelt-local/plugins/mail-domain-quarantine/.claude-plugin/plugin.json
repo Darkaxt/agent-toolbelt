@@ -1,0 +1,17 @@
+{
+  "name": "mail-domain-quarantine",
+  "version": "0.1.0",
+  "description": "Outlook mail quarantine dry runs and confirmed moves based on domain age and blocklist evidence.",
+  "author": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "outlook",
+    "mail",
+    "quarantine",
+    "domain",
+    "blocklist"
+  ]
+}

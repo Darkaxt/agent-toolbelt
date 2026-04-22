@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-toolbelt-mail-domain-quarantine"
+version = "0.1.0"
+description = "Quarantine recent mail that references newly registered domains."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Darkaxt" }]
+dependencies = [
+  "agent-toolbelt-core",
+  "agent-toolbelt-observable-reputation",
+  "agent-toolbelt-outlook-classic-mail",
+]
+
+[project.scripts]
+agent-toolbelt-mail-domain-quarantine = "mail_domain_quarantine.cli:entrypoint"
+
+[tool.uv.sources]
+agent-toolbelt-core = { workspace = true }
+agent-toolbelt-observable-reputation = { workspace = true }
+agent-toolbelt-outlook-classic-mail = { workspace = true }
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

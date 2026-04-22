@@ -217,6 +217,40 @@ def build_parser() -> argparse.ArgumentParser:
     read_thread.add_argument("--account", required=True)
     read_thread.add_argument("--message-id", required=True)
 
+    blocklists = subparsers.add_parser("blocklists", help="Inspect or refresh local DNS blocklist cache.")
+    blocklists.add_argument("action", choices=("status", "refresh"))
+    blocklists.add_argument("--blocklist-profile", choices=("threat", "debug-all"), default="threat")
+    blocklists.add_argument("--blocklist-cache")
+    blocklists.add_argument("--force", action="store_true")
+
+    inspect_domains = subparsers.add_parser(
+        "inspect-domains",
+        help="Inspect domain references on one message without mutating mail.",
+    )
+    inspect_domains.add_argument("--account", required=True)
+    inspect_domains.add_argument("--message-id", required=True)
+    inspect_domains.add_argument("--with-rdap", action="store_true")
+    inspect_domains.add_argument("--young-days", type=int, default=365)
+    inspect_domains.add_argument("--rdap-cache")
+    inspect_domains.add_argument("--with-blocklists", action="store_true")
+    inspect_domains.add_argument("--blocklist-profile", choices=("threat", "debug-all"), default="threat")
+    inspect_domains.add_argument("--blocklist-cache")
+
+    scan_domain_refs = subparsers.add_parser(
+        "scan-domain-refs",
+        help="Inspect domain references for recent messages in one folder without mutating mail.",
+    )
+    scan_domain_refs.add_argument("--account", required=True)
+    scan_domain_refs.add_argument("--folder", default="inbox")
+    scan_domain_refs.add_argument("--days", type=int, default=7)
+    scan_domain_refs.add_argument("--limit", type=int, default=20)
+    scan_domain_refs.add_argument("--with-rdap", action="store_true")
+    scan_domain_refs.add_argument("--young-days", type=int, default=365)
+    scan_domain_refs.add_argument("--rdap-cache")
+    scan_domain_refs.add_argument("--with-blocklists", action="store_true")
+    scan_domain_refs.add_argument("--blocklist-profile", choices=("threat", "debug-all"), default="threat")
+    scan_domain_refs.add_argument("--blocklist-cache")
+
     find_response = subparsers.add_parser("find-response", help="Find sent or draft responses to a message.")
     find_response.add_argument("--account", required=True)
     find_response.add_argument("--message-id", required=True)
@@ -321,6 +355,49 @@ def build_operation_args(args: argparse.Namespace) -> list[str]:
 
     if args.operation == "read-thread":
         return [*parts, "--account", args.account, "--message-id", args.message_id]
+
+    if args.operation == "blocklists":
+        parts.append(args.action)
+        parts.extend(["--blocklist-profile", args.blocklist_profile])
+        append_optional_arg(parts, "--blocklist-cache", args.blocklist_cache)
+        if args.force:
+            parts.append("--force")
+        return parts
+
+    if args.operation == "inspect-domains":
+        parts.extend(["--account", args.account, "--message-id", args.message_id])
+        if args.with_rdap:
+            parts.append("--with-rdap")
+        parts.extend(["--young-days", str(args.young_days)])
+        append_optional_arg(parts, "--rdap-cache", args.rdap_cache)
+        if args.with_blocklists:
+            parts.append("--with-blocklists")
+        parts.extend(["--blocklist-profile", args.blocklist_profile])
+        append_optional_arg(parts, "--blocklist-cache", args.blocklist_cache)
+        return parts
+
+    if args.operation == "scan-domain-refs":
+        parts.extend(
+            [
+                "--account",
+                args.account,
+                "--folder",
+                args.folder,
+                "--days",
+                str(args.days),
+                "--limit",
+                str(args.limit),
+            ]
+        )
+        if args.with_rdap:
+            parts.append("--with-rdap")
+        parts.extend(["--young-days", str(args.young_days)])
+        append_optional_arg(parts, "--rdap-cache", args.rdap_cache)
+        if args.with_blocklists:
+            parts.append("--with-blocklists")
+        parts.extend(["--blocklist-profile", args.blocklist_profile])
+        append_optional_arg(parts, "--blocklist-cache", args.blocklist_cache)
+        return parts
 
     if args.operation == "find-response":
         parts.extend(["--account", args.account, "--message-id", args.message_id, "--limit", str(args.limit)])

@@ -6,6 +6,8 @@ members = [
   "families/uvrun",
   "families/media",
   "families/outlook-classic-mail",
+  "families/observable-reputation",
+  "families/mail-domain-quarantine",
   "families/amazon-cli",
   "families/whatsapp-wacli",
 ]

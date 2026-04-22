@@ -1,0 +1,6 @@
+interface:
+  display_name: "Mail Domain Quarantine"
+  short_description: "Dry-run or apply Outlook mail quarantine by domain age and blocklist evidence."
+  default_prompt: "Use $mail-domain-quarantine for local Outlook domain-risk dry runs and explicitly confirmed quarantine moves."
+policy:
+  allow_implicit_invocation: true

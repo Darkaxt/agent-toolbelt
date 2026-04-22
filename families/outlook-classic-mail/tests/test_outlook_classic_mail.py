@@ -269,6 +269,80 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
             ],
         )
 
+    def test_build_operation_args_routes_domain_inspection_with_blocklists(self):
+        parser = outlook_classic_mail.build_parser()
+        args = parser.parse_args(
+            [
+                "inspect-domains",
+                "--account",
+                "demo@example.com",
+                "--message-id",
+                "entry-1",
+                "--with-rdap",
+                "--young-days",
+                "30",
+                "--rdap-cache",
+                "state/domain_cache.sqlite",
+                "--with-blocklists",
+                "--blocklist-profile",
+                "threat",
+                "--blocklist-cache",
+                "state/blocklist_cache.sqlite",
+            ]
+        )
+
+        operation_args = outlook_classic_mail.build_operation_args(args)
+
+        self.assertEqual(
+            operation_args,
+            [
+                "inspect-domains",
+                "--account",
+                "demo@example.com",
+                "--message-id",
+                "entry-1",
+                "--with-rdap",
+                "--young-days",
+                "30",
+                "--rdap-cache",
+                "state/domain_cache.sqlite",
+                "--with-blocklists",
+                "--blocklist-profile",
+                "threat",
+                "--blocklist-cache",
+                "state/blocklist_cache.sqlite",
+            ],
+        )
+
+    def test_build_operation_args_routes_blocklist_cache_refresh(self):
+        parser = outlook_classic_mail.build_parser()
+        args = parser.parse_args(
+            [
+                "blocklists",
+                "refresh",
+                "--blocklist-profile",
+                "debug-all",
+                "--blocklist-cache",
+                "state/blocklist_cache.sqlite",
+                "--force",
+            ]
+        )
+
+        operation_args = outlook_classic_mail.build_operation_args(args)
+
+        self.assertEqual(
+            operation_args,
+            [
+                "blocklists",
+                "refresh",
+                "--blocklist-profile",
+                "debug-all",
+                "--blocklist-cache",
+                "state/blocklist_cache.sqlite",
+                "--force",
+            ],
+        )
+
     def test_codex_skill_documents_find_response_lookup(self):
         skill_path = (
             REPO_ROOT
@@ -365,6 +439,8 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
 
         self.assertIn("find-folders", skill_text)
         self.assertIn("find-response", skill_text)
+        self.assertIn("scan-domain-refs", skill_text)
+        self.assertIn("blocklists status", skill_text)
         self.assertIn("move-message", skill_text)
         self.assertIn("Gmail", skill_text)
         self.assertIn("explicit confirmation", skill_text)
