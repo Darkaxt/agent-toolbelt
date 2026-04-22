@@ -1,0 +1,17 @@
+{
+  "name": "observable-reputation",
+  "version": "0.1.0",
+  "description": "Passive reputation checks for URL, domain, and IP observables.",
+  "author": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "osint",
+    "reputation",
+    "domain",
+    "url",
+    "ip"
+  ]
+}

@@ -9,6 +9,8 @@ Each family ships its own Codex skill bundle. Install only the family you want.
 - UVRun: `families/uvrun/codex/skills/uvrun-python`
 - Media: `families/media/codex/skills/yt-dlp-ffmpeg`
 - Outlook Classic Mail: `families/outlook-classic-mail/codex/skills/outlook-classic-mail`
+- Observable Reputation: `families/observable-reputation/codex/skills/observable-reputation`
+- Mail Domain Quarantine: `families/mail-domain-quarantine/codex/skills/mail-domain-quarantine`
 
 ## Install flow
 

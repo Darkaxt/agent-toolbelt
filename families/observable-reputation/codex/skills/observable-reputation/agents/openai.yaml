@@ -1,0 +1,6 @@
+interface:
+  display_name: "Observable Reputation"
+  short_description: "Passive reputation checks for domains, URLs, and IPs."
+  default_prompt: "Use $observable-reputation for passive OSINT enrichment of URL, domain, and IP observables without submissions or fresh scans."
+policy:
+  allow_implicit_invocation: true

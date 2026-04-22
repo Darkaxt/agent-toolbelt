@@ -1,0 +1,24 @@
+{
+  "name": "agent-toolbelt-local",
+  "metadata": {
+    "description": "Local marketplace for the agent-toolbelt Observable Reputation Claude plugin."
+  },
+  "owner": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "plugins": [
+    {
+      "name": "observable-reputation",
+      "description": "Passive reputation checks for URL, domain, and IP observables.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Darkaxt",
+        "email": "opensource@users.noreply.github.com"
+      },
+      "source": "./plugins/observable-reputation",
+      "category": "productivity",
+      "strict": false
+    }
+  ]
+}

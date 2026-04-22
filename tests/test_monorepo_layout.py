@@ -31,6 +31,16 @@ EXPECTED_FAMILIES = {
         "script_name": "agent-toolbelt-outlook-classic-mail",
         "package_dir": "agent_toolbelt_outlook_classic_mail",
     },
+    "observable-reputation": {
+        "project_name": "agent-toolbelt-observable-reputation",
+        "script_name": "agent-toolbelt-observable-reputation",
+        "package_dir": "observable_reputation",
+    },
+    "mail-domain-quarantine": {
+        "project_name": "agent-toolbelt-mail-domain-quarantine",
+        "script_name": "agent-toolbelt-mail-domain-quarantine",
+        "package_dir": "mail_domain_quarantine",
+    },
     "amazon-cli": {
         "project_name": "agent-toolbelt-amazon-cli",
         "script_name": "agent-toolbelt-amazon-cli",
@@ -58,6 +68,8 @@ class MonorepoLayoutTests(unittest.TestCase):
                 "families/uvrun",
                 "families/media",
                 "families/outlook-classic-mail",
+                "families/observable-reputation",
+                "families/mail-domain-quarantine",
                 "families/amazon-cli",
                 "families/whatsapp-wacli",
             ],

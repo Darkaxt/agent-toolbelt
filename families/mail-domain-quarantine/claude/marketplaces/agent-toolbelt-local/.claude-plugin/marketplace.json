@@ -1,0 +1,24 @@
+{
+  "name": "agent-toolbelt-local",
+  "metadata": {
+    "description": "Local marketplace for the agent-toolbelt Mail Domain Quarantine Claude plugin."
+  },
+  "owner": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "plugins": [
+    {
+      "name": "mail-domain-quarantine",
+      "description": "Outlook mail quarantine dry runs and confirmed moves based on domain age and blocklist evidence.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Darkaxt",
+        "email": "opensource@users.noreply.github.com"
+      },
+      "source": "./plugins/mail-domain-quarantine",
+      "category": "productivity",
+      "strict": false
+    }
+  ]
+}
