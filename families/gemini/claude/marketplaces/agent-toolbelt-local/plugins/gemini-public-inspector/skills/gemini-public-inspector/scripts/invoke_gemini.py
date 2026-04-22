@@ -32,6 +32,7 @@ def main() -> int:
         instruction=args.instruction,
         model=args.model,
         timeout_sec=args.timeout_sec,
+        allow_env_credentials=args.allow_env_credentials,
     )
     if args.output == "text":
         print(result["response"])

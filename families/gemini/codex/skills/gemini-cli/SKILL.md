@@ -14,6 +14,14 @@ This skill has two lanes:
 
 Both wrappers delegate into the Gemini family package in this repo.
 
+## Model And Auth Defaults
+
+- The wrappers try `gemini-3-pro-preview` first, then fall back through `gemini-3-flash-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, and finally the Gemini CLI default.
+- Fallback is only for model quota, capacity, or model-access failures. Do not treat bad URLs, auth failures, missing `npx`, malformed JSON, or private URL rejection as fallbackable.
+- By default, Gemini API key and Vertex AI environment variables are stripped before invoking Gemini CLI so usage stays on cached OAuth quota.
+- Use `--allow-env-credentials` only when the user explicitly wants API key or Vertex AI routing.
+- Results include `model_strategy`, `model_attempts`, `model_used`, and `auth_env_sanitized` for auditability. `model_used` reports the actual main model from Gemini CLI stats when available.
+
 ## Routing Rules
 
 Use this skill when:
@@ -39,6 +47,6 @@ Do not use this skill when:
 ## Script Interface
 
 ```bash
-python scripts/invoke_gemini.py --url <public-url> --instruction "<task>"
-python scripts/invoke_gemini_research.py --question "<research task>"
+python scripts/invoke_gemini.py --url <public-url> --instruction "<task>" [--model <name>] [--allow-env-credentials]
+python scripts/invoke_gemini_research.py --question "<research task>" [--model <name>] [--allow-env-credentials]
 ```

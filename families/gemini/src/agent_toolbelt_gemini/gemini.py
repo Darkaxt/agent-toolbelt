@@ -18,6 +18,25 @@ from agent_toolbelt_core.common import (
 
 WORKSPACE_DIR = core_asset_path("gemini-workspace")
 
+DEFAULT_MODEL_LADDER = [
+    "gemini-3-pro-preview",
+    "gemini-3-flash-preview",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    None,
+]
+
+MODEL_STRATEGY = "highest-with-fallback"
+
+BILLING_ENV_VARS = {
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "GOOGLE_CLOUD_PROJECT",
+    "GOOGLE_CLOUD_LOCATION",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+}
+
 YOUTUBE_HOSTS = {
     "youtube.com",
     "www.youtube.com",
@@ -167,11 +186,226 @@ def build_command(npx_executable: str, prompt: str, model: str | None) -> list[s
     return command
 
 
+def model_display_name(model: str | None) -> str:
+    return model or "cli-default"
+
+
+def build_model_ladder(model: str | None) -> list[str | None]:
+    ladder: list[str | None] = []
+    if model:
+        ladder.append(model)
+    for candidate in DEFAULT_MODEL_LADDER:
+        if candidate not in ladder:
+            ladder.append(candidate)
+    return ladder
+
+
+def build_gemini_env(*, allow_env_credentials: bool) -> tuple[dict[str, str], bool]:
+    env = os.environ.copy()
+    env["NO_COLOR"] = "1"
+    sanitized = not allow_env_credentials
+    if not allow_env_credentials:
+        for key in BILLING_ENV_VARS:
+            env.pop(key, None)
+    return env, sanitized
+
+
+def is_model_fallback_error(response_text: str, stderr: str, exit_code: int) -> bool:
+    combined = f"{response_text}\n{stderr}\n{exit_code}".casefold()
+    auth_failures = (
+        "auth method",
+        "authenticate",
+        "authentication",
+        "oauth",
+        "credentials missing",
+        "api key",
+        "application default credentials",
+    )
+    if any(marker in combined for marker in auth_failures):
+        return False
+
+    generic_limit_markers = (
+        "quota",
+        "rate limit",
+        "ratelimit",
+        "resource_exhausted",
+        "exhausted",
+        "429",
+        "capacity",
+        "overloaded",
+        "high demand",
+        "temporarily unavailable",
+    )
+    if any(marker in combined for marker in generic_limit_markers):
+        return True
+
+    model_access_markers = (
+        "not available",
+        "not found",
+        "unsupported",
+        "not supported",
+        "permission denied",
+        "does not have access",
+        "don't have access",
+        "access denied",
+    )
+    return "model" in combined and any(marker in combined for marker in model_access_markers)
+
+
+def make_attempt_summary(
+    *,
+    model: str | None,
+    actual_model: str | None,
+    ok: bool,
+    exit_code: int,
+    response: str,
+    fallback_eligible: bool,
+) -> dict[str, Any]:
+    return {
+        "model": model_display_name(model),
+        "actual_model": actual_model,
+        "ok": ok,
+        "exit_code": exit_code,
+        "fallback_eligible": fallback_eligible,
+        "response_excerpt": response[:300],
+    }
+
+
+def infer_main_model_from_stats(stats: dict[str, Any]) -> str | None:
+    models = stats.get("models")
+    if not isinstance(models, dict):
+        return None
+    for model_name, model_stats in models.items():
+        if not isinstance(model_stats, dict):
+            continue
+        roles = model_stats.get("roles")
+        if isinstance(roles, dict) and "main" in roles:
+            return str(model_name)
+    for model_name in models:
+        return str(model_name)
+    return None
+
+
+def run_gemini_with_model_fallback(
+    *,
+    npx_executable: str,
+    prompt: str,
+    model: str | None,
+    timeout_sec: int,
+    env: dict[str, str],
+) -> dict[str, Any]:
+    attempts: list[dict[str, Any]] = []
+    last_result: dict[str, Any] | None = None
+    ladder = build_model_ladder(model)
+
+    for index, model_candidate in enumerate(ladder):
+        try:
+            completed = subprocess.run(
+                build_command(npx_executable, prompt, model_candidate),
+                cwd=WORKSPACE_DIR,
+                capture_output=True,
+                text=True,
+                timeout=timeout_sec,
+                env=env,
+                check=False,
+            )
+        except FileNotFoundError:
+            return {
+                "ok": False,
+                "response": "Failed to start Gemini CLI because `npx` was not found.",
+                "stats": {},
+                "stderr": "",
+                "exit_code": 127,
+                "model_used": None,
+                "model_attempts": attempts,
+            }
+        except subprocess.TimeoutExpired as exc:
+            return {
+                "ok": False,
+                "response": f"Gemini CLI timed out after {timeout_sec} seconds.",
+                "stats": {},
+                "stderr": exc.stderr or "",
+                "exit_code": 124,
+                "model_used": None,
+                "model_attempts": attempts,
+            }
+
+        try:
+            payload = extract_payload(completed.stdout, completed.stderr)
+        except ValueError as exc:
+            stderr_text = completed.stderr.strip()
+            response_text = stderr_text or str(exc)
+            return {
+                "ok": False,
+                "response": response_text,
+                "stats": {},
+                "stderr": completed.stderr,
+                "exit_code": completed.returncode,
+                "model_used": None,
+                "model_attempts": attempts,
+            }
+
+        response_text = payload.get("response", "")
+        error_payload = payload.get("error")
+        if not response_text and error_payload:
+            if isinstance(error_payload, dict) and error_payload.get("message"):
+                response_text = str(error_payload["message"])
+            else:
+                response_text = json.dumps(error_payload)
+
+        ok = completed.returncode == 0 and bool(response_text)
+        if not ok and not response_text:
+            response_text = "Gemini CLI returned no response."
+
+        stats = payload.get("stats", {})
+        actual_model = infer_main_model_from_stats(stats)
+        fallback_eligible = (
+            not ok
+            and index < len(ladder) - 1
+            and is_model_fallback_error(response_text, completed.stderr, completed.returncode)
+        )
+        attempts.append(
+            make_attempt_summary(
+                model=model_candidate,
+                actual_model=actual_model,
+                ok=ok,
+                exit_code=completed.returncode,
+                response=response_text,
+                fallback_eligible=fallback_eligible,
+            )
+        )
+
+        last_result = {
+            "ok": ok,
+            "response": response_text,
+            "stats": stats,
+            "stderr": completed.stderr,
+            "exit_code": completed.returncode,
+            "model_used": (actual_model or model_display_name(model_candidate)) if ok else None,
+            "model_attempts": attempts,
+        }
+        if ok or not fallback_eligible:
+            return last_result
+
+    if last_result is not None:
+        return last_result
+    return {
+        "ok": False,
+        "response": "Gemini CLI returned no response.",
+        "stats": {},
+        "stderr": "",
+        "exit_code": 1,
+        "model_used": None,
+        "model_attempts": attempts,
+    }
+
+
 def invoke_gemini_url(
     url: str,
     instruction: str,
     model: str | None = None,
     timeout_sec: int = 180,
+    allow_env_credentials: bool = False,
 ) -> dict[str, Any]:
     validated_url = validate_public_url(url)
     source_type = classify_source_type(validated_url)
@@ -186,72 +420,30 @@ def invoke_gemini_url(
             "stderr": "",
             "exit_code": 127,
             "source_type": source_type,
+            "model_strategy": MODEL_STRATEGY,
+            "model_attempts": [],
+            "model_used": None,
+            "auth_env_sanitized": False,
         }
 
     WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
-    env = os.environ.copy()
-    env["NO_COLOR"] = "1"
+    env, auth_env_sanitized = build_gemini_env(allow_env_credentials=allow_env_credentials)
 
-    try:
-        completed = subprocess.run(
-            build_command(npx_executable, prompt, model),
-            cwd=WORKSPACE_DIR,
-            capture_output=True,
-            text=True,
-            timeout=timeout_sec,
-            env=env,
-            check=False,
-        )
-    except FileNotFoundError:
-        return {
-            "ok": False,
-            "response": "Failed to start Gemini CLI because `npx` was not found.",
-            "stats": {},
-            "stderr": "",
-            "exit_code": 127,
-            "source_type": source_type,
+    result = run_gemini_with_model_fallback(
+        npx_executable=npx_executable,
+        prompt=prompt,
+        model=model,
+        timeout_sec=timeout_sec,
+        env=env,
+    )
+    result.update(
+        {
+            "model_strategy": MODEL_STRATEGY,
+            "auth_env_sanitized": auth_env_sanitized,
         }
-    except subprocess.TimeoutExpired as exc:
-        return {
-            "ok": False,
-            "response": f"Gemini CLI timed out after {timeout_sec} seconds.",
-            "stats": {},
-            "stderr": exc.stderr or "",
-            "exit_code": 124,
-            "source_type": source_type,
-        }
-
-    try:
-        payload = extract_payload(completed.stdout, completed.stderr)
-    except ValueError as exc:
-        stderr_text = completed.stderr.strip()
-        response_text = stderr_text or str(exc)
-        return {
-            "ok": False,
-            "response": response_text,
-            "stats": {},
-            "stderr": completed.stderr,
-            "exit_code": completed.returncode,
-            "source_type": source_type,
-        }
-
-    response_text = payload.get("response", "")
-    error_payload = payload.get("error")
-    if not response_text and error_payload:
-        if isinstance(error_payload, dict) and error_payload.get("message"):
-            response_text = str(error_payload["message"])
-        else:
-            response_text = json.dumps(error_payload)
-    ok = completed.returncode == 0 and bool(response_text)
-    if not ok and not response_text:
-        response_text = "Gemini CLI returned no response."
-
+    )
     return {
-        "ok": ok,
-        "response": response_text,
-        "stats": payload.get("stats", {}),
-        "stderr": completed.stderr,
-        "exit_code": completed.returncode,
+        **result,
         "source_type": source_type,
     }
 
@@ -265,6 +457,10 @@ def make_research_result(
     exit_code: int,
     original_question: str,
     normalized_question: str,
+    model_strategy: str = MODEL_STRATEGY,
+    model_attempts: list[dict[str, Any]] | None = None,
+    model_used: str | None = None,
+    auth_env_sanitized: bool = False,
 ) -> dict[str, Any]:
     return {
         "ok": ok,
@@ -275,6 +471,10 @@ def make_research_result(
         "mode": "research",
         "original_question": original_question,
         "normalized_question": normalized_question,
+        "model_strategy": model_strategy,
+        "model_attempts": model_attempts or [],
+        "model_used": model_used,
+        "auth_env_sanitized": auth_env_sanitized,
     }
 
 
@@ -282,6 +482,7 @@ def invoke_gemini_research(
     question: str,
     model: str | None = None,
     timeout_sec: int = 180,
+    allow_env_credentials: bool = False,
 ) -> dict[str, Any]:
     normalized = normalize_research_question(question)
     prompt = build_research_prompt(
@@ -302,75 +503,26 @@ def invoke_gemini_research(
         )
 
     WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
-    env = os.environ.copy()
-    env["NO_COLOR"] = "1"
-
-    try:
-        completed = subprocess.run(
-            build_command(npx_executable, prompt, model),
-            cwd=WORKSPACE_DIR,
-            capture_output=True,
-            text=True,
-            timeout=timeout_sec,
-            env=env,
-            check=False,
-        )
-    except FileNotFoundError:
-        return make_research_result(
-            ok=False,
-            response="Failed to start Gemini CLI because `npx` was not found.",
-            stats={},
-            stderr="",
-            exit_code=127,
-            original_question=normalized["original_question"],
-            normalized_question=normalized["normalized_question"],
-        )
-    except subprocess.TimeoutExpired as exc:
-        return make_research_result(
-            ok=False,
-            response=f"Gemini CLI timed out after {timeout_sec} seconds.",
-            stats={},
-            stderr=exc.stderr or "",
-            exit_code=124,
-            original_question=normalized["original_question"],
-            normalized_question=normalized["normalized_question"],
-        )
-
-    try:
-        payload = extract_payload(completed.stdout, completed.stderr)
-    except ValueError as exc:
-        stderr_text = completed.stderr.strip()
-        response_text = stderr_text or str(exc)
-        return make_research_result(
-            ok=False,
-            response=response_text,
-            stats={},
-            stderr=completed.stderr,
-            exit_code=completed.returncode,
-            original_question=normalized["original_question"],
-            normalized_question=normalized["normalized_question"],
-        )
-
-    response_text = payload.get("response", "")
-    error_payload = payload.get("error")
-    if not response_text and error_payload:
-        if isinstance(error_payload, dict) and error_payload.get("message"):
-            response_text = str(error_payload["message"])
-        else:
-            response_text = json.dumps(error_payload)
-
-    ok = completed.returncode == 0 and bool(response_text)
-    if not ok and not response_text:
-        response_text = "Gemini CLI returned no response."
+    env, auth_env_sanitized = build_gemini_env(allow_env_credentials=allow_env_credentials)
+    result = run_gemini_with_model_fallback(
+        npx_executable=npx_executable,
+        prompt=prompt,
+        model=model,
+        timeout_sec=timeout_sec,
+        env=env,
+    )
 
     return make_research_result(
-        ok=ok,
-        response=response_text,
-        stats=payload.get("stats", {}),
-        stderr=completed.stderr,
-        exit_code=completed.returncode,
+        ok=result["ok"],
+        response=result["response"],
+        stats=result["stats"],
+        stderr=result["stderr"],
+        exit_code=result["exit_code"],
         original_question=normalized["original_question"],
         normalized_question=normalized["normalized_question"],
+        model_attempts=result["model_attempts"],
+        model_used=result["model_used"],
+        auth_env_sanitized=auth_env_sanitized,
     )
 
 
@@ -380,6 +532,11 @@ def build_url_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--instruction", required=True, help="Task instruction for Gemini.")
     parser.add_argument("--model", help="Optional Gemini model override.")
     parser.add_argument("--timeout-sec", type=int, default=180, help="Timeout in seconds.")
+    parser.add_argument(
+        "--allow-env-credentials",
+        action="store_true",
+        help="Allow Gemini API key or Vertex environment variables instead of forcing OAuth-only.",
+    )
     parser.add_argument("--output", choices=("json", "text"), default="json")
     return parser
 
@@ -391,5 +548,10 @@ def build_research_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--question", required=True, help="Research question to inspect.")
     parser.add_argument("--model", help="Optional Gemini model override.")
     parser.add_argument("--timeout-sec", type=int, default=180, help="Timeout in seconds.")
+    parser.add_argument(
+        "--allow-env-credentials",
+        action="store_true",
+        help="Allow Gemini API key or Vertex environment variables instead of forcing OAuth-only.",
+    )
     parser.add_argument("--output", choices=("json", "text"), default="json")
     return parser
