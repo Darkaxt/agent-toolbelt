@@ -8,6 +8,8 @@ Use this family when an agent needs local mailbox access through Microsoft Outlo
 - launches that client through `uv run --project ...`
 - normalizes JSON results for Codex-facing wrappers
 - exposes fast folder discovery before message search for rule-managed Outlook folders
+- maintains a lightweight SQLite metadata cache for recent contacts, subjects, timestamps, folder locations, and message identifiers
+- triggers Outlook Send/Receive All Folders when recent sent or received mail has not appeared locally yet
 - exposes deterministic response lookup from the original recipient account's Sent and Drafts folders
 - exposes explicit folder move previews and confirmed message moves
 - forwards optional send-account selection for reply and forward drafts
@@ -16,6 +18,7 @@ Use this family when an agent needs local mailbox access through Microsoft Outlo
 
 - it does not implement COM directly inside the repo package
 - it does not reproduce Gmail query syntax, labels, or archive semantics
+- it does not cache full email bodies
 - it does not manage Outlook rules or automatic future filtering
 
 ## Prerequisites
@@ -28,9 +31,14 @@ Use this family when an agent needs local mailbox access through Microsoft Outlo
 
 ```bash
 agent-toolbelt-outlook-classic-mail accounts
+agent-toolbelt-outlook-classic-mail sync-mail --refresh-cache --all-accounts
+agent-toolbelt-outlook-classic-mail cache-refresh --all-accounts --days 90
+agent-toolbelt-outlook-classic-mail cache-status --query lettre24
+agent-toolbelt-outlook-classic-mail cache-show --query lettre24 --limit 10
 agent-toolbelt-outlook-classic-mail find-folders --query lettre24 --all-accounts
 agent-toolbelt-outlook-classic-mail search --account demo@example.com --folder inbox --query "approval" --days 7 --limit 10
 agent-toolbelt-outlook-classic-mail search --all-folders --query lettre24 --all-accounts --folder-limit 10 --per-folder-limit 5
+agent-toolbelt-outlook-classic-mail search --all-folders --query lettre24 --all-accounts --bypass-cache --broad-scan
 agent-toolbelt-outlook-classic-mail read-thread --account demo@example.com --message-id <entry-id>
 agent-toolbelt-outlook-classic-mail find-response --account demo@example.com --message-id <entry-id>
 agent-toolbelt-outlook-classic-mail move-message --account demo@example.com --message-id <entry-id> --target-folder custom:Inbox/Projects
@@ -47,6 +55,10 @@ The family bridge uses the external client root in this order:
 3. the legacy `%LOCALAPPDATA%\Tools\outlook-classic-mail` compatibility project root
 
 For sender or service lookups such as "latest emails from X", prefer `find-folders` first. Outlook rules often move mail out of Inbox, and folder discovery is much cheaper than recursively scanning messages.
+
+For repeated contact or subject searches, use the metadata cache as a locator. `cache-refresh --all-accounts --days 90` builds a rolling cache of message IDs, contacts, subjects, timestamps, and folder paths. Search confirms cache candidates through live Outlook COM before returning messages. Use `--bypass-cache --broad-scan` when the user suspects a stale cache or asks to scan broadly.
+
+For very recent sent or received mail, run `sync-mail` first. It triggers Outlook Send/Receive through SyncObjects when available and falls back to `SendAndReceive(False)`.
 
 For response lookups such as "find my response to this email", use `find-response` first. It resolves the anchor message, inspects its original recipients, checks the matching account/store's Sent and Drafts folders, and broadens only when `--fallback-all-accounts` is requested.
 
