@@ -64,36 +64,43 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
             client_home=client_home,
             operation_args=["accounts"],
             uv_executable="uv.exe",
+            queue_timeout_sec=900,
         )
 
-        self.assertEqual(command[:5], ["uv.exe", "run", "--project", str(client_home), "outlook-classic-mail-client"])
+        self.assertEqual(command[:7], ["uv.exe", "run", "--project", str(client_home), "outlook-classic-mail-client", "--queue-timeout-sec", "900"])
         self.assertEqual(command[-1], "accounts")
 
     def test_invoke_client_normalizes_json_success(self):
         original_run = outlook_classic_mail.run_process
         original_uv = outlook_classic_mail.resolve_uv_executable
         original_home = outlook_classic_mail.resolve_client_home
+        captured = {}
         outlook_classic_mail.resolve_uv_executable = lambda: "uv.exe"
         outlook_classic_mail.resolve_client_home = lambda explicit_home=None: Path(r"C:\Tools\outlook-classic-mail")
-        outlook_classic_mail.run_process = lambda command, **kwargs: outlook_classic_mail.subprocess.CompletedProcess(
-            command,
-            0,
-            stdout=json.dumps(
-                {
-                    "ok": True,
-                    "operation": "accounts",
-                    "account": None,
-                    "store": None,
-                    "result": {"accounts": [{"smtp_address": "demo@example.com"}]},
-                    "warnings": [],
-                    "stderr": "",
-                    "exit_code": 0,
-                }
-            ),
-            stderr="",
-        )
+        def fake_run(command, **kwargs):
+            captured["command"] = command
+            captured["timeout_sec"] = kwargs["timeout_sec"]
+            return outlook_classic_mail.subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(
+                    {
+                        "ok": True,
+                        "operation": "accounts",
+                        "account": None,
+                        "store": None,
+                        "result": {"accounts": [{"smtp_address": "demo@example.com"}]},
+                        "warnings": [],
+                        "stderr": "",
+                        "exit_code": 0,
+                        "queue": {"used": True, "timeout_seconds": 900},
+                    }
+                ),
+                stderr="",
+            )
+        outlook_classic_mail.run_process = fake_run
         try:
-            result = outlook_classic_mail.invoke_client(operation_args=["accounts"])
+            result = outlook_classic_mail.invoke_client(operation_args=["accounts"], timeout_sec=180, queue_timeout_sec=900)
         finally:
             outlook_classic_mail.run_process = original_run
             outlook_classic_mail.resolve_uv_executable = original_uv
@@ -102,6 +109,9 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["operation"], "accounts")
         self.assertEqual(result["result"]["accounts"][0]["smtp_address"], "demo@example.com")
+        self.assertEqual(result["queue"]["timeout_seconds"], 900)
+        self.assertEqual(captured["timeout_sec"], 1095)
+        self.assertIn("--queue-timeout-sec", captured["command"])
 
     def test_invoke_client_reports_missing_uv_cleanly(self):
         original_uv = outlook_classic_mail.resolve_uv_executable
@@ -228,6 +238,11 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
             outlook_classic_mail.build_operation_args(sync_mail),
             ["sync-mail", "--refresh-cache", "--all-accounts", "--days", "90"],
         )
+
+    def test_parser_accepts_queue_timeout(self):
+        parser = outlook_classic_mail.build_parser()
+        args = parser.parse_args(["--queue-timeout-sec", "45", "accounts"])
+        self.assertEqual(args.queue_timeout_sec, 45)
 
     def test_build_operation_args_routes_find_response(self):
         parser = outlook_classic_mail.build_parser()
@@ -459,6 +474,8 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("sync-mail", skill_text)
         self.assertIn("bypass-cache", skill_text)
         self.assertIn("outlook_busy", skill_text)
+        self.assertIn("FIFO queue", skill_text)
+        self.assertIn("queue_timeout", skill_text)
 
     def test_claude_plugin_manifest_and_marketplace_exist(self):
         marketplace_root = (
@@ -527,6 +544,8 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("move-message", skill_text)
         self.assertIn("cache-refresh", skill_text)
         self.assertIn("sync-mail", skill_text)
+        self.assertIn("FIFO queue", skill_text)
+        self.assertIn("queue_timeout", skill_text)
         self.assertIn("Gmail", skill_text)
         self.assertIn("explicit confirmation", skill_text)
 

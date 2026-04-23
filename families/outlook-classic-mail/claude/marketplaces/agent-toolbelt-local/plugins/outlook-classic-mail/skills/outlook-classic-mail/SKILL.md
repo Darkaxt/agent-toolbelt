@@ -22,8 +22,10 @@ Use `scripts/invoke_outlook_mail.py` for local mailbox access through Outlook Cl
 - Use the metadata cache for repeated contact/sender/subject lookups. It stores message identifiers, contacts, subjects, timestamps, and folder locations, but not full message bodies.
 - Use `cache-refresh --all-accounts --days 90` to populate or refresh the cache; use `cache-status` and `cache-show --query <text>` to inspect cache coverage.
 - Run `sync-mail` before searching for very recent sent or received mail when Outlook folders may lag behind Send/Receive.
+- Outlook COM-backed calls now join a local FIFO queue. Do not launch parallel heavy Outlook queries expecting linear timeout inflation; prefer targeted or batched requests and let the queue serialize execution.
+- If the client returns `queue_timeout`, the call never got a turn before the queue budget expired. If the client returns `outlook_busy`, queue admission succeeded but COM acquisition still failed unexpectedly.
 - Use `search --all-folders` as a bounded fallback. It uses cache-guided folder candidates by default; add `--bypass-cache --broad-scan` when the user suspects the cache/rules missed something or explicitly asks to scan broadly.
-- If the client returns `outlook_busy`, another COM operation is active; report that and retry later instead of waiting until timeout.
+- Use `--no-update-cache` for repeated direct-folder read-only searches when cache freshness is not needed.
 - For "find my response/reply" tasks tied to a received message, use `find-response` before manual Sent/Drafts searches.
 - For domain age or blocklist evidence, use `inspect-domains` for one message or `scan-domain-refs` for a bounded folder scan; these commands are read-only.
 - Use `blocklists status` to inspect the local DNS blocklist cache and `blocklists refresh` only when cache maintenance is explicitly needed.

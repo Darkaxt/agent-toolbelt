@@ -32,6 +32,8 @@ Do not use this skill when:
 - Use the metadata cache for repeated contact/sender/subject lookups. It stores message identifiers, contacts, subjects, timestamps, and folder locations, but not full message bodies.
 - Use `cache-refresh --all-accounts --days 90` to populate or refresh the cache; use `cache-status` and `cache-show --query <text>` to inspect cache coverage.
 - Run `sync-mail` before searching for very recent sent or received mail when Outlook folders may lag behind Send/Receive.
+- Outlook COM-backed calls now join a local FIFO queue. Do not launch parallel heavy Outlook queries expecting linear timeout inflation; prefer targeted or batched requests and let the queue serialize execution.
+- If the client returns `queue_timeout`, the call never got a turn before the queue budget expired. If the client returns `outlook_busy`, queue admission succeeded but COM acquisition still failed unexpectedly.
 - For "find my response/reply" tasks tied to a received message, use `find-response` first; fall back to manual Sent/Drafts searches only if the command fails or the anchor message cannot be resolved.
 - For domain age or blocklist evidence, use `inspect-domains` for one message or `scan-domain-refs` for a bounded folder scan; these commands are read-only.
 - Use `blocklists status` to inspect the local DNS blocklist cache and `blocklists refresh` only when cache maintenance is explicitly needed.
@@ -39,7 +41,7 @@ Do not use this skill when:
 - For "move/file/put this email in folder X" tasks, use `find-folders` first when the target is ambiguous, run `move-message` without `--confirm` as a preview, and run `move-message --confirm` only after explicit user approval.
 - If folder discovery finds nothing, search Inbox and state that the scope was Inbox-only unless a bounded all-folder search is explicitly needed.
 - Use `search --all-folders` as a bounded fallback. It uses cache-guided folder candidates by default; add `--bypass-cache --broad-scan` when the user suspects the cache/rules missed something or explicitly asks to scan broadly.
-- If the client returns `outlook_busy`, another COM operation is active; report that and retry later instead of waiting until timeout.
+- Use `--no-update-cache` for repeated read-only direct-folder searches when cache freshness is not needed.
 - Treat draft creation, send, move, delete, category changes, and mark-read changes as explicit actions that require confirmation.
 - Remember that Gmail-backed accounts are accessed through Outlook stores, not through Gmail-native APIs.
 - Mention Outlook Object Model Guard prompts when they materially affect an action.
@@ -47,23 +49,23 @@ Do not use this skill when:
 ## Script Interface
 
 ```bash
-python scripts/invoke_outlook_mail.py accounts
-python scripts/invoke_outlook_mail.py sync-mail [--refresh-cache] [--account <smtp|store>|--all-accounts] [--days <n>] [--force]
+python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] accounts
+python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] sync-mail [--refresh-cache] [--account <smtp|store>|--all-accounts] [--days <n>] [--force]
 python scripts/invoke_outlook_mail.py cache-status [--query <text>]
 python scripts/invoke_outlook_mail.py cache-show --query <text> [--account <smtp|store>] [--days <n>] [--limit <n>]
-python scripts/invoke_outlook_mail.py cache-refresh [--account <smtp|store>|--all-accounts] [--days <n>] [--force]
+python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] cache-refresh [--account <smtp|store>|--all-accounts] [--days <n>] [--force]
 python scripts/invoke_outlook_mail.py cache-clear [--query <text>] --confirm
-python scripts/invoke_outlook_mail.py find-folders --query <text> [--account <smtp|store>|--all-accounts] [--limit <n>]
-python scripts/invoke_outlook_mail.py search --account <smtp|store> [--folder inbox|sent|drafts|trash|custom:<path>] [--query <text>] [--unread] [--from <email>] [--to <email>] [--days <n>] [--limit <n>]
-python scripts/invoke_outlook_mail.py search --all-folders --query <text> [--account <smtp|store>|--all-accounts] [--folder-limit <n>] [--per-folder-limit <n>] [--bypass-cache] [--broad-scan] [--no-update-cache]
-python scripts/invoke_outlook_mail.py read-thread --account <smtp|store> --message-id <entry-id>
-python scripts/invoke_outlook_mail.py find-response --account <anchor-store> --message-id <entry-id> [--limit <n>] [--fallback-all-accounts] [--exclude-drafts]
-python scripts/invoke_outlook_mail.py inspect-domains --account <smtp|store> --message-id <entry-id> [--with-rdap] [--young-days <n>] [--rdap-cache <sqlite-path>] [--with-blocklists] [--blocklist-profile threat|debug-all] [--blocklist-cache <sqlite-path>]
-python scripts/invoke_outlook_mail.py scan-domain-refs --account <smtp|store> --folder inbox|custom:<path> [--days <n>] [--limit <n>] [--with-rdap] [--young-days <n>] [--rdap-cache <sqlite-path>] [--with-blocklists] [--blocklist-profile threat|debug-all] [--blocklist-cache <sqlite-path>]
+python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] find-folders --query <text> [--account <smtp|store>|--all-accounts] [--limit <n>]
+python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] search --account <smtp|store> [--folder inbox|sent|drafts|trash|custom:<path>] [--query <text>] [--unread] [--from <email>] [--to <email>] [--days <n>] [--limit <n>] [--no-update-cache]
+python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] search --all-folders --query <text> [--account <smtp|store>|--all-accounts] [--folder-limit <n>] [--per-folder-limit <n>] [--bypass-cache] [--broad-scan] [--no-update-cache]
+python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] read-thread --account <smtp|store> --message-id <entry-id>
+python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] find-response --account <anchor-store> --message-id <entry-id> [--limit <n>] [--fallback-all-accounts] [--exclude-drafts]
+python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] inspect-domains --account <smtp|store> --message-id <entry-id> [--with-rdap] [--young-days <n>] [--rdap-cache <sqlite-path>] [--with-blocklists] [--blocklist-profile threat|debug-all] [--blocklist-cache <sqlite-path>]
+python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] scan-domain-refs --account <smtp|store> --folder inbox|custom:<path> [--days <n>] [--limit <n>] [--with-rdap] [--young-days <n>] [--rdap-cache <sqlite-path>] [--with-blocklists] [--blocklist-profile threat|debug-all] [--blocklist-cache <sqlite-path>]
 python scripts/invoke_outlook_mail.py blocklists status|refresh [--blocklist-profile threat|debug-all] [--blocklist-cache <sqlite-path>] [--force]
-python scripts/invoke_outlook_mail.py move-message --account <smtp|store> --message-id <entry-id> --target-folder <folder-selector> [--confirm]
-python scripts/invoke_outlook_mail.py triage [--account <smtp|store> | --all-accounts] [--days <n>] [--limit <n>]
-python scripts/invoke_outlook_mail.py draft-reply --account <smtp|store> [--send-using-account <smtp|store>] --message-id <entry-id> --instruction "<goal>"
-python scripts/invoke_outlook_mail.py draft-forward --account <smtp|store> [--send-using-account <smtp|store>] --message-id <entry-id> --to "<recipient>" --instruction "<context>"
-python scripts/invoke_outlook_mail.py apply-action --account <smtp|store> --message-id <entry-id> --action <create-draft|send|move|delete|category|mark-read> --confirm
+python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] move-message --account <smtp|store> --message-id <entry-id> --target-folder <folder-selector> [--confirm]
+python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] triage [--account <smtp|store> | --all-accounts] [--days <n>] [--limit <n>]
+python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] draft-reply --account <smtp|store> [--send-using-account <smtp|store>] --message-id <entry-id> --instruction "<goal>"
+python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] draft-forward --account <smtp|store> [--send-using-account <smtp|store>] --message-id <entry-id> --to "<recipient>" --instruction "<context>"
+python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] apply-action --account <smtp|store> --message-id <entry-id> --action <create-draft|send|move|delete|category|mark-read> --confirm
 ```

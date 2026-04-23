@@ -13,6 +13,7 @@ CLIENT_HOME_ENV = "OUTLOOK_CLASSIC_MAIL_HOME"
 CLIENT_FOLDER_NAME = "outlook-classic-mail"
 CLIENT_ENTRYPOINT = "outlook-classic-mail-client"
 DEFAULT_TIMEOUT_SEC = 180
+DEFAULT_QUEUE_TIMEOUT_SEC = 900
 
 
 def make_result(
@@ -69,6 +70,7 @@ def build_client_command(
     client_home: Path,
     operation_args: list[str],
     uv_executable: str,
+    queue_timeout_sec: int = DEFAULT_QUEUE_TIMEOUT_SEC,
 ) -> list[str]:
     return [
         uv_executable,
@@ -76,6 +78,8 @@ def build_client_command(
         "--project",
         str(client_home),
         CLIENT_ENTRYPOINT,
+        "--queue-timeout-sec",
+        str(queue_timeout_sec),
         *operation_args,
     ]
 
@@ -117,6 +121,7 @@ def invoke_client(
     *,
     operation_args: list[str],
     timeout_sec: int = DEFAULT_TIMEOUT_SEC,
+    queue_timeout_sec: int = DEFAULT_QUEUE_TIMEOUT_SEC,
     client_home: str | None = None,
 ) -> dict[str, Any]:
     operation = operation_args[0] if operation_args else "unknown"
@@ -147,9 +152,10 @@ def invoke_client(
         client_home=resolved_home,
         operation_args=operation_args,
         uv_executable=uv_executable,
+        queue_timeout_sec=queue_timeout_sec,
     )
     try:
-        completed = run_process(command, timeout_sec=timeout_sec)
+        completed = run_process(command, timeout_sec=timeout_sec + queue_timeout_sec + 15)
     except FileNotFoundError as exc:
         return make_result(
             ok=False,
@@ -184,6 +190,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--client-home", help=argparse.SUPPRESS)
     parser.add_argument("--timeout-sec", type=int, default=DEFAULT_TIMEOUT_SEC)
+    parser.add_argument("--queue-timeout-sec", type=int, default=DEFAULT_QUEUE_TIMEOUT_SEC)
 
     subparsers = parser.add_subparsers(dest="operation", required=True)
 
