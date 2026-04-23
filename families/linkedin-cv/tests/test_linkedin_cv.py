@@ -3751,6 +3751,61 @@ class LinkedInCVTests(unittest.TestCase):
             self.assertIn("no search traversal", skill_text.lower())
             self.assertIn("Do not copy", skill_text)
 
+    def test_codex_and_claude_docs_route_through_wrapper_script(self):
+        skill_paths = [
+            REPO_ROOT / "families" / "linkedin-cv" / "codex" / "skills" / "linkedin-cv" / "SKILL.md",
+            REPO_ROOT
+            / "families"
+            / "linkedin-cv"
+            / "claude"
+            / "marketplaces"
+            / "agent-toolbelt-local"
+            / "plugins"
+            / "linkedin-cv"
+            / "skills"
+            / "linkedin-cv"
+            / "SKILL.md",
+        ]
+
+        for path in skill_paths:
+            with self.subTest(path=path.relative_to(REPO_ROOT)):
+                text = path.read_text(encoding="utf-8")
+                self.assertIn("python scripts/invoke_linkedin_cv.py", text)
+                self.assertIn("AGENT_TOOLBELT_HOME", text)
+                self.assertNotIn("uv run agent-toolbelt-linkedin-cv", text)
+
+    def test_codex_and_claude_wrappers_bootstrap_agent_toolbelt_home(self):
+        wrapper_paths = [
+            REPO_ROOT
+            / "families"
+            / "linkedin-cv"
+            / "codex"
+            / "skills"
+            / "linkedin-cv"
+            / "scripts"
+            / "invoke_linkedin_cv.py",
+            REPO_ROOT
+            / "families"
+            / "linkedin-cv"
+            / "claude"
+            / "marketplaces"
+            / "agent-toolbelt-local"
+            / "plugins"
+            / "linkedin-cv"
+            / "skills"
+            / "linkedin-cv"
+            / "scripts"
+            / "invoke_linkedin_cv.py",
+        ]
+
+        for path in wrapper_paths:
+            with self.subTest(path=path.relative_to(REPO_ROOT)):
+                text = path.read_text(encoding="utf-8")
+                self.assertIn("DEFAULT_AGENT_TOOLBELT_HOME", text)
+                self.assertIn("AGENT_TOOLBELT_HOME", text)
+                self.assertIn(r'D:\\Downloads\\Public\\agent-toolbelt', repr(text))
+                self.assertIn(r'families" / "linkedin-cv" / "src', text)
+
 
 if __name__ == "__main__":
     unittest.main()

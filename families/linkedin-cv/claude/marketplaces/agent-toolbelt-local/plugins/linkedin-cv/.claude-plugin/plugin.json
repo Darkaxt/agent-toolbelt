@@ -1,6 +1,6 @@
 {
   "name": "linkedin-cv",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Captures and compares explicit LinkedIn CV/profile snapshots through a local managed browser.",
   "author": {
     "name": "Darkaxt",

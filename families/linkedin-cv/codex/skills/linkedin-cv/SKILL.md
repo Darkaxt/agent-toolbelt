@@ -1,11 +1,11 @@
 ---
 name: linkedin-cv
-description: Use `agent-toolbelt-linkedin-cv` for local, read-only LinkedIn own-profile snapshots, one explicit accessible profile capture at a time, and CV improvement comparisons.
+description: Use `scripts/invoke_linkedin_cv.py` for local, read-only LinkedIn own-profile snapshots, one explicit accessible profile capture at a time, and CV improvement comparisons.
 ---
 
 # LinkedIn CV
 
-Use `agent-toolbelt-linkedin-cv` for local, read-only LinkedIn profile snapshot and CV improvement workflows.
+Use `scripts/invoke_linkedin_cv.py` for local, read-only LinkedIn profile snapshot and CV improvement workflows. The wrapper bootstraps the LinkedIn family from the local `agent-toolbelt` workspace; if the workspace lives somewhere else, set `AGENT_TOOLBELT_HOME`.
 
 ## Allowed Workflows
 
@@ -26,8 +26,8 @@ Use `agent-toolbelt-linkedin-cv` for local, read-only LinkedIn profile snapshot 
 ## Command Examples
 
 ```powershell
-uv run agent-toolbelt-linkedin-cv session login --profile personal
-uv run agent-toolbelt-linkedin-cv profile capture-own --profile personal
-uv run agent-toolbelt-linkedin-cv profile capture --profile personal --profile-id demo-profile --confirm-accessible-profile-capture
-uv run agent-toolbelt-linkedin-cv profile compare --own C:\snapshots\own.json --target C:\snapshots\target.json
+python scripts/invoke_linkedin_cv.py session login --profile personal
+python scripts/invoke_linkedin_cv.py profile capture-own --profile personal
+python scripts/invoke_linkedin_cv.py profile capture --profile personal --profile-id demo-profile --confirm-accessible-profile-capture
+python scripts/invoke_linkedin_cv.py profile compare --own C:\snapshots\own.json --target C:\snapshots\target.json
 ```
