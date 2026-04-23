@@ -12,6 +12,7 @@ FAMILY_NAMES = (
     "media",
     "outlook-classic-mail",
     "amazon-cli",
+    "linkedin-cv",
     "whatsapp-wacli",
 )
 

@@ -34,6 +34,10 @@ FAMILY_IMPORTS = {
         REPO_ROOT / "families" / "amazon-cli" / "src",
         "agent_toolbelt_amazon_cli.cli",
     ),
+    "linkedin-cv": (
+        REPO_ROOT / "families" / "linkedin-cv" / "src",
+        "agent_toolbelt_linkedin_cv.cli",
+    ),
     "whatsapp-wacli": (
         REPO_ROOT / "families" / "whatsapp-wacli" / "src",
         "agent_toolbelt_whatsapp_wacli.cli",
@@ -214,6 +218,39 @@ class FamilyCLITests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["operation"], "offers")
         self.assertEqual(payload["result"]["best_offer"]["marketplace"], "de")
+
+    def test_linkedin_cv_cli_routes_profile_capture(self):
+        cli = import_family_cli("linkedin-cv")
+
+        original_capture = cli.linkedin_cv.capture_accessible_profile
+        cli.linkedin_cv.capture_accessible_profile = lambda **kwargs: {
+            "ok": True,
+            "operation": "profile.capture",
+            "result": {"profile_id": "demo-profile", "capture_type": "accessible_profile"},
+            "warnings": [],
+            "stderr": "",
+            "exit_code": 0,
+        }
+        try:
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                exit_code = cli.main(
+                    [
+                        "profile",
+                        "capture",
+                        "--profile",
+                        "personal",
+                        "--profile-id",
+                        "demo-profile",
+                        "--confirm-accessible-profile-capture",
+                    ]
+                )
+                payload = json.loads(buffer.getvalue())
+        finally:
+            cli.linkedin_cv.capture_accessible_profile = original_capture
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["operation"], "profile.capture")
+        self.assertEqual(payload["result"]["capture_type"], "accessible_profile")
 
     def test_whatsapp_wacli_routes_latest_command(self):
         cli = import_family_cli("whatsapp-wacli")

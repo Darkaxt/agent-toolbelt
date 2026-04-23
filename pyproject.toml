@@ -9,10 +9,12 @@ members = [
   "families/observable-reputation",
   "families/mail-domain-quarantine",
   "families/amazon-cli",
+  "families/linkedin-cv",
   "families/whatsapp-wacli",
 ]
 
 [tool.pytest.ini_options]
+addopts = ["--import-mode=importlib"]
 norecursedirs = [
   "families/amazon-cli/src/agent_toolbelt_amazon_cli/assets/amazon-intent-cli/tests",
 ]
