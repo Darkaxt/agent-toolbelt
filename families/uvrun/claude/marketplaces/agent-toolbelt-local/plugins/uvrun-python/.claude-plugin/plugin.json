@@ -1,6 +1,6 @@
 {
   "name": "uvrun-python",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Prefers uv for standalone local Python script execution with safe fallbacks.",
   "author": {
     "name": "Darkaxt",

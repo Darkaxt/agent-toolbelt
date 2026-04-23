@@ -143,6 +143,96 @@ class MonorepoLayoutTests(unittest.TestCase):
         self.assertNotIn("José Miguel Soriano de la Cámara", text)
         self.assertNotIn("josesorianocyber", text)
 
+    def test_claude_package_backed_wrappers_use_explicit_workspace_bootstrap(self):
+        wrapper_specs = {
+            "uvrun-python": REPO_ROOT
+            / "families"
+            / "uvrun"
+            / "claude"
+            / "marketplaces"
+            / "agent-toolbelt-local"
+            / "plugins"
+            / "uvrun-python"
+            / "skills"
+            / "uvrun-python"
+            / "scripts"
+            / "invoke_uvrun.py",
+            "yt-dlp-ffmpeg": REPO_ROOT
+            / "families"
+            / "media"
+            / "claude"
+            / "marketplaces"
+            / "agent-toolbelt-local"
+            / "plugins"
+            / "yt-dlp-ffmpeg"
+            / "skills"
+            / "yt-dlp-ffmpeg"
+            / "scripts"
+            / "invoke_media_tool.py",
+        }
+
+        for name, path in wrapper_specs.items():
+            with self.subTest(wrapper=name):
+                text = path.read_text(encoding="utf-8")
+                self.assertIn("DEFAULT_AGENT_TOOLBELT_HOME", text)
+                self.assertIn("AGENT_TOOLBELT_HOME", text)
+                self.assertIn("bootstrap_agent_toolbelt", text)
+                self.assertNotIn("bootstrap_core_src", text)
+
+    def test_claude_plugin_skills_keep_critical_runtime_guidance(self):
+        uvrun_skill = (
+            REPO_ROOT
+            / "families"
+            / "uvrun"
+            / "claude"
+            / "marketplaces"
+            / "agent-toolbelt-local"
+            / "plugins"
+            / "uvrun-python"
+            / "skills"
+            / "uvrun-python"
+            / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        media_skill = (
+            REPO_ROOT
+            / "families"
+            / "media"
+            / "claude"
+            / "marketplaces"
+            / "agent-toolbelt-local"
+            / "plugins"
+            / "yt-dlp-ffmpeg"
+            / "skills"
+            / "yt-dlp-ffmpeg"
+            / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        outlook_skill = (
+            REPO_ROOT
+            / "families"
+            / "outlook-classic-mail"
+            / "claude"
+            / "marketplaces"
+            / "agent-toolbelt-local"
+            / "plugins"
+            / "outlook-classic-mail"
+            / "skills"
+            / "outlook-classic-mail"
+            / "SKILL.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("AGENT_TOOLBELT_HOME", uvrun_skill)
+        self.assertIn("uvrun.ps1", uvrun_skill)
+        self.assertIn("scripts/invoke_uvrun.py", uvrun_skill)
+
+        self.assertIn("AGENT_TOOLBELT_HOME", media_skill)
+        self.assertIn("scripts/invoke_media_tool.py", media_skill)
+        self.assertIn("Some unauthenticated YouTube downloads may still fail", media_skill)
+
+        self.assertIn("--send-using-account", outlook_skill)
+        self.assertIn("inspect-domains", outlook_skill)
+        self.assertIn("blocklists status", outlook_skill)
+        self.assertIn("queue_timeout", outlook_skill)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,40 +1,46 @@
-import json
+import os
 import sys
 from pathlib import Path
 
 
-def bootstrap_core_src() -> None:
-    current = Path(__file__).resolve()
-    for parent in current.parents:
-        pyproject = parent / "pyproject.toml"
-        core_src = parent / "packages" / "core" / "src"
-        if pyproject.exists() and "[tool.uv.workspace]" in pyproject.read_text(encoding="utf-8"):
-            if str(core_src) not in sys.path:
-                sys.path.insert(0, str(core_src))
-            return
-    raise RuntimeError("Could not locate the repository packages/core/src directory.")
+DEFAULT_AGENT_TOOLBELT_HOME = Path(r"D:\Downloads\Public\agent-toolbelt")
 
 
-bootstrap_core_src()
+def bootstrap_agent_toolbelt() -> None:
+    candidates: list[Path] = []
+    env_home = os.getenv("AGENT_TOOLBELT_HOME")
+    if env_home:
+        candidates.append(Path(env_home).expanduser())
+    candidates.append(DEFAULT_AGENT_TOOLBELT_HOME)
 
-from agent_toolbelt_core.bootstrap import bootstrap_family_package  # noqa: E402
+    for repo_root in candidates:
+        repo_root = repo_root.resolve()
+        pyproject = repo_root / "pyproject.toml"
+        if not pyproject.is_file():
+            continue
+        if "[tool.uv.workspace]" not in pyproject.read_text(encoding="utf-8"):
+            continue
 
-bootstrap_family_package(__file__, family_name="uvrun", package_dir_name="agent_toolbelt_uvrun")
+        core_src = repo_root / "packages" / "core" / "src"
+        family_src = repo_root / "families" / "uvrun" / "src"
+        for path in (core_src, family_src):
+            if str(path) not in sys.path:
+                sys.path.insert(0, str(path))
+        return
 
-from agent_toolbelt_uvrun import uvrun  # noqa: E402
+    raise RuntimeError(
+        "Could not locate agent-toolbelt. Set AGENT_TOOLBELT_HOME or restore "
+        f"{DEFAULT_AGENT_TOOLBELT_HOME}."
+    )
+
+
+bootstrap_agent_toolbelt()
+
+from agent_toolbelt_uvrun import cli  # noqa: E402
 
 
 def main() -> int:
-    args = uvrun.parse_args()
-    result = uvrun.invoke_script(
-        script=args.script,
-        script_args=args.script_args,
-        cwd=args.cwd,
-        timeout_sec=args.timeout_sec,
-        check_only=args.check,
-    )
-    print(json.dumps(result, indent=2))
-    return 0 if result["ok"] else 1
+    return cli.main(sys.argv[1:])
 
 
 if __name__ == "__main__":
