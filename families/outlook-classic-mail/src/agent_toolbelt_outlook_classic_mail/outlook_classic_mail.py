@@ -198,6 +198,37 @@ def build_parser() -> argparse.ArgumentParser:
     find_folders.add_argument("--all-accounts", action="store_true")
     find_folders.add_argument("--limit", type=int, default=20)
 
+    cache_status = subparsers.add_parser("cache-status", help="Inspect the local Outlook metadata cache.")
+    cache_status.add_argument("--query")
+    cache_status.add_argument("--cache-path")
+
+    cache_show = subparsers.add_parser("cache-show", help="Show local cache hits for a query.")
+    cache_show.add_argument("--query", required=True)
+    cache_show.add_argument("--account")
+    cache_show.add_argument("--days", type=int)
+    cache_show.add_argument("--limit", type=int, default=25)
+    cache_show.add_argument("--cache-path")
+
+    cache_refresh = subparsers.add_parser("cache-refresh", help="Refresh recent Outlook metadata into the cache.")
+    cache_refresh.add_argument("--account")
+    cache_refresh.add_argument("--all-accounts", action="store_true")
+    cache_refresh.add_argument("--days", type=int, default=90)
+    cache_refresh.add_argument("--force", action="store_true")
+    cache_refresh.add_argument("--cache-path")
+
+    cache_clear = subparsers.add_parser("cache-clear", help="Clear local Outlook metadata cache entries.")
+    cache_clear.add_argument("--query")
+    cache_clear.add_argument("--confirm", action="store_true")
+    cache_clear.add_argument("--cache-path")
+
+    sync_mail = subparsers.add_parser("sync-mail", help="Trigger Outlook Send/Receive All Folders.")
+    sync_mail.add_argument("--refresh-cache", action="store_true")
+    sync_mail.add_argument("--account")
+    sync_mail.add_argument("--all-accounts", action="store_true")
+    sync_mail.add_argument("--days", type=int, default=90)
+    sync_mail.add_argument("--force", action="store_true")
+    sync_mail.add_argument("--cache-path")
+
     search = subparsers.add_parser("search", help="Search mail in a specific account and folder.")
     search.add_argument("--account")
     search.add_argument("--folder", default="inbox")
@@ -212,6 +243,11 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--folder-limit", type=int, default=10)
     search.add_argument("--per-folder-limit", type=int, default=5)
     search.add_argument("--no-update-hints", action="store_true")
+    search.add_argument("--no-cache", action="store_true")
+    search.add_argument("--bypass-cache", action="store_true")
+    search.add_argument("--broad-scan", action="store_true")
+    search.add_argument("--no-update-cache", action="store_true")
+    search.add_argument("--cache-path")
 
     read_thread = subparsers.add_parser("read-thread", help="Read a thread anchored to one message ID.")
     read_thread.add_argument("--account", required=True)
@@ -330,6 +366,48 @@ def build_operation_args(args: argparse.Namespace) -> list[str]:
         parts.extend(["--limit", str(args.limit)])
         return parts
 
+    if args.operation == "cache-status":
+        append_optional_arg(parts, "--query", args.query)
+        append_optional_arg(parts, "--cache-path", args.cache_path)
+        return parts
+
+    if args.operation == "cache-show":
+        parts.extend(["--query", args.query])
+        append_optional_arg(parts, "--account", args.account)
+        append_optional_arg(parts, "--days", args.days)
+        parts.extend(["--limit", str(args.limit)])
+        append_optional_arg(parts, "--cache-path", args.cache_path)
+        return parts
+
+    if args.operation == "cache-refresh":
+        append_optional_arg(parts, "--account", args.account)
+        if args.all_accounts:
+            parts.append("--all-accounts")
+        parts.extend(["--days", str(args.days)])
+        if args.force:
+            parts.append("--force")
+        append_optional_arg(parts, "--cache-path", args.cache_path)
+        return parts
+
+    if args.operation == "cache-clear":
+        append_optional_arg(parts, "--query", args.query)
+        if args.confirm:
+            parts.append("--confirm")
+        append_optional_arg(parts, "--cache-path", args.cache_path)
+        return parts
+
+    if args.operation == "sync-mail":
+        if args.refresh_cache:
+            parts.append("--refresh-cache")
+        append_optional_arg(parts, "--account", args.account)
+        if args.all_accounts:
+            parts.append("--all-accounts")
+        parts.extend(["--days", str(args.days)])
+        if args.force:
+            parts.append("--force")
+        append_optional_arg(parts, "--cache-path", args.cache_path)
+        return parts
+
     if args.operation == "search":
         if args.account:
             parts.extend(["--account", args.account])
@@ -351,6 +429,15 @@ def build_operation_args(args: argparse.Namespace) -> list[str]:
             parts.extend(["--per-folder-limit", str(args.per_folder_limit)])
         if args.no_update_hints:
             parts.append("--no-update-hints")
+        if args.no_cache:
+            parts.append("--no-cache")
+        if args.bypass_cache:
+            parts.append("--bypass-cache")
+        if args.broad_scan:
+            parts.append("--broad-scan")
+        if args.no_update_cache:
+            parts.append("--no-update-cache")
+        append_optional_arg(parts, "--cache-path", args.cache_path)
         return parts
 
     if args.operation == "read-thread":

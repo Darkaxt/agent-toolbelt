@@ -164,6 +164,71 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
             ],
         )
 
+    def test_build_operation_args_routes_cache_search_flags(self):
+        parser = outlook_classic_mail.build_parser()
+        args = parser.parse_args(
+            [
+                "search",
+                "--all-folders",
+                "--query",
+                "lettre24",
+                "--all-accounts",
+                "--folder-limit",
+                "10",
+                "--per-folder-limit",
+                "5",
+                "--bypass-cache",
+                "--broad-scan",
+                "--no-update-cache",
+                "--cache-path",
+                "state/mail_cache.sqlite",
+            ]
+        )
+
+        operation_args = outlook_classic_mail.build_operation_args(args)
+
+        self.assertEqual(
+            operation_args,
+            [
+                "search",
+                "--all-folders",
+                "--query",
+                "lettre24",
+                "--all-accounts",
+                "--limit",
+                "20",
+                "--folder-limit",
+                "10",
+                "--per-folder-limit",
+                "5",
+                "--bypass-cache",
+                "--broad-scan",
+                "--no-update-cache",
+                "--cache-path",
+                "state/mail_cache.sqlite",
+            ],
+        )
+
+    def test_build_operation_args_routes_cache_and_sync_commands(self):
+        parser = outlook_classic_mail.build_parser()
+
+        cache_refresh = parser.parse_args(["cache-refresh", "--all-accounts", "--days", "30", "--force"])
+        cache_show = parser.parse_args(["cache-show", "--query", "lettre24", "--limit", "5"])
+        sync_mail = parser.parse_args(["sync-mail", "--refresh-cache", "--all-accounts"])
+
+        self.assertEqual(
+            outlook_classic_mail.build_operation_args(cache_refresh),
+            ["cache-refresh", "--all-accounts", "--days", "30", "--force"],
+        )
+        self.assertEqual(
+            outlook_classic_mail.build_operation_args(cache_show),
+            ["cache-show", "--query", "lettre24", "--limit", "5"],
+        )
+        self.assertEqual(
+            outlook_classic_mail.build_operation_args(sync_mail),
+            ["sync-mail", "--refresh-cache", "--all-accounts", "--days", "90"],
+        )
+
     def test_build_operation_args_routes_find_response(self):
         parser = outlook_classic_mail.build_parser()
         args = parser.parse_args(
@@ -377,6 +442,24 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("without `--confirm` as a preview", skill_text)
         self.assertIn("explicit user approval", skill_text)
 
+    def test_codex_skill_documents_cache_and_sync_workflows(self):
+        skill_path = (
+            REPO_ROOT
+            / "families"
+            / "outlook-classic-mail"
+            / "codex"
+            / "skills"
+            / "outlook-classic-mail"
+            / "SKILL.md"
+        )
+
+        skill_text = skill_path.read_text(encoding="utf-8")
+
+        self.assertIn("cache-refresh", skill_text)
+        self.assertIn("sync-mail", skill_text)
+        self.assertIn("bypass-cache", skill_text)
+        self.assertIn("outlook_busy", skill_text)
+
     def test_claude_plugin_manifest_and_marketplace_exist(self):
         marketplace_root = (
             REPO_ROOT
@@ -442,6 +525,8 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("scan-domain-refs", skill_text)
         self.assertIn("blocklists status", skill_text)
         self.assertIn("move-message", skill_text)
+        self.assertIn("cache-refresh", skill_text)
+        self.assertIn("sync-mail", skill_text)
         self.assertIn("Gmail", skill_text)
         self.assertIn("explicit confirmation", skill_text)
 

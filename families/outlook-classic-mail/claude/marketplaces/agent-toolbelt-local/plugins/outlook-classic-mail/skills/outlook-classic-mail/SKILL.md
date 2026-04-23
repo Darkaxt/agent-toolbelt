@@ -19,7 +19,11 @@ Use `scripts/invoke_outlook_mail.py` for local mailbox access through Outlook Cl
 
 - For "latest emails from X" or similar service/sender lookups, run `find-folders` first, then search matching folders.
 - If folder discovery finds nothing, search Inbox and state the scope unless a bounded all-folder search is needed.
-- Use `search --all-folders` only as a bounded fallback, and report `matched_folders`, `searched_folders`, and `scope` when relevant.
+- Use the metadata cache for repeated contact/sender/subject lookups. It stores message identifiers, contacts, subjects, timestamps, and folder locations, but not full message bodies.
+- Use `cache-refresh --all-accounts --days 90` to populate or refresh the cache; use `cache-status` and `cache-show --query <text>` to inspect cache coverage.
+- Run `sync-mail` before searching for very recent sent or received mail when Outlook folders may lag behind Send/Receive.
+- Use `search --all-folders` as a bounded fallback. It uses cache-guided folder candidates by default; add `--bypass-cache --broad-scan` when the user suspects the cache/rules missed something or explicitly asks to scan broadly.
+- If the client returns `outlook_busy`, another COM operation is active; report that and retry later instead of waiting until timeout.
 - For "find my response/reply" tasks tied to a received message, use `find-response` before manual Sent/Drafts searches.
 - For domain age or blocklist evidence, use `inspect-domains` for one message or `scan-domain-refs` for a bounded folder scan; these commands are read-only.
 - Use `blocklists status` to inspect the local DNS blocklist cache and `blocklists refresh` only when cache maintenance is explicitly needed.
@@ -38,9 +42,14 @@ Use `scripts/invoke_outlook_mail.py` for local mailbox access through Outlook Cl
 
 ```bash
 python scripts/invoke_outlook_mail.py accounts
+python scripts/invoke_outlook_mail.py sync-mail [--refresh-cache] [--account <smtp|store>|--all-accounts] [--days <n>] [--force]
+python scripts/invoke_outlook_mail.py cache-status [--query <text>]
+python scripts/invoke_outlook_mail.py cache-show --query <text> [--account <smtp|store>] [--days <n>] [--limit <n>]
+python scripts/invoke_outlook_mail.py cache-refresh [--account <smtp|store>|--all-accounts] [--days <n>] [--force]
+python scripts/invoke_outlook_mail.py cache-clear [--query <text>] --confirm
 python scripts/invoke_outlook_mail.py find-folders --query <text> [--account <smtp|store>|--all-accounts] [--limit <n>]
 python scripts/invoke_outlook_mail.py search --account <smtp|store> [--folder inbox|sent|drafts|trash|custom:<path>] [--query <text>] [--unread] [--from <email>] [--to <email>] [--days <n>] [--limit <n>]
-python scripts/invoke_outlook_mail.py search --all-folders --query <text> [--account <smtp|store>|--all-accounts] [--folder-limit <n>] [--per-folder-limit <n>]
+python scripts/invoke_outlook_mail.py search --all-folders --query <text> [--account <smtp|store>|--all-accounts] [--folder-limit <n>] [--per-folder-limit <n>] [--bypass-cache] [--broad-scan] [--no-update-cache]
 python scripts/invoke_outlook_mail.py read-thread --account <smtp|store> --message-id <entry-id>
 python scripts/invoke_outlook_mail.py find-response --account <anchor-store> --message-id <entry-id> [--limit <n>] [--fallback-all-accounts] [--exclude-drafts]
 python scripts/invoke_outlook_mail.py inspect-domains --account <smtp|store> --message-id <entry-id> [--with-rdap] [--young-days <n>] [--rdap-cache <sqlite-path>] [--with-blocklists] [--blocklist-profile threat|debug-all] [--blocklist-cache <sqlite-path>]
