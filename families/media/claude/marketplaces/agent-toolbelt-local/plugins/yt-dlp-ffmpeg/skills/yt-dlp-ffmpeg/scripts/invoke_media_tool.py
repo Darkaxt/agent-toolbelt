@@ -1,93 +1,46 @@
-import json
+import os
 import sys
 from pathlib import Path
 
 
-def bootstrap_core_src() -> None:
-    current = Path(__file__).resolve()
-    for parent in current.parents:
-        pyproject = parent / "pyproject.toml"
-        core_src = parent / "packages" / "core" / "src"
-        if pyproject.exists() and "[tool.uv.workspace]" in pyproject.read_text(encoding="utf-8"):
-            if str(core_src) not in sys.path:
-                sys.path.insert(0, str(core_src))
-            return
-    raise RuntimeError("Could not locate the repository packages/core/src directory.")
+DEFAULT_AGENT_TOOLBELT_HOME = Path(r"D:\Downloads\Public\agent-toolbelt")
 
 
-bootstrap_core_src()
+def bootstrap_agent_toolbelt() -> None:
+    candidates: list[Path] = []
+    env_home = os.getenv("AGENT_TOOLBELT_HOME")
+    if env_home:
+        candidates.append(Path(env_home).expanduser())
+    candidates.append(DEFAULT_AGENT_TOOLBELT_HOME)
 
-from agent_toolbelt_core.bootstrap import bootstrap_family_package  # noqa: E402
+    for repo_root in candidates:
+        repo_root = repo_root.resolve()
+        pyproject = repo_root / "pyproject.toml"
+        if not pyproject.is_file():
+            continue
+        if "[tool.uv.workspace]" not in pyproject.read_text(encoding="utf-8"):
+            continue
 
-bootstrap_family_package(__file__, family_name="media", package_dir_name="agent_toolbelt_media")
+        core_src = repo_root / "packages" / "core" / "src"
+        family_src = repo_root / "families" / "media" / "src"
+        for path in (core_src, family_src):
+            if str(path) not in sys.path:
+                sys.path.insert(0, str(path))
+        return
 
-from agent_toolbelt_media import media  # noqa: E402
+    raise RuntimeError(
+        "Could not locate agent-toolbelt. Set AGENT_TOOLBELT_HOME or restore "
+        f"{DEFAULT_AGENT_TOOLBELT_HOME}."
+    )
+
+
+bootstrap_agent_toolbelt()
+
+from agent_toolbelt_media import cli  # noqa: E402
 
 
 def main() -> int:
-    parser = media.build_parser()
-    args = parser.parse_args()
-
-    try:
-        if args.operation == "download":
-            result = media.invoke_download(
-                url=args.url,
-                output_dir=args.output_dir,
-                audio_only=args.audio_only,
-                subs=args.subs,
-                format_selector=args.format_selector,
-                timeout_sec=args.timeout_sec,
-            )
-        elif args.operation == "probe":
-            result = media.invoke_probe(input_path=args.input, timeout_sec=args.timeout_sec)
-        elif args.operation == "clip":
-            result = media.invoke_clip(
-                input_path=args.input,
-                start=args.start,
-                end=args.end,
-                output_path=args.output,
-                timeout_sec=args.timeout_sec,
-            )
-        elif args.operation == "extract-audio":
-            result = media.invoke_extract_audio(
-                input_path=args.input,
-                codec=args.codec,
-                output_path=args.output,
-                timeout_sec=args.timeout_sec,
-            )
-        elif args.operation == "remux":
-            result = media.invoke_remux(
-                input_path=args.input,
-                container=args.container,
-                output_path=args.output,
-                timeout_sec=args.timeout_sec,
-            )
-        else:
-            result = media.invoke_transcode(
-                input_path=args.input,
-                output_path=args.output,
-                ffmpeg_args=args.ffmpeg_args,
-                timeout_sec=args.timeout_sec,
-            )
-    except ValueError as exc:
-        result = media.make_result(
-            ok=False,
-            tool="yt-dlp" if args.operation == "download" else "ffmpeg",
-            operation=args.operation,
-            exit_code=2,
-            stderr=str(exc),
-        )
-    except Exception as exc:
-        result = media.make_result(
-            ok=False,
-            tool="yt-dlp" if args.operation == "download" else "ffmpeg",
-            operation=args.operation,
-            exit_code=1,
-            stderr=str(exc),
-        )
-
-    print(json.dumps(result, indent=2))
-    return 0 if result["ok"] else 1
+    return cli.main(sys.argv[1:])
 
 
 if __name__ == "__main__":
