@@ -8,6 +8,7 @@
 - `families/media`: `yt-dlp`, `ffmpeg`, and `ffprobe` available on `PATH`
 - `families/outlook-classic-mail`: Outlook Classic installed and configured locally, `uv` available on `PATH`, and a local Outlook COM client project
 - `families/amazon-cli`: `uv` available on `PATH`; the Amazon CLI client source is bundled, while browser/session runtime state remains under local app data
+- `families/linkedin-cv`: `uv` available on `PATH`; Playwright dependencies are resolved by the package, while managed browser profiles, sessions, and snapshots remain under local app data
 
 ## Shared resolution order
 

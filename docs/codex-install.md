@@ -11,6 +11,7 @@ Each family ships its own Codex skill bundle. Install only the family you want.
 - Outlook Classic Mail: `families/outlook-classic-mail/codex/skills/outlook-classic-mail`
 - Observable Reputation: `families/observable-reputation/codex/skills/observable-reputation`
 - Mail Domain Quarantine: `families/mail-domain-quarantine/codex/skills/mail-domain-quarantine`
+- LinkedIn CV: `families/linkedin-cv/codex/skills/linkedin-cv`
 
 ## Install flow
 

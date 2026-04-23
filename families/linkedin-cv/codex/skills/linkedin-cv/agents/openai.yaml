@@ -1,0 +1,6 @@
+interface:
+  display_name: "LinkedIn CV"
+  short_description: "Capture and compare explicit LinkedIn CV/profile snapshots through a local managed browser."
+  default_prompt: "Use $linkedin-cv for read-only LinkedIn own-profile snapshots, one explicit accessible profile capture, and CV improvement comparisons."
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-toolbelt-linkedin-cv"
+version = "0.1.0"
+description = "Local read-only LinkedIn CV profile snapshot and comparison assistant."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Darkaxt" }]
+dependencies = [
+  "agent-toolbelt-core",
+  "beautifulsoup4>=4.12",
+  "playwright>=1.52",
+]
+
+[project.scripts]
+agent-toolbelt-linkedin-cv = "agent_toolbelt_linkedin_cv.cli:entrypoint"
+
+[tool.uv.sources]
+agent-toolbelt-core = { workspace = true }
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

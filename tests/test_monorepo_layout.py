@@ -46,6 +46,11 @@ EXPECTED_FAMILIES = {
         "script_name": "agent-toolbelt-amazon-cli",
         "package_dir": "agent_toolbelt_amazon_cli",
     },
+    "linkedin-cv": {
+        "project_name": "agent-toolbelt-linkedin-cv",
+        "script_name": "agent-toolbelt-linkedin-cv",
+        "package_dir": "agent_toolbelt_linkedin_cv",
+    },
     "whatsapp-wacli": {
         "project_name": "agent-toolbelt-whatsapp-wacli",
         "script_name": "agent-toolbelt-whatsapp-wacli",
@@ -71,6 +76,7 @@ class MonorepoLayoutTests(unittest.TestCase):
                 "families/observable-reputation",
                 "families/mail-domain-quarantine",
                 "families/amazon-cli",
+                "families/linkedin-cv",
                 "families/whatsapp-wacli",
             ],
         )
@@ -102,6 +108,40 @@ class MonorepoLayoutTests(unittest.TestCase):
 
     def test_root_runtime_package_is_removed(self):
         self.assertFalse((REPO_ROOT / "src" / "agent_toolbelt").exists())
+
+    def test_linkedin_skill_bundles_have_frontmatter(self):
+        skill_paths = [
+            REPO_ROOT / "families" / "linkedin-cv" / "codex" / "skills" / "linkedin-cv" / "SKILL.md",
+            REPO_ROOT
+            / "families"
+            / "linkedin-cv"
+            / "claude"
+            / "marketplaces"
+            / "agent-toolbelt-local"
+            / "plugins"
+            / "linkedin-cv"
+            / "skills"
+            / "linkedin-cv"
+            / "SKILL.md",
+        ]
+
+        for path in skill_paths:
+            with self.subTest(path=path.relative_to(REPO_ROOT)):
+                text = path.read_text(encoding="utf-8")
+                self.assertTrue(text.startswith("---\n"))
+                self.assertIn("name:", text.split("---", 2)[1])
+                self.assertIn("description:", text.split("---", 2)[1])
+
+    def test_linkedin_temp_route_capture_is_not_committed(self):
+        self.assertFalse((REPO_ROOT / "tmp-linkedin-skills-route.html").exists())
+
+    def test_linkedin_family_uses_sanitized_public_fixtures(self):
+        text = (
+            REPO_ROOT / "families" / "linkedin-cv" / "tests" / "test_linkedin_cv.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("José Miguel Soriano de la Cámara", text)
+        self.assertNotIn("josesorianocyber", text)
 
 
 if __name__ == "__main__":
