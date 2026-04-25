@@ -10,6 +10,7 @@ members = [
   "families/mail-domain-quarantine",
   "families/amazon-cli",
   "families/linkedin-cv",
+  "families/codex-thread-recall",
   "families/whatsapp-wacli",
 ]
 

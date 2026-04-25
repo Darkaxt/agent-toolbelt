@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-toolbelt-codex-thread-recall"
+version = "0.1.0"
+description = "Read the current Codex thread's raw rollout history for bounded self-recall."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Darkaxt" }]
+dependencies = []
+
+[project.scripts]
+agent-toolbelt-codex-thread-recall = "agent_toolbelt_codex_thread_recall.cli:entrypoint"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

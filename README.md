@@ -7,6 +7,7 @@ Start by choosing the one family you actually need:
 | Family | Use it for | Folder | Primary CLI |
 | --- | --- | --- | --- |
 | Amazon CLI | Amazon product search, specs, reviews, offers, and managed session workflows through a bundled Amazon CLI client | `families/amazon-cli` | `agent-toolbelt-amazon-cli` |
+| Codex Thread Recall | bounded self-recall from the current Codex thread's own raw rollout history before broad exploration | `families/codex-thread-recall` | `agent-toolbelt-codex-thread-recall` |
 | Everything | global filename and path lookup | `families/everything` | `agent-toolbelt-everything` |
 | Gemini | public URL inspection and Codex research cross-checks | `families/gemini` | `agent-toolbelt-gemini` |
 | LinkedIn CV | local read-only LinkedIn own-profile and explicit accessible-profile snapshot comparisons | `families/linkedin-cv` | `agent-toolbelt-linkedin-cv` |
@@ -19,7 +20,7 @@ Start by choosing the one family you actually need:
 
 ## Repo layout
 
-- `families/`: independent tool families with their own package, tests, and agent integrations where stable
+- `families/`: independent tool families with their own package, tests, and agent integrations where stable; some families are intentionally Codex-only
 - `packages/core/`: shared helpers and packaged assets
 - `docs/`: cross-cutting install and prerequisite guidance
 - `tests/`: repo-level layout, isolation, and portability checks

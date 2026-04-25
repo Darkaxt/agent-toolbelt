@@ -38,6 +38,10 @@ FAMILY_IMPORTS = {
         REPO_ROOT / "families" / "linkedin-cv" / "src",
         "agent_toolbelt_linkedin_cv.cli",
     ),
+    "codex-thread-recall": (
+        REPO_ROOT / "families" / "codex-thread-recall" / "src",
+        "agent_toolbelt_codex_thread_recall.cli",
+    ),
     "whatsapp-wacli": (
         REPO_ROOT / "families" / "whatsapp-wacli" / "src",
         "agent_toolbelt_whatsapp_wacli.cli",
@@ -251,6 +255,25 @@ class FamilyCLITests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["operation"], "profile.capture")
         self.assertEqual(payload["result"]["capture_type"], "accessible_profile")
+
+    def test_codex_thread_recall_cli_routes_status_command(self):
+        cli = import_family_cli("codex-thread-recall")
+
+        original_status = cli.thread_recall.status
+        cli.thread_recall.status = lambda **kwargs: {
+            "ok": True,
+            "thread": {"id": "019-thread"},
+            "warnings": [],
+        }
+        try:
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                exit_code = cli.main(["status"])
+                payload = json.loads(buffer.getvalue())
+        finally:
+            cli.thread_recall.status = original_status
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["thread"]["id"], "019-thread")
 
     def test_whatsapp_wacli_routes_latest_command(self):
         cli = import_family_cli("whatsapp-wacli")
