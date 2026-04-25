@@ -20,6 +20,8 @@ RELATIVE_FILE_PATH_PATTERN = re.compile(rf"(?<![A-Za-z0-9])(?:[A-Za-z0-9_.-]+[\\
 QUESTION_PATTERN = re.compile(r"[^?]+\?")
 BLOCKER_TOKENS = ("permission denied", "failed", "error", "timeout", "traceback", "exception")
 RETRY_TOKENS = ("retry", "retrying", "retried")
+DECISION_TOKENS = ("decision:", "fail closed", "do not", "prefer", "use ", "keep ", "will ")
+GOAL_TOKENS = ("implement", "ship", "fix", "add", "update", "review", "check", "publish", "merge", "install", "refine", "plan", "build")
 REPO_PATTERN = re.compile(r"\b([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\b")
 PR_PATTERN = re.compile(r"\bPR\s*`?#?(\d+)`?", re.IGNORECASE)
 COMMIT_PATTERN = re.compile(r"\bcommit\s+`?([0-9a-f]{7,40})`?", re.IGNORECASE)
@@ -27,39 +29,127 @@ OID_PATTERN = re.compile(r'"oid"\s*:\s*"([0-9a-f]{7,40})"', re.IGNORECASE)
 BACKTICK_PATTERN = re.compile(r"`([^`\r\n]{1,160})`")
 IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9._-]{2,120}$")
 QUALIFIED_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$")
-NOISE_TOKENS = (
+INSTRUCTION_WRAPPER_TOKENS = (
     "<skills_instructions>",
     "<plugins_instructions>",
+    "<apps_instructions>",
     "<environment_context>",
-    "`sandbox_mode`",
-    "developer message",
+    "<permissions instructions>",
+    "<app-context>",
+    "<collaboration_mode>",
 )
 SHIP_EVENT_KINDS = {"published", "merged", "pushed", "installed"}
 GENERIC_PATH_PARENT_FALLBACKS = {"__init__", "readme", "skill", "main", "index", "cli", "app", "plugin"}
 ENTITY_STOPWORDS = {
     "pr",
     "commit",
+    "entry",
+    "line",
+    "marketplace",
+    "marketplaces",
+    "path",
+    "paths",
+    "plugin",
+    "plugins",
     "published",
     "merged",
     "pushed",
     "installed",
     "enabled",
+    "quick_validate",
+    "readme",
+    "rollout",
+    "skill",
+    "skills",
+    "stderr",
+    "stdout",
+    "test",
+    "tests",
+    "traceback",
     "validate",
     "validated",
     "status",
 }
-CACHE_SCHEMA_VERSION = 3
+GENERIC_RUNTIME_ENTITY_TOKENS = {
+    "__main__",
+    "apply_patch",
+    "bash",
+    "cmd",
+    "curl",
+    "git",
+    "gh",
+    "grep",
+    "node",
+    "npm",
+    "npx",
+    "pip",
+    "pip3",
+    "powershell",
+    "pwsh",
+    "py",
+    "pathlib",
+    "python",
+    "python3",
+    "rg",
+    "sed",
+    "sh",
+    "sqlite3",
+    "tempfile",
+    "threading",
+    "unittest",
+    "uv",
+    "uvx",
+    "wget",
+    "zsh",
+}
+GENERIC_PATH_SEGMENTS = {
+    ".venv",
+    "bin",
+    "build",
+    "debug",
+    "dist",
+    "lib",
+    "release",
+    "releases",
+    "scripts",
+    "site-packages",
+    "src",
+    "tests",
+    "tools",
+}
+HELPER_PATH_PREFIXES = ("invoke_", "install_", "run_", "test_", "validate_", "debug_", "bootstrap_", "setup_")
+HELPER_PATH_SUFFIXES = ("_wrapper", "_bootstrap", "_launcher", "_runtime", "_script", "_validate", "_helper", "_check")
+HELPER_PATH_NAMES = {"bootstrap", "installer", "launcher", "runtime", "wrapper"}
+ENTITY_SOURCE_BASE_WEIGHTS = {
+    "qualified_id_prefix": 60,
+    "path_parent_fallback": 45,
+    "backtick_identifier": 40,
+    "path_leaf": 25,
+}
+ENTITY_SOURCE_STRENGTH = {
+    "path_leaf": 1,
+    "backtick_identifier": 2,
+    "path_parent_fallback": 3,
+    "qualified_id_prefix": 4,
+}
+CONTENT_CLASSES = {"work", "meta", "command_output", "transcript_dump", "compaction"}
+CACHE_SCHEMA_VERSION = 6
 TEXT_SCAN_LIMIT = 2000
 EVIDENCE_SCAN_LIMIT = 200
 RAW_TEXT_STORE_LIMIT = 16000
 INDEX_LOCK_POLL_SECONDS = 0.1
 INDEX_LOCK_WAIT_SECONDS = 5.0
 INDEX_LOCK_STALE_SECONDS = 300.0
+EPISODE_GAP_SECONDS = 1800
+EPISODE_DOMINANT_LIMIT = 5
 FACET_TABLES: dict[str, tuple[str, str]] = {
     "paths": ("entry_paths", "path"),
     "blockers": ("entry_blockers", "blocker"),
     "retry_signals": ("entry_retry_signals", "retry_signal"),
     "questions": ("entry_questions", "question"),
+    "goals": ("entry_goals", "goal"),
+    "decisions": ("entry_decisions", "decision"),
+    "facts": ("entry_facts", "fact"),
     "entities": ("entry_entities", "entity"),
     "repos": ("entry_repos", "repo"),
     "pr_numbers": ("entry_pr_numbers", "pr_number"),
@@ -530,7 +620,7 @@ def is_human_scale_sentence(sentence: str) -> bool:
         return False
     if cleaned.startswith("<") or cleaned.startswith("Exit code:"):
         return False
-    if "`sandbox_mode`" in cleaned or "### " in cleaned:
+    if "### " in cleaned:
         return False
     return True
 
@@ -546,6 +636,42 @@ def looks_like_email(token: str) -> bool:
     return bool(local) and "." in domain
 
 
+def is_generic_runtime_entity(token: str) -> bool:
+    lowered = token.strip().lower()
+    if lowered.endswith(".exe"):
+        lowered = lowered[:-4]
+    return lowered in GENERIC_RUNTIME_ENTITY_TOKENS
+
+
+def looks_like_helper_path_basename(token: str) -> bool:
+    lowered = token.strip().lower()
+    return (
+        lowered in HELPER_PATH_NAMES
+        or any(lowered.startswith(prefix) for prefix in HELPER_PATH_PREFIXES)
+        or any(lowered.endswith(suffix) for suffix in HELPER_PATH_SUFFIXES)
+    )
+
+
+def looks_like_env_var_token(token: str) -> bool:
+    return bool(re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", token))
+
+
+def looks_like_bare_filename(token: str) -> bool:
+    return bool(re.fullmatch(rf"[A-Za-z0-9_.-]+\.(?:{FILE_EXTENSION_PATTERN})", token))
+
+
+def build_entity_mention(entity: str, *, source_kind: str, source_text: str) -> dict[str, Any] | None:
+    normalized = normalize_entity_candidate(entity)
+    if normalized is None:
+        return None
+    return {
+        "entity": normalized,
+        "source_kind": source_kind,
+        "source_text": source_text,
+        "base_weight": ENTITY_SOURCE_BASE_WEIGHTS[source_kind],
+    }
+
+
 def normalize_entity_candidate(candidate: str) -> str | None:
     cleaned = candidate.strip("`'\".,)")
     if cleaned.endswith(".cli"):
@@ -554,26 +680,50 @@ def normalize_entity_candidate(candidate: str) -> str | None:
         not cleaned
         or cleaned.isdigit()
         or is_hex_oid(cleaned)
+        or looks_like_env_var_token(cleaned)
+        or looks_like_bare_filename(cleaned)
         or "/" in cleaned
         or "\\" in cleaned
         or not IDENTIFIER_PATTERN.fullmatch(cleaned)
         or cleaned.lower() in ENTITY_STOPWORDS
+        or is_generic_runtime_entity(cleaned)
     ):
         return None
     return cleaned
 
 
-def entity_candidates_from_path(path: str) -> list[str]:
+def nearest_meaningful_parent_candidate(parts: list[str]) -> str | None:
+    for part in reversed(parts[:-1]):
+        cleaned = part.strip()
+        if not cleaned or cleaned == "?" or cleaned.lower() in GENERIC_PATH_SEGMENTS:
+            continue
+        normalized_candidate = normalize_entity_candidate(cleaned)
+        if normalized_candidate is not None:
+            return normalized_candidate
+    return None
+
+
+def entity_mentions_from_path(path: str) -> list[dict[str, Any]]:
     normalized = path.strip().rstrip("\\/").replace("/", "\\")
     parts = [part for part in normalized.split("\\") if part and part != "?"]
     if not parts:
         return []
     leaf = parts[-1]
     candidate = leaf.rsplit(".", 1)[0] if "." in leaf else leaf
-    if candidate.lower() in GENERIC_PATH_PARENT_FALLBACKS and len(parts) >= 2:
-        candidate = parts[-2]
-    normalized_candidate = normalize_entity_candidate(candidate)
-    return [normalized_candidate] if normalized_candidate is not None else []
+    if is_generic_runtime_entity(candidate):
+        return []
+    if candidate.lower() in GENERIC_PATH_PARENT_FALLBACKS or looks_like_helper_path_basename(candidate):
+        fallback = nearest_meaningful_parent_candidate(parts)
+        if fallback is None:
+            return []
+        mention = build_entity_mention(fallback, source_kind="path_parent_fallback", source_text=path)
+        return [mention] if mention is not None else []
+    mention = build_entity_mention(candidate, source_kind="path_leaf", source_text=path)
+    return [mention] if mention is not None else []
+
+
+def entity_candidates_from_path(path: str) -> list[str]:
+    return [mention["entity"] for mention in entity_mentions_from_path(path)]
 
 
 def extract_qualified_ids(text: str) -> list[str]:
@@ -588,31 +738,158 @@ def extract_qualified_ids(text: str) -> list[str]:
     return qualified_ids
 
 
-def extract_entities(text: str) -> list[str]:
-    entities: list[str] = []
-    seen: set[str] = set()
+def heading_candidates(text: str) -> list[str]:
+    headings: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("#"):
+            continue
+        heading = stripped.lstrip("#").strip()
+        if heading:
+            headings.append(heading)
+    return headings
 
-    def add(candidate: str) -> None:
-        cleaned = normalize_entity_candidate(candidate)
-        if cleaned is None or cleaned in seen:
+
+def extract_goals(text: str, *, role: str | None) -> list[str]:
+    goals: list[str] = []
+    for heading in heading_candidates(text):
+        if is_human_scale_sentence(heading):
+            goals.append(heading)
+    for sentence in sentence_candidates(text):
+        if not is_human_scale_sentence(sentence):
+            continue
+        lowered = sentence.lower()
+        if role == "user":
+            if lowered.startswith("please ") or any(f" {token}" in f" {lowered} " for token in GOAL_TOKENS):
+                goals.append(sentence)
+        elif role == "assistant":
+            if lowered.startswith(("i'm ", "i am ", "i will ", "i'll ", "next ")):
+                goals.append(sentence)
+    return unique_preserving_order(goals, limit=8)
+
+
+def extract_decisions(text: str, *, role: str | None) -> list[str]:
+    if role not in {"assistant", "user"}:
+        return []
+    decisions: list[str] = []
+    for sentence in sentence_candidates(text):
+        if not is_human_scale_sentence(sentence):
+            continue
+        lowered = sentence.lower()
+        if lowered.startswith("decision:") or any(token in lowered for token in DECISION_TOKENS):
+            decisions.append(sentence)
+    return unique_preserving_order(decisions, limit=8)
+
+
+def extract_facts(
+    text: str,
+    *,
+    role: str | None,
+    blockers: list[str],
+    retry_signals: list[str],
+    questions: list[str],
+    goals: list[str],
+    decisions: list[str],
+) -> list[str]:
+    if role not in {"assistant", "user"}:
+        return []
+    excluded = {" ".join(item.split()) for item in [*blockers, *retry_signals, *questions, *goals, *decisions] if item}
+    facts: list[str] = []
+    for sentence in sentence_candidates(text):
+        cleaned = " ".join(sentence.split())
+        if not is_human_scale_sentence(cleaned) or cleaned in excluded or "?" in cleaned:
+            continue
+        facts.append(cleaned)
+    return unique_preserving_order(facts, limit=10)
+
+
+def looks_like_instruction_envelope(text: str, *, role: str | None) -> tuple[bool, str | None]:
+    lowered = text.lower()
+    if role == "developer":
+        return True, "developer"
+    if lowered.startswith("please implement this plan:") or "<proposed_plan>" in lowered:
+        return True, "plan-boilerplate"
+    if any(token in lowered for token in INSTRUCTION_WRAPPER_TOKENS):
+        return True, "instruction-envelope"
+    return False, None
+
+
+def looks_like_transcript_dump(text: str) -> bool:
+    score = 0
+    line_wrapped_envelopes = len(re.findall(r'(?m)^\d+:\{', text))
+    if line_wrapped_envelopes >= 2:
+        score += 2
+    if re.search(r'(?m)^\d+:\{"timestamp":', text) and '"payload"' in text and text.count('"type"') >= 2:
+        score += 2
+    if text.count('{"timestamp"') >= 2:
+        score += 1
+    if text.count('"payload"') >= 2 and text.count('"type"') >= 3:
+        score += 1
+    if len(re.findall(r"(?m)^LINE \d+ ENTRY ", text)) >= 2:
+        score += 1
+    if len(text) < 120 and score < 2:
+        return False
+    return score >= 2
+
+
+def classify_content(
+    text: str,
+    *,
+    entry_type: str | None,
+    payload_type: str | None,
+    role: str | None,
+) -> tuple[str, bool, str | None]:
+    compact = " ".join(text.split())
+    if entry_type == "compacted":
+        return "compaction", True, "compaction-marker"
+    if not compact:
+        return "work", False, None
+    is_meta, meta_reason = looks_like_instruction_envelope(compact, role=role)
+    if is_meta:
+        return "meta", True, meta_reason
+    if looks_like_transcript_dump(text):
+        return "transcript_dump", True, "transcript-dump"
+    if payload_type in {"function_call_output", "exec_command_end"}:
+        if len(compact) > 1400 and not any(token in compact.lower() for token in BLOCKER_TOKENS + RETRY_TOKENS):
+            return "command_output", True, "oversized-output"
+        return "command_output", False, None
+    if len(compact) > 1400 and not any(token in compact.lower() for token in BLOCKER_TOKENS + RETRY_TOKENS):
+        return "work", True, "oversized-output"
+    return "work", False, None
+
+
+def extract_entities(text: str) -> list[str]:
+    return unique_preserving_order([mention["entity"] for mention in extract_entity_mentions(text)])
+
+
+def extract_entity_mentions(text: str) -> list[dict[str, Any]]:
+    mentions: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def add(mention: dict[str, Any] | None) -> None:
+        if mention is None:
             return
-        entities.append(cleaned)
-        seen.add(cleaned)
+        key = (mention["entity"], mention["source_kind"], mention["source_text"])
+        if key in seen:
+            return
+        mentions.append(mention)
+        seen.add(key)
 
     for path in extract_paths(text):
-        for candidate in entity_candidates_from_path(path):
-            add(candidate)
+        for mention in entity_mentions_from_path(path):
+            add(mention)
     for token in BACKTICK_PATTERN.findall(text):
         cleaned = token.strip()
         if QUALIFIED_ID_PATTERN.fullmatch(cleaned) and not looks_like_email(cleaned):
-            add(cleaned.split("@", 1)[0])
+            add(build_entity_mention(cleaned.split("@", 1)[0], source_kind="qualified_id_prefix", source_text=cleaned))
             continue
         if "/" in cleaned or "\\" in cleaned:
-            for candidate in [path_candidate for path in extract_paths(cleaned) for path_candidate in entity_candidates_from_path(path)]:
-                add(candidate)
+            for path in extract_paths(cleaned):
+                for mention in entity_mentions_from_path(path):
+                    add(mention)
             continue
-        add(cleaned)
-    return entities
+        add(build_entity_mention(cleaned, source_kind="backtick_identifier", source_text=cleaned))
+    return mentions
 
 
 def extract_repos(text: str) -> list[str]:
@@ -636,42 +913,75 @@ def extract_commit_oids(text: str) -> list[str]:
     return unique_preserving_order(commits)
 
 
-def detect_event_kinds(text: str, *, entry_type: str | None, payload_type: str | None) -> list[str]:
+def has_ship_anchor(
+    *,
+    paths: list[str],
+    entities: list[str],
+    repos: list[str],
+    pr_numbers: list[int],
+    commit_oids: list[str],
+    qualified_ids: list[str],
+) -> bool:
+    return bool(paths or entities or repos or pr_numbers or commit_oids or qualified_ids)
+
+
+def detect_event_kinds(
+    text: str,
+    *,
+    entry_type: str | None,
+    payload_type: str | None,
+    role: str | None,
+    content_class: str,
+    paths: list[str],
+    entities: list[str],
+    repos: list[str],
+    pr_numbers: list[int],
+    commit_oids: list[str],
+    qualified_ids: list[str],
+) -> list[str]:
     lowered = text.lower()
     kinds: list[str] = []
     if payload_type == "Plan" or "<proposed_plan>" in lowered or "please implement this plan" in lowered:
         kinds.append("planned")
     if entry_type == "response_item" and payload_type == "function_call":
         kinds.append("implementation_started")
-    if "published" in lowered:
+    ship_anchor = has_ship_anchor(
+        paths=paths,
+        entities=entities,
+        repos=repos,
+        pr_numbers=pr_numbers,
+        commit_oids=commit_oids,
+        qualified_ids=qualified_ids,
+    )
+    ship_eligible = role != "user" and content_class in {"work", "meta"} and ship_anchor
+    if ship_eligible and "published" in lowered:
         kinds.append("published")
-    if "merged" in lowered or '"state":"merged"' in lowered or '"state": "merged"' in lowered:
+    if ship_eligible and ("merged" in lowered or '"state":"merged"' in lowered or '"state": "merged"' in lowered):
         kinds.append("merged")
-    if "pushed" in lowered:
+    if ship_eligible and "pushed" in lowered:
         kinds.append("pushed")
-    if "installed" in lowered or "enabled" in lowered:
+    if ship_eligible and ("installed" in lowered or "enabled" in lowered):
         kinds.append("installed")
-    if "validate" in lowered or "passed" in lowered:
+    if role != "user" and content_class in {"work", "meta"} and ("validate" in lowered or "passed" in lowered):
         kinds.append("validated")
     return unique_preserving_order(kinds)
 
 
-def classify_search_text(text: str, *, entry_type: str | None, payload_type: str | None, role: str | None) -> tuple[str, bool, str | None]:
+def classify_search_text(
+    text: str,
+    *,
+    content_class: str,
+    is_noise: bool,
+) -> str:
     compact = " ".join(text.split())
     lowered = compact.lower()
     if not compact:
-        return "", False, None
-    if role == "developer":
-        return "", True, "developer"
-    if lowered.startswith("please implement this plan:") or compact.startswith("<proposed_plan>"):
-        return "", True, "plan-boilerplate"
-    if any(token in lowered for token in NOISE_TOKENS):
-        return "", True, "prompt-noise"
-    if entry_type == "compacted":
-        return "", True, "compaction-marker"
-    if len(compact) > 1400 and not any(token in lowered for token in BLOCKER_TOKENS + RETRY_TOKENS) and not detect_event_kinds(compact, entry_type=entry_type, payload_type=payload_type):
-        return "", True, "oversized-output"
-    return compact, False, None
+        return ""
+    if content_class in {"meta", "transcript_dump", "compaction"}:
+        return ""
+    if is_noise and not any(token in lowered for token in BLOCKER_TOKENS + RETRY_TOKENS):
+        return ""
+    return compact
 
 
 def normalize_entry(entry: dict[str, Any], entry_index: int, line_number: int) -> dict[str, Any]:
@@ -684,6 +994,7 @@ def normalize_entry(entry: dict[str, Any], entry_index: int, line_number: int) -
             "entry_type": entry.get("type"),
             "payload_type": payload.get("type"),
             "role": None,
+            "content_class": "compaction",
             "command": None,
             "raw_text": "Context compacted.",
             "search_text": "",
@@ -692,6 +1003,9 @@ def normalize_entry(entry: dict[str, Any], entry_index: int, line_number: int) -
             "blockers": [],
             "retry_signals": [],
             "questions": [],
+            "goals": [],
+            "decisions": [],
+            "facts": [],
             "entities": [],
             "repos": [],
             "pr_numbers": [],
@@ -710,20 +1024,65 @@ def normalize_entry(entry: dict[str, Any], entry_index: int, line_number: int) -
     analysis_text = bounded_analysis_text(combined_text)
 
     role = payload_role(payload)
-    search_text, is_noise, noise_reason = classify_search_text(
+    content_class, is_noise, noise_reason = classify_content(
         analysis_text,
         entry_type=entry.get("type"),
         payload_type=payload.get("type"),
         role=role,
     )
-    event_kinds = detect_event_kinds(analysis_text, entry_type=entry.get("type"), payload_type=payload.get("type"))
-    entities = extract_entities(analysis_text)
+    paths = extract_paths(analysis_text)
+    entity_mentions = extract_entity_mentions(analysis_text)
+    entities = unique_preserving_order([mention["entity"] for mention in entity_mentions])
     repos = extract_repos(analysis_text)
     pr_numbers = extract_pr_numbers(analysis_text)
     commit_oids = extract_commit_oids(analysis_text)
     qualified_ids = extract_qualified_ids(analysis_text)
     blockers = extract_blockers(analysis_text)
     retry_signals = extract_retry_signals(analysis_text)
+    goals = extract_goals(analysis_text, role=role)
+    decisions = extract_decisions(analysis_text, role=role) if content_class == "work" else []
+    questions = extract_questions(analysis_text)
+    facts = extract_facts(
+        analysis_text,
+        role=role,
+        blockers=blockers,
+        retry_signals=retry_signals,
+        questions=questions,
+        goals=goals,
+        decisions=decisions,
+    ) if content_class == "work" else []
+    if content_class == "transcript_dump":
+        entity_mentions = []
+        paths = []
+        entities = []
+        repos = []
+        pr_numbers = []
+        commit_oids = []
+        qualified_ids = []
+        blockers = []
+        retry_signals = []
+        goals = []
+        decisions = []
+        questions = []
+        facts = []
+    event_kinds = detect_event_kinds(
+        analysis_text,
+        entry_type=entry.get("type"),
+        payload_type=payload.get("type"),
+        role=role,
+        content_class=content_class,
+        paths=paths,
+        entities=entities,
+        repos=repos,
+        pr_numbers=pr_numbers,
+        commit_oids=commit_oids,
+        qualified_ids=qualified_ids,
+    )
+    search_text = classify_search_text(
+        analysis_text,
+        content_class=content_class,
+        is_noise=is_noise,
+    )
     raw_text = combined_text
     if is_noise and len(raw_text) > RAW_TEXT_STORE_LIMIT:
         raw_text = bounded_analysis_text(raw_text, limit=RAW_TEXT_STORE_LIMIT)
@@ -735,14 +1094,19 @@ def normalize_entry(entry: dict[str, Any], entry_index: int, line_number: int) -
         "entry_type": entry.get("type"),
         "payload_type": payload.get("type"),
         "role": role,
+        "content_class": content_class,
         "command": command,
         "raw_text": raw_text,
         "search_text": search_text,
         "excerpt": summarize_text(search_text or analysis_text) if (search_text or analysis_text) else "",
-        "paths": extract_paths(analysis_text),
+        "paths": paths,
         "blockers": blockers,
         "retry_signals": retry_signals,
-        "questions": extract_questions(analysis_text),
+        "questions": questions,
+        "goals": goals,
+        "decisions": decisions,
+        "facts": facts,
+        "entity_mentions": entity_mentions,
         "entities": entities,
         "repos": repos,
         "pr_numbers": pr_numbers,
@@ -809,10 +1173,16 @@ def drop_cache_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
         drop table if exists entries_fts;
+        drop table if exists entry_episode_links;
+        drop table if exists episodes;
         drop table if exists entry_paths;
         drop table if exists entry_blockers;
         drop table if exists entry_retry_signals;
         drop table if exists entry_questions;
+        drop table if exists entry_goals;
+        drop table if exists entry_decisions;
+        drop table if exists entry_facts;
+        drop table if exists entry_entity_mentions;
         drop table if exists entry_entities;
         drop table if exists entry_repos;
         drop table if exists entry_pr_numbers;
@@ -855,6 +1225,7 @@ def ensure_cache_schema(conn: sqlite3.Connection) -> None:
             "entry_type",
             "payload_type",
             "role",
+            "content_class",
             "command",
             "raw_text",
             "search_text",
@@ -896,7 +1267,36 @@ def ensure_cache_schema(conn: sqlite3.Connection) -> None:
             search_text text,
             excerpt text,
             is_noise integer not null,
-            noise_reason text
+            noise_reason text,
+            content_class text not null
+        );
+
+        create table if not exists episodes (
+            id integer primary key,
+            thread_id text not null,
+            episode_index integer not null,
+            started_entry_index integer not null,
+            ended_entry_index integer not null,
+            started_at text,
+            ended_at text,
+            entry_count integer not null,
+            work_entry_count integer not null,
+            boundary_reason text
+        );
+
+        create table if not exists entry_episode_links (
+            entry_id integer primary key references entries(id) on delete cascade,
+            episode_id integer not null references episodes(id) on delete cascade
+        );
+
+        create table if not exists entry_entity_mentions (
+            entry_id integer not null references entries(id) on delete cascade,
+            entity text not null,
+            source_kind text not null,
+            source_text text not null,
+            base_weight integer not null,
+            is_work_eligible integer not null,
+            is_ship_eligible integer not null
         );
         """
     )
@@ -915,6 +1315,12 @@ def ensure_cache_schema(conn: sqlite3.Connection) -> None:
     conn.execute("create index if not exists idx_entries_timestamp on entries(thread_id, timestamp)")
     conn.execute("create index if not exists idx_entries_role on entries(thread_id, role, entry_index)")
     conn.execute("create index if not exists idx_entries_type on entries(thread_id, entry_type, payload_type, entry_index)")
+    conn.execute("create index if not exists idx_entries_class on entries(thread_id, content_class, entry_index)")
+    conn.execute("create index if not exists idx_episodes_thread on episodes(thread_id, episode_index)")
+    conn.execute("create index if not exists idx_episode_links_episode on entry_episode_links(episode_id)")
+    conn.execute("create index if not exists idx_entry_entity_mentions_entry on entry_entity_mentions(entry_id)")
+    conn.execute("create index if not exists idx_entry_entity_mentions_entity on entry_entity_mentions(entity)")
+    conn.execute("create index if not exists idx_entry_entity_mentions_entity_entry on entry_entity_mentions(entity, entry_id)")
     for facet_name, (table_name, column_name) in FACET_TABLES.items():
         conn.execute(f"create index if not exists idx_{table_name}_entry on {table_name}(entry_id)")
         conn.execute(f"create index if not exists idx_{table_name}_value on {table_name}({column_name})")
@@ -940,6 +1346,11 @@ def cache_metadata_row(conn: sqlite3.Connection, thread_id: str) -> sqlite3.Row 
 
 
 def clear_thread_cache(conn: sqlite3.Connection, thread_id: str) -> None:
+    conn.execute(
+        "delete from entry_episode_links where episode_id in (select id from episodes where thread_id = ?)",
+        (thread_id,),
+    )
+    conn.execute("delete from episodes where thread_id = ?", (thread_id,))
     conn.execute("delete from entries where thread_id = ?", (thread_id,))
     conn.execute("delete from rollout_indexes where thread_id = ?", (thread_id,))
 
@@ -955,6 +1366,35 @@ def insert_entry_facets(conn: sqlite3.Connection, entry_id: int, entry: dict[str
         )
 
 
+def insert_entry_entity_mentions(conn: sqlite3.Connection, entry_id: int, entry: dict[str, Any]) -> None:
+    mentions = entry.get("entity_mentions", [])
+    if not mentions:
+        return
+    is_work_eligible = int(entry["content_class"] == "work" and entry["is_noise"] is False and entry["role"] in {"assistant", "user"})
+    is_ship_eligible = int(
+        is_work_eligible == 1 and any(kind in SHIP_EVENT_KINDS for kind in entry["event_kinds"])
+    )
+    conn.executemany(
+        """
+        insert into entry_entity_mentions (
+            entry_id, entity, source_kind, source_text, base_weight, is_work_eligible, is_ship_eligible
+        ) values (?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                entry_id,
+                mention["entity"],
+                mention["source_kind"],
+                mention["source_text"],
+                int(mention["base_weight"]),
+                is_work_eligible,
+                is_ship_eligible,
+            )
+            for mention in mentions
+        ],
+    )
+
+
 def insert_entries(
     conn: sqlite3.Connection,
     *,
@@ -965,9 +1405,9 @@ def insert_entries(
         cursor = conn.execute(
             """
             insert into entries (
-                thread_id, entry_index, rollout_line, timestamp, entry_type, payload_type, role, command,
-                raw_text, search_text, excerpt, is_noise, noise_reason
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                thread_id, entry_index, rollout_line, timestamp, entry_type, payload_type, role, content_class,
+                command, raw_text, search_text, excerpt, is_noise, noise_reason
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 thread_id,
@@ -977,6 +1417,7 @@ def insert_entries(
                 entry["entry_type"],
                 entry["payload_type"],
                 entry["role"],
+                entry["content_class"],
                 entry["command"],
                 entry["raw_text"],
                 entry["search_text"],
@@ -986,7 +1427,162 @@ def insert_entries(
             ),
         )
         insert_entry_facets(conn, int(cursor.lastrowid), entry)
+        insert_entry_entity_mentions(conn, int(cursor.lastrowid), entry)
 
+
+def all_entries_for_thread(conn: sqlite3.Connection, thread_id: str) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        select id, entry_index, rollout_line, timestamp, entry_type, payload_type, role, content_class,
+               command, raw_text, search_text, excerpt, is_noise, noise_reason
+        from entries
+        where thread_id = ?
+        order by entry_index
+        """,
+        (thread_id,),
+    ).fetchall()
+    entry_ids = [int(row["id"]) for row in rows]
+    facet_map = load_facets_for_entries(conn, entry_ids)
+    output: list[dict[str, Any]] = []
+    for row in rows:
+        entry_id = int(row["id"])
+        item = entry_from_row(row, facet_map[entry_id])
+        output.append(item)
+    return output
+
+
+def entry_scope_anchors(entry: dict[str, Any]) -> list[str]:
+    return [*entry["entities"], *entry["repos"], *[str(value) for value in entry["qualified_ids"]]]
+
+
+def entry_is_anchor_source(entry: dict[str, Any]) -> bool:
+    return entry["content_class"] == "work" and entry["is_noise"] is False and entry["role"] in {"assistant", "user"}
+
+
+def entry_is_episode_candidate(entry: dict[str, Any]) -> bool:
+    if entry["content_class"] == "transcript_dump":
+        return False
+    if entry["content_class"] == "meta" and entry["role"] != "user":
+        return False
+    return True
+
+
+def entry_is_episode_work(entry: dict[str, Any]) -> bool:
+    return entry["content_class"] in {"work", "command_output"} and entry["is_noise"] is False
+
+
+def episode_dominant_anchors(entries: list[dict[str, Any]]) -> set[str]:
+    counter: Counter[str] = Counter()
+    for entry in entries:
+        if not entry_is_anchor_source(entry):
+            continue
+        counter.update(entry_scope_anchors(entry))
+    return {value for value, _count in counter.most_common(EPISODE_DOMINANT_LIMIT)}
+
+
+def should_start_new_episode(
+    current_entries: list[dict[str, Any]],
+    entry: dict[str, Any],
+) -> str | None:
+    if not current_entries:
+        return None
+    current_work_entries = [item for item in current_entries if entry_is_episode_work(item)]
+    previous_relevant = next((item for item in reversed(current_entries) if entry_is_episode_candidate(item)), None)
+    if previous_relevant is not None:
+        gap = elapsed_seconds(previous_relevant["timestamp"], entry["timestamp"])
+        if gap is not None and gap > EPISODE_GAP_SECONDS and len(current_work_entries) >= 2:
+            return "time-gap"
+    if entry["role"] == "user":
+        if any(
+            item["content_class"] in {"work", "command_output"}
+            and kind in SHIP_EVENT_KINDS
+            for item in current_entries
+            for kind in item["event_kinds"]
+        ):
+            return "post-ship-user-request"
+        current_dominant = episode_dominant_anchors(current_entries)
+        next_anchors = set(entry_scope_anchors(entry))
+        if current_dominant and next_anchors and current_dominant.isdisjoint(next_anchors) and len(current_work_entries) >= 2:
+            return "dominant-anchor-shift"
+    elif entry_scope_anchors(entry):
+        current_dominant = episode_dominant_anchors(current_entries)
+        next_anchors = set(entry_scope_anchors(entry))
+        if current_dominant and next_anchors and current_dominant.isdisjoint(next_anchors) and len(current_work_entries) >= 5:
+            return "dominant-anchor-shift"
+    return None
+
+
+def rebuild_thread_episodes(conn: sqlite3.Connection, *, thread_id: str) -> None:
+    entries = all_entries_for_thread(conn, thread_id)
+    conn.execute(
+        "delete from entry_episode_links where episode_id in (select id from episodes where thread_id = ?)",
+        (thread_id,),
+    )
+    conn.execute("delete from episodes where thread_id = ?", (thread_id,))
+    if not entries:
+        return
+
+    episodes: list[dict[str, Any]] = []
+    current_entries: list[dict[str, Any]] = []
+    current_reason = "thread-start"
+
+    def flush_episode() -> None:
+        nonlocal current_entries, current_reason
+        if not current_entries:
+            return
+        episode_index = len(episodes) + 1
+        episodes.append(
+            {
+                "episode_index": episode_index,
+                "started_entry_index": current_entries[0]["entry_index"],
+                "ended_entry_index": current_entries[-1]["entry_index"],
+                "started_at": current_entries[0]["timestamp"],
+                "ended_at": current_entries[-1]["timestamp"],
+                "entry_count": len(current_entries),
+                "work_entry_count": sum(1 for item in current_entries if entry_is_episode_work(item)),
+                "boundary_reason": current_reason,
+                "entry_ids": [item["id"] for item in current_entries],
+            }
+        )
+        current_entries = []
+        current_reason = "thread-start"
+
+    for entry in entries:
+        if not current_entries:
+            current_entries = [entry]
+            continue
+        boundary_reason = should_start_new_episode(current_entries, entry)
+        if boundary_reason is not None:
+            flush_episode()
+            current_reason = boundary_reason
+        current_entries.append(entry)
+    flush_episode()
+
+    for episode in episodes:
+        cursor = conn.execute(
+            """
+            insert into episodes (
+                thread_id, episode_index, started_entry_index, ended_entry_index,
+                started_at, ended_at, entry_count, work_entry_count, boundary_reason
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                thread_id,
+                episode["episode_index"],
+                episode["started_entry_index"],
+                episode["ended_entry_index"],
+                episode["started_at"],
+                episode["ended_at"],
+                episode["entry_count"],
+                episode["work_entry_count"],
+                episode["boundary_reason"],
+            ),
+        )
+        episode_id = int(cursor.lastrowid)
+        conn.executemany(
+            "insert into entry_episode_links (entry_id, episode_id) values (?, ?)",
+            [(entry_id, episode_id) for entry_id in episode["entry_ids"]],
+        )
 
 def upsert_rollout_index(
     conn: sqlite3.Connection,
@@ -1053,6 +1649,7 @@ def rebuild_index(
 ) -> None:
     clear_thread_cache(conn, thread["id"])
     insert_entries(conn, thread_id=thread["id"], entries=entries)
+    rebuild_thread_episodes(conn, thread_id=thread["id"])
     upsert_rollout_index(
         conn,
         thread=thread,
@@ -1082,6 +1679,7 @@ def append_index(
     rebuild_reason: str,
 ) -> None:
     insert_entries(conn, thread_id=thread["id"], entries=new_entries)
+    rebuild_thread_episodes(conn, thread_id=thread["id"])
     upsert_rollout_index(
         conn,
         thread=thread,
@@ -1335,6 +1933,7 @@ def entry_from_row(row: sqlite3.Row, facets: dict[str, list[Any]]) -> dict[str, 
         "entry_type": row["entry_type"],
         "payload_type": row["payload_type"],
         "role": row["role"],
+        "content_class": row["content_class"],
         "command": row["command"],
         "raw_text": row["raw_text"] or "",
         "search_text": row["search_text"] or "",
@@ -1351,7 +1950,7 @@ def fetch_entry_rows_by_ids(conn: sqlite3.Connection, entry_ids: list[int]) -> l
     placeholders = ",".join("?" for _ in entry_ids)
     rows = conn.execute(
         f"""
-        select id, entry_index, rollout_line, timestamp, entry_type, payload_type, role,
+        select id, entry_index, rollout_line, timestamp, entry_type, payload_type, role, content_class,
                command, raw_text, search_text, excerpt, is_noise, noise_reason
         from entries
         where id in ({placeholders})
@@ -1365,6 +1964,7 @@ def fetch_entry_rows_by_ids(conn: sqlite3.Connection, entry_ids: list[int]) -> l
 
 def matched_facets(entry: dict[str, Any]) -> dict[str, Any]:
     return {
+        "content_class": entry["content_class"],
         "entities": entry["entities"],
         "repos": entry["repos"],
         "pr_numbers": entry["pr_numbers"],
@@ -1380,65 +1980,57 @@ def recent_distinct_values(
     thread_id: str,
     facet_name: str,
     limit: int,
+    scope_info: dict[str, Any] | None = None,
     extra_where: str = "",
     params: tuple[Any, ...] = (),
 ) -> list[Any]:
     table_name, column_name = FACET_TABLES[facet_name]
+    scoped_sql, scoped_params = scope_clause(scope_info or {"applied": "thread"}, alias="e")
     rows = conn.execute(
         f"""
         select f.{column_name} as value, max(e.entry_index) as latest_index
         from {table_name} f
         join entries e on e.id = f.entry_id
-        where e.thread_id = ? {extra_where}
+        where e.thread_id = ? {scoped_sql} {extra_where}
         group by f.{column_name}
         order by latest_index desc
         limit ?
         """,
-        (thread_id, *params, limit),
+        (thread_id, *scoped_params, *params, limit),
     ).fetchall()
     return [row["value"] for row in rows]
 
 
-def recent_commands(conn: sqlite3.Connection, *, thread_id: str, limit: int) -> list[str]:
+def recent_commands(conn: sqlite3.Connection, *, thread_id: str, limit: int, scope_info: dict[str, Any]) -> list[str]:
+    scoped_sql, scoped_params = scope_clause(scope_info, alias="entries")
     rows = conn.execute(
         """
         select command
         from entries
-        where thread_id = ? and command is not null and command != ''
+        where thread_id = ? {scoped_sql} and command is not null and command != ''
         order by entry_index desc
         limit 250
-        """,
-        (thread_id,),
+        """.format(scoped_sql=scoped_sql),
+        (thread_id, *scoped_params),
     ).fetchall()
     return unique_recent([row["command"] for row in rows], limit=limit)
 
 
-def recent_text_rows(conn: sqlite3.Connection, *, thread_id: str, limit: int = TEXT_SCAN_LIMIT) -> list[sqlite3.Row]:
-    return conn.execute(
-        """
-        select entry_index, role, search_text, raw_text, entry_type
-        from entries
-        where thread_id = ? and role in ('assistant', 'user') and search_text != ''
-        order by entry_index desc
-        limit ?
-        """,
-        (thread_id, limit),
-    ).fetchall()
-
-
-def aggregate_counts(conn: sqlite3.Connection, *, thread_id: str) -> tuple[dict[str, int], dict[str, int]]:
+def aggregate_counts(conn: sqlite3.Connection, *, thread_id: str, scope_info: dict[str, Any]) -> tuple[dict[str, int], dict[str, int]]:
+    scoped_sql, scoped_params = scope_clause(scope_info, alias="entries")
     entry_counts = {
         row["entry_type"]: int(row["count"])
         for row in conn.execute(
             """
             select entry_type, count(*) as count
             from entries
-            where thread_id = ?
+            where thread_id = ? {scoped_sql}
             group by entry_type
-            """,
-            (thread_id,),
+            """.format(scoped_sql=scoped_sql),
+            (thread_id, *scoped_params),
         ).fetchall()
     }
+    scoped_event_sql, scoped_event_params = scope_clause(scope_info, alias="e")
     event_counts = {
         row["event_kind"]: int(row["count"])
         for row in conn.execute(
@@ -1446,20 +2038,404 @@ def aggregate_counts(conn: sqlite3.Connection, *, thread_id: str) -> tuple[dict[
             select ek.event_kind, count(*) as count
             from entry_event_kinds ek
             join entries e on e.id = ek.entry_id
-            where e.thread_id = ?
+            where e.thread_id = ? {scoped_sql}
             group by ek.event_kind
-            """,
-            (thread_id,),
+            """.format(scoped_sql=scoped_event_sql),
+            (thread_id, *scoped_event_params),
         ).fetchall()
     }
     return entry_counts, event_counts
 
 
-def evidence_entry_ids(conn: sqlite3.Connection, *, thread_id: str, profile: str, limit: int) -> list[int]:
+def ranked_entity_score(item: dict[str, Any]) -> int:
+    score = int(item["base_weight_sum"])
+    if item["has_user_goal"]:
+        score += 80
+    if item["has_assistant_semantic"]:
+        score += 35
+    if item["has_ship_event"]:
+        score += 25
+    if item["has_user_work"] and item["has_assistant_work"]:
+        score += 30
+    score += max(0, min(int(item["work_entry_count"]), 6) - 1) * 5
+    return score
+
+
+def collaborative_entity_signal(item: dict[str, Any]) -> bool:
+    return bool(item["has_user_goal"] or (item["has_user_work"] and item["has_assistant_work"]))
+
+
+def ranked_entity_sort_key(item: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        -int(item["score"]),
+        -int(item["strongest_source_rank"]),
+        -int(item["has_user_work"]),
+        -len(item["entity"]),
+        item["entity"],
+    )
+
+
+def ranked_entity_rows(
+    conn: sqlite3.Connection,
+    *,
+    thread_id: str,
+    scope_info: dict[str, Any],
+    include_meta: bool = False,
+    kind_filter: set[str] | None = None,
+    prefer_collaborative: bool = False,
+) -> list[dict[str, Any]]:
+    scoped_sql, scoped_params = scope_clause(scope_info, alias="e")
+    eligibility_sql = "m.is_work_eligible = 1"
+    if include_meta:
+        eligibility_sql = f"({eligibility_sql} or e.content_class = 'meta')"
+    selected_kind_sql = "0 as has_selected_kind,"
+    if kind_filter:
+        kind_literals = ", ".join(f"'{value}'" for value in sorted(kind_filter))
+        selected_kind_sql = f"""
+            max(case when exists (
+                select 1 from entry_event_kinds ek
+                where ek.entry_id = e.id and ek.event_kind in ({kind_literals})
+            ) then 1 else 0 end) as has_selected_kind,
+        """
+    rows = conn.execute(
+        f"""
+        select
+            m.entity,
+            sum(m.base_weight) as base_weight_sum,
+            max(
+                case m.source_kind
+                    when 'qualified_id_prefix' then 4
+                    when 'path_parent_fallback' then 3
+                    when 'backtick_identifier' then 2
+                    when 'path_leaf' then 1
+                    else 0
+                end
+            ) as strongest_source_rank,
+            max(case when e.role = 'user' and exists (select 1 from entry_goals g where g.entry_id = e.id) then 1 else 0 end) as has_user_goal,
+            max(case when e.role = 'assistant' and (exists (select 1 from entry_decisions d where d.entry_id = e.id) or exists (select 1 from entry_facts f where f.entry_id = e.id)) then 1 else 0 end) as has_assistant_semantic,
+            max(case when m.is_ship_eligible = 1 then 1 else 0 end) as has_ship_event,
+            max(case when e.role = 'user' and m.is_work_eligible = 1 then 1 else 0 end) as has_user_work,
+            max(case when e.role = 'assistant' and m.is_work_eligible = 1 then 1 else 0 end) as has_assistant_work,
+            count(distinct case when m.is_work_eligible = 1 then e.id end) as work_entry_count,
+            count(distinct e.id) as eligible_entry_count,
+            {selected_kind_sql}
+            min(case when m.is_work_eligible = 1 then e.timestamp end) as first_work_timestamp,
+            min(e.timestamp) as first_eligible_timestamp
+        from entry_entity_mentions m
+        join entries e on e.id = m.entry_id
+        where e.thread_id = ?
+          {scoped_sql}
+          and {eligibility_sql}
+        group by m.entity
+        """,
+        (thread_id, *scoped_params),
+    ).fetchall()
+    ranked_rows: list[dict[str, Any]] = []
+    for row in rows:
+        item = {
+            "entity": row["entity"],
+            "base_weight_sum": int(row["base_weight_sum"] or 0),
+            "strongest_source_rank": int(row["strongest_source_rank"] or 0),
+            "has_user_goal": bool(row["has_user_goal"]),
+            "has_assistant_semantic": bool(row["has_assistant_semantic"]),
+            "has_ship_event": bool(row["has_ship_event"]),
+            "has_user_work": bool(row["has_user_work"]),
+            "has_assistant_work": bool(row["has_assistant_work"]),
+            "work_entry_count": int(row["work_entry_count"] or 0),
+            "eligible_entry_count": int(row["eligible_entry_count"] or 0),
+            "has_selected_kind": bool(row["has_selected_kind"]),
+            "first_seen_at": row["first_work_timestamp"] or row["first_eligible_timestamp"],
+        }
+        if kind_filter is not None:
+            item["has_ship_event"] = item["has_selected_kind"]
+        item["score"] = ranked_entity_score(item)
+        ranked_rows.append(item)
+    if kind_filter is not None:
+        ranked_rows = [item for item in ranked_rows if item["has_selected_kind"]]
+    if prefer_collaborative and any(collaborative_entity_signal(item) for item in ranked_rows):
+        ranked_rows = [item for item in ranked_rows if collaborative_entity_signal(item)]
+    ranked_rows.sort(key=ranked_entity_sort_key)
+    return ranked_rows
+
+
+def ranked_entity_names(
+    conn: sqlite3.Connection,
+    *,
+    thread_id: str,
+    scope_info: dict[str, Any],
+    limit: int,
+    include_meta: bool = False,
+    kind_filter: set[str] | None = None,
+    prefer_collaborative: bool = False,
+) -> list[str]:
+    rows = ranked_entity_rows(
+        conn,
+        thread_id=thread_id,
+        scope_info=scope_info,
+        include_meta=include_meta,
+        kind_filter=kind_filter,
+        prefer_collaborative=prefer_collaborative,
+    )
+    return [row["entity"] for row in rows[:limit]]
+
+
+def entry_primary_ranked_entities(
+    conn: sqlite3.Connection,
+    *,
+    entry_ids: list[int],
+    ranked_entities: list[dict[str, Any]],
+) -> dict[int, str]:
+    if not entry_ids or not ranked_entities:
+        return {}
+    ranked_lookup = {item["entity"]: item for item in ranked_entities}
+    placeholders = ",".join("?" for _ in entry_ids)
+    entity_placeholders = ",".join("?" for _ in ranked_lookup)
+    rows = conn.execute(
+        f"""
+        select
+            m.entry_id,
+            m.entity,
+            max(
+                case m.source_kind
+                    when 'qualified_id_prefix' then 4
+                    when 'path_parent_fallback' then 3
+                    when 'backtick_identifier' then 2
+                    when 'path_leaf' then 1
+                    else 0
+                end
+            ) as entry_source_rank
+        from entry_entity_mentions m
+        where m.entry_id in ({placeholders})
+          and m.entity in ({entity_placeholders})
+        group by m.entry_id, m.entity
+        """,
+        (*entry_ids, *ranked_lookup.keys()),
+    ).fetchall()
+    candidates_by_entry: dict[int, list[tuple[Any, ...]]] = defaultdict(list)
+    for row in rows:
+        item = ranked_lookup[row["entity"]]
+        candidates_by_entry[int(row["entry_id"])].append(
+            (
+                -int(item["score"]),
+                -int(row["entry_source_rank"] or 0),
+                -int(item["has_user_work"]),
+                -len(item["entity"]),
+                item["entity"],
+            )
+        )
+    output: dict[int, str] = {}
+    for entry_id, candidates in candidates_by_entry.items():
+        best = sorted(candidates)[0]
+        output[entry_id] = best[-1]
+    return output
+
+
+def episode_public_id(episode_index: int) -> str:
+    return f"episode-{episode_index}"
+
+
+def dominant_episode_values(conn: sqlite3.Connection, *, episode_id: int, facet_name: str, limit: int = 5) -> list[Any]:
+    table_name, column_name = FACET_TABLES[facet_name]
+    scopes = (
+        "and e.content_class = 'work' and e.is_noise = 0 and e.role in ('assistant', 'user')",
+        "and e.content_class = 'work' and e.is_noise = 0",
+    )
+    for extra_where in scopes:
+        rows = conn.execute(
+            f"""
+            select f.{column_name} as value, count(*) as value_count, max(e.entry_index) as latest_index
+            from {table_name} f
+            join entries e on e.id = f.entry_id
+            join entry_episode_links eel on eel.entry_id = e.id
+            where eel.episode_id = ?
+              {extra_where}
+            group by f.{column_name}
+            order by value_count desc, latest_index desc
+            limit ?
+            """,
+            (episode_id, limit),
+        ).fetchall()
+        if rows:
+            return [row["value"] for row in rows]
+    return []
+
+
+def scope_info_for_episode_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "requested": "episode",
+        "applied": "episode",
+        "reason": "episode-payload",
+        "episode_row": row,
+    }
+
+
+def episode_payload(conn: sqlite3.Connection, row: sqlite3.Row | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    episode_id = int(row["id"])
+    episode_scope = scope_info_for_episode_row(row)
+    return {
+        "id": episode_public_id(int(row["episode_index"])),
+        "started_at": row["started_at"],
+        "ended_at": row["ended_at"],
+        "entry_count": int(row["entry_count"]),
+        "dominant_entities": ranked_entity_names(
+            conn,
+            thread_id=row["thread_id"],
+            scope_info=episode_scope,
+            limit=5,
+            prefer_collaborative=True,
+        ),
+        "dominant_repos": dominant_episode_values(conn, episode_id=episode_id, facet_name="repos", limit=5),
+        "boundary_reason": row["boundary_reason"],
+        "started_entry_index": int(row["started_entry_index"]),
+        "ended_entry_index": int(row["ended_entry_index"]),
+    }
+
+
+def current_episode_row(conn: sqlite3.Connection, *, thread_id: str) -> sqlite3.Row | None:
+    row = conn.execute(
+        """
+        select id, thread_id, episode_index, started_entry_index, ended_entry_index, started_at, ended_at,
+               entry_count, work_entry_count, boundary_reason
+        from episodes
+        where thread_id = ?
+        order by case
+            when exists (
+                select 1
+                from entry_episode_links eel
+                join entries e on e.id = eel.entry_id
+                where eel.episode_id = episodes.id
+                  and e.content_class = 'work'
+                  and e.is_noise = 0
+                  and e.role in ('assistant', 'user')
+                  and (
+                    exists (select 1 from entry_goals g where g.entry_id = e.id)
+                    or exists (select 1 from entry_decisions d where d.entry_id = e.id)
+                    or exists (select 1 from entry_facts f where f.entry_id = e.id)
+                    or exists (select 1 from entry_blockers b where b.entry_id = e.id)
+                    or exists (select 1 from entry_questions q where q.entry_id = e.id)
+                  )
+            ) then 0
+            when exists (
+                select 1
+                from entry_episode_links eel
+                join entries e on e.id = eel.entry_id
+                where eel.episode_id = episodes.id
+                  and e.content_class = 'work'
+                  and e.is_noise = 0
+                  and e.role in ('assistant', 'user')
+            ) then 1
+            when work_entry_count > 0 then 2
+            else 3
+        end, episode_index desc
+        limit 1
+        """,
+        (thread_id,),
+    ).fetchone()
+    return row
+
+
+def episode_count(conn: sqlite3.Connection, *, thread_id: str) -> int:
+    row = conn.execute("select count(*) as total from episodes where thread_id = ?", (thread_id,)).fetchone()
+    return int(row["total"]) if row is not None else 0
+
+
+def resolve_episode_row(conn: sqlite3.Connection, *, thread_id: str, episode_id: str) -> sqlite3.Row | None:
+    match = re.fullmatch(r"episode-(\d+)", episode_id)
+    if match is None:
+        return None
+    return conn.execute(
+        """
+        select id, thread_id, episode_index, started_entry_index, ended_entry_index, started_at, ended_at,
+               entry_count, work_entry_count, boundary_reason
+        from episodes
+        where thread_id = ? and episode_index = ?
+        """,
+        (thread_id, int(match.group(1))),
+    ).fetchone()
+
+
+def resolve_scope(
+    conn: sqlite3.Connection,
+    *,
+    thread_id: str,
+    requested_scope: str,
+    episode_id: str | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None]:
+    total = episode_count(conn, thread_id=thread_id)
+    current_row = current_episode_row(conn, thread_id=thread_id)
+    current_payload = episode_payload(conn, current_row)
+
+    if requested_scope == "thread":
+        return {
+            "requested": requested_scope,
+            "applied": "thread",
+            "reason": "explicit-thread-scope",
+            "episode_row": None,
+            "episodes_total": total,
+            "current_episode": current_payload,
+        }, current_payload, None
+
+    if requested_scope == "episode":
+        if not episode_id:
+            return None, None, failure("episode_unavailable", "Episode scope requires --episode-id.")
+        row = resolve_episode_row(conn, thread_id=thread_id, episode_id=episode_id)
+        if row is None:
+            return None, None, failure("episode_unavailable", f"Could not resolve episode id: {episode_id}")
+        resolved_payload = episode_payload(conn, row)
+        return {
+            "requested": requested_scope,
+            "applied": "episode",
+            "reason": "explicit-episode-scope",
+            "episode_row": row,
+            "episodes_total": total,
+            "current_episode": current_payload,
+        }, resolved_payload, None
+
+    if total <= 1 or current_row is None:
+        return {
+            "requested": requested_scope,
+            "applied": "thread",
+            "reason": "single-episode-thread",
+            "episode_row": current_row,
+            "episodes_total": total,
+            "current_episode": current_payload,
+        }, current_payload, None
+
+    return {
+        "requested": requested_scope,
+        "applied": "episode",
+        "reason": "current-active-episode",
+        "episode_row": current_row,
+        "episodes_total": total,
+        "current_episode": current_payload,
+    }, current_payload, None
+
+
+def scope_clause(scope_info: dict[str, Any], *, alias: str = "e") -> tuple[str, tuple[Any, ...]]:
+    episode_row = scope_info.get("episode_row")
+    if scope_info.get("applied") != "episode" or episode_row is None:
+        return "", ()
+    return (
+        f" and {alias}.entry_index between ? and ?",
+        (int(episode_row["started_entry_index"]), int(episode_row["ended_entry_index"])),
+    )
+
+
+def scope_payload(scope_info: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "requested": scope_info["requested"],
+        "applied": scope_info["applied"],
+        "reason": scope_info["reason"],
+    }
+
+
+def evidence_entry_ids(conn: sqlite3.Connection, *, thread_id: str, profile: str, limit: int, scope_info: dict[str, Any]) -> list[int]:
     if profile == "shipping":
         where_sql = """
             e.entry_type = 'compacted'
-            or exists (select 1 from entry_event_kinds ek where ek.entry_id = e.id)
+            or (e.content_class in ('work', 'command_output') and exists (select 1 from entry_event_kinds ek where ek.entry_id = e.id))
             or exists (select 1 from entry_entities en where en.entry_id = e.id)
             or exists (select 1 from entry_repos rp where rp.entry_id = e.id)
             or exists (select 1 from entry_pr_numbers pn where pn.entry_id = e.id)
@@ -1474,17 +2450,19 @@ def evidence_entry_ids(conn: sqlite3.Connection, *, thread_id: str, profile: str
             or exists (select 1 from entry_retry_signals rs where rs.entry_id = e.id)
         """
     else:
-        where_sql = "e.entry_type = 'compacted' or (e.search_text != '' and e.is_noise = 0)"
+        where_sql = "e.entry_type = 'compacted' or (e.content_class = 'work' and e.search_text != '' and e.is_noise = 0)"
+
+    scoped_sql, scoped_params = scope_clause(scope_info, alias="e")
 
     rows = conn.execute(
         f"""
         select e.id
         from entries e
-        where e.thread_id = ? and ({where_sql})
+        where e.thread_id = ? and ({where_sql}) {scoped_sql}
         order by e.entry_index asc
         limit ?
         """,
-        (thread_id, limit),
+        (thread_id, *scoped_params, limit),
     ).fetchall()
     return [int(row["id"]) for row in rows]
 
@@ -1495,8 +2473,12 @@ def build_evidence(
     thread_id: str,
     limit: int,
     profile: str,
+    scope_info: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    entries = fetch_entry_rows_by_ids(conn, evidence_entry_ids(conn, thread_id=thread_id, profile=profile, limit=limit))
+    entries = fetch_entry_rows_by_ids(
+        conn,
+        evidence_entry_ids(conn, thread_id=thread_id, profile=profile, limit=limit, scope_info=scope_info),
+    )
     evidence: list[dict[str, Any]] = []
     for entry in entries:
         evidence.append(
@@ -1514,8 +2496,16 @@ def build_evidence(
     return evidence
 
 
-def build_general_summary(decisions: list[str], blockers: list[str], open_questions: list[str], known_facts: list[str]) -> str:
+def build_general_summary(
+    current_goal: str | None,
+    decisions: list[str],
+    blockers: list[str],
+    open_questions: list[str],
+    known_facts: list[str],
+) -> str:
     parts: list[str] = []
+    if current_goal:
+        parts.append(f"Goal: {current_goal}")
     if decisions:
         parts.append(f"Decisions: {'; '.join(decisions[:2])}")
     if blockers:
@@ -1557,18 +2547,20 @@ def collect_general_recall(
     thread_id: str,
     evidence_limit: int,
     profile: str,
+    scope_info: dict[str, Any],
 ) -> dict[str, Any]:
-    commands = recent_commands(conn, thread_id=thread_id, limit=25)
+    commands = recent_commands(conn, thread_id=thread_id, limit=25, scope_info=scope_info)
     touched_paths = recent_distinct_values(
         conn,
         thread_id=thread_id,
         facet_name="paths",
         limit=25,
-        extra_where="and ((e.role in ('assistant', 'user')) or e.entry_type = 'response_item') and e.is_noise = 0",
+        scope_info=scope_info,
+        extra_where="and ((e.role in ('assistant', 'user')) or e.entry_type = 'response_item') and e.content_class in ('work', 'command_output') and e.is_noise = 0",
     )
     blockers = [
         item
-        for item in recent_distinct_values(conn, thread_id=thread_id, facet_name="blockers", limit=10)
+        for item in recent_distinct_values(conn, thread_id=thread_id, facet_name="blockers", limit=10, scope_info=scope_info)
         if is_human_scale_sentence(str(item))
     ]
     open_questions = [
@@ -1578,33 +2570,56 @@ def collect_general_recall(
             thread_id=thread_id,
             facet_name="questions",
             limit=10,
-            extra_where="and e.role in ('assistant', 'user') and e.is_noise = 0",
+            scope_info=scope_info,
+            extra_where="and e.role in ('assistant', 'user') and e.content_class = 'work' and e.is_noise = 0",
         )
         if is_human_scale_sentence(str(item))
     ]
-
-    decisions: list[str] = []
-    known_facts: list[str] = []
-    for row in reversed(recent_text_rows(conn, thread_id=thread_id)):
-        if row["role"] == "developer" or not row["search_text"]:
-            continue
-        for sentence in sentence_candidates(row["search_text"]):
-            if not is_human_scale_sentence(sentence):
-                continue
-            lowered = sentence.lower()
-            if lowered.startswith("decision:") or "fail closed" in lowered or "use codex_thread_id" in lowered:
-                decisions.append(sentence)
-            elif row["role"] in {"assistant", "user"} and "?" not in sentence:
-                known_facts.append(sentence)
-
-    decisions = unique_recent(decisions, limit=10)
-    known_facts = unique_recent(known_facts, limit=10)
-    entry_counts, event_counts = aggregate_counts(conn, thread_id=thread_id)
-    evidence = build_evidence(conn, thread_id=thread_id, limit=evidence_limit, profile=profile)
+    goals = [
+        item
+        for item in recent_distinct_values(
+            conn,
+            thread_id=thread_id,
+            facet_name="goals",
+            limit=10,
+            scope_info=scope_info,
+            extra_where="and e.role in ('assistant', 'user') and e.content_class = 'work'",
+        )
+        if is_human_scale_sentence(str(item))
+    ]
+    decisions = [
+        item
+        for item in recent_distinct_values(
+            conn,
+            thread_id=thread_id,
+            facet_name="decisions",
+            limit=10,
+            scope_info=scope_info,
+            extra_where="and e.content_class = 'work'",
+        )
+        if is_human_scale_sentence(str(item))
+    ]
+    known_facts = [
+        item
+        for item in recent_distinct_values(
+            conn,
+            thread_id=thread_id,
+            facet_name="facts",
+            limit=10,
+            scope_info=scope_info,
+            extra_where="and e.content_class = 'work'",
+        )
+        if is_human_scale_sentence(str(item))
+    ]
+    entry_counts, event_counts = aggregate_counts(conn, thread_id=thread_id, scope_info=scope_info)
+    evidence = build_evidence(conn, thread_id=thread_id, limit=evidence_limit, profile=profile, scope_info=scope_info)
+    current_goal = goals[0] if goals else None
 
     return {
         "profile": profile,
-        "summary": build_general_summary(decisions, blockers, open_questions, known_facts),
+        "summary": build_general_summary(current_goal, decisions, blockers, open_questions, known_facts),
+        "current_goal": current_goal,
+        "goals": goals,
         "known_facts": known_facts,
         "decisions": decisions,
         "touched_paths": touched_paths,
@@ -1622,56 +2637,70 @@ def collect_shipping_recall(
     *,
     thread_id: str,
     evidence_limit: int,
+    scope_info: dict[str, Any],
 ) -> dict[str, Any]:
-    ship_where = "and exists (select 1 from entry_event_kinds ek where ek.entry_id = e.id and ek.event_kind in (?, ?, ?, ?))"
+    ship_where = "and e.content_class in ('work', 'command_output') and exists (select 1 from entry_event_kinds ek where ek.entry_id = e.id and ek.event_kind in (?, ?, ?, ?))"
     ship_params: tuple[Any, ...] = tuple(sorted(SHIP_EVENT_KINDS))
-    recall = collect_general_recall(conn, thread_id=thread_id, evidence_limit=evidence_limit, profile="shipping")
-    shipped_entities = recent_distinct_values(
-        conn, thread_id=thread_id, facet_name="entities", limit=15, extra_where=ship_where, params=ship_params
-    )
-    repos_touched = recent_distinct_values(
-        conn, thread_id=thread_id, facet_name="repos", limit=10, extra_where=ship_where, params=ship_params
-    )
-    pr_numbers = recent_distinct_values(
-        conn, thread_id=thread_id, facet_name="pr_numbers", limit=15, extra_where=ship_where, params=ship_params
-    )
-    commit_oids = recent_distinct_values(
-        conn, thread_id=thread_id, facet_name="commit_oids", limit=15, extra_where=ship_where, params=ship_params
-    )
-    installed_entities = recent_distinct_values(
+    recall = collect_general_recall(
         conn,
         thread_id=thread_id,
-        facet_name="entities",
+        evidence_limit=evidence_limit,
+        profile="shipping",
+        scope_info=scope_info,
+    )
+    shipped_entities = ranked_entity_names(
+        conn,
+        thread_id=thread_id,
+        scope_info=scope_info,
         limit=15,
-        extra_where="and exists (select 1 from entry_event_kinds ek where ek.entry_id = e.id and ek.event_kind = ?)",
-        params=("installed",),
+        kind_filter=SHIP_EVENT_KINDS,
+        prefer_collaborative=True,
+    )
+    repos_touched = recent_distinct_values(
+        conn, thread_id=thread_id, facet_name="repos", limit=10, scope_info=scope_info, extra_where=ship_where, params=ship_params
+    )
+    pr_numbers = recent_distinct_values(
+        conn, thread_id=thread_id, facet_name="pr_numbers", limit=15, scope_info=scope_info, extra_where=ship_where, params=ship_params
+    )
+    commit_oids = recent_distinct_values(
+        conn, thread_id=thread_id, facet_name="commit_oids", limit=15, scope_info=scope_info, extra_where=ship_where, params=ship_params
+    )
+    installed_entities = ranked_entity_names(
+        conn,
+        thread_id=thread_id,
+        scope_info=scope_info,
+        limit=15,
+        kind_filter={"installed"},
+        prefer_collaborative=True,
     )
     installed_identifiers = recent_distinct_values(
         conn,
         thread_id=thread_id,
         facet_name="qualified_ids",
         limit=15,
-        extra_where="and exists (select 1 from entry_event_kinds ek where ek.entry_id = e.id and ek.event_kind = ?)",
+        scope_info=scope_info,
+        extra_where="and e.content_class in ('work', 'command_output') and exists (select 1 from entry_event_kinds ek where ek.entry_id = e.id and ek.event_kind = ?)",
         params=("installed",),
     )
+    scoped_sql, scoped_params = scope_clause(scope_info, alias="e")
     follow_up_rows = conn.execute(
         """
-        select raw_text
-        from entries e
-        where e.thread_id = ?
+        select ff.fact
+        from entry_facts ff
+        join entries e on e.id = ff.entry_id
+        where e.thread_id = ? {scoped_sql}
           and exists (select 1 from entry_event_kinds ek where ek.entry_id = e.id and ek.event_kind = 'merged')
-          and (lower(e.raw_text) like '%follow-up%' or lower(e.raw_text) like '%fix%')
+          and (lower(ff.fact) like '%follow-up%' or lower(ff.fact) like '%fix%')
         order by e.entry_index desc
         limit 100
-        """,
-        (thread_id,),
+        """.format(scoped_sql=scoped_sql),
+        (thread_id, *scoped_params),
     ).fetchall()
     follow_up_fixes = unique_recent(
         [
-            sentence
+            row["fact"]
             for row in follow_up_rows
-            for sentence in sentence_candidates(row["raw_text"] or "")
-            if is_human_scale_sentence(sentence)
+            if is_human_scale_sentence(str(row["fact"]))
         ],
         limit=10,
     )
@@ -1695,16 +2724,23 @@ def collect_debug_recall(
     *,
     thread_id: str,
     evidence_limit: int,
+    scope_info: dict[str, Any],
 ) -> dict[str, Any]:
-    recall = collect_general_recall(conn, thread_id=thread_id, evidence_limit=evidence_limit, profile="debug")
+    recall = collect_general_recall(
+        conn,
+        thread_id=thread_id,
+        evidence_limit=evidence_limit,
+        profile="debug",
+        scope_info=scope_info,
+    )
     failure_events = [
         item
-        for item in recent_distinct_values(conn, thread_id=thread_id, facet_name="blockers", limit=15)
+        for item in recent_distinct_values(conn, thread_id=thread_id, facet_name="blockers", limit=15, scope_info=scope_info)
         if is_human_scale_sentence(str(item))
     ]
     retry_signals = [
         item
-        for item in recent_distinct_values(conn, thread_id=thread_id, facet_name="retry_signals", limit=15)
+        for item in recent_distinct_values(conn, thread_id=thread_id, facet_name="retry_signals", limit=15, scope_info=scope_info)
         if is_human_scale_sentence(str(item))
     ]
     recall.update({"failure_events": failure_events, "retry_signals": retry_signals})
@@ -1722,11 +2758,13 @@ def selected_event_kinds(kind: str) -> set[str]:
 
 def build_timeline_event(entry: dict[str, Any], kind: str) -> dict[str, Any]:
     return {
+        "_entry_id": entry["id"],
         "timestamp": entry["timestamp"],
         "kind": kind,
         "entry_type": entry["entry_type"],
         "payload_type": entry["payload_type"],
         "role": entry["role"],
+        "content_class": entry["content_class"],
         "excerpt": entry["excerpt"],
         "entities": entry["entities"],
         "repos": entry["repos"],
@@ -1753,7 +2791,14 @@ def ship_kinds_for_entry(entry: dict[str, Any]) -> list[str]:
     return []
 
 
-def timeline_entry_ids(conn: sqlite3.Connection, *, thread_id: str, kind: str) -> list[int]:
+def timeline_entry_ids(
+    conn: sqlite3.Connection,
+    *,
+    thread_id: str,
+    kind: str,
+    scope_info: dict[str, Any],
+    include_meta: bool,
+) -> list[int]:
     if kind == "all":
         where_sql = ""
         params: tuple[Any, ...] = ()
@@ -1763,6 +2808,8 @@ def timeline_entry_ids(conn: sqlite3.Connection, *, thread_id: str, kind: str) -
     else:
         where_sql = "and ek.event_kind = ?"
         params = (kind,)
+    scoped_sql, scoped_params = scope_clause(scope_info, alias="e")
+    class_sql = "" if include_meta else "and e.content_class in ('work', 'command_output')"
 
     rows = conn.execute(
         f"""
@@ -1770,26 +2817,38 @@ def timeline_entry_ids(conn: sqlite3.Connection, *, thread_id: str, kind: str) -
         from entries e
         join entry_event_kinds ek on ek.entry_id = e.id
         where e.thread_id = ?
+          {scoped_sql}
+          {class_sql}
           {where_sql}
         order by sort_timestamp, e.entry_index
         """,
-        (thread_id, *params),
+        (thread_id, *scoped_params, *params),
     ).fetchall()
     return [int(row["id"]) for row in rows]
 
 
-def first_seen_map(conn: sqlite3.Connection, *, thread_id: str, group: str) -> dict[str, str | None]:
+def first_seen_map(conn: sqlite3.Connection, *, thread_id: str, group: str, scope_info: dict[str, Any]) -> dict[str, str | None]:
+    if group == "entity":
+        rows = ranked_entity_rows(
+            conn,
+            thread_id=thread_id,
+            scope_info=scope_info,
+        )
+        return {row["entity"]: row["first_seen_at"] for row in rows}
     facet_name = "entities" if group == "entity" else "repos"
     table_name, column_name = FACET_TABLES[facet_name]
+    scoped_sql, scoped_params = scope_clause(scope_info, alias="e")
     rows = conn.execute(
         f"""
         select f.{column_name} as group_key, e.timestamp
         from {table_name} f
         join entries e on e.id = f.entry_id
         where e.thread_id = ?
+          {scoped_sql}
+          and e.content_class in ('work', 'command_output')
         order by e.entry_index
         """,
-        (thread_id,),
+        (thread_id, *scoped_params),
     ).fetchall()
     output: dict[str, str | None] = {}
     for row in rows:
@@ -1818,6 +2877,7 @@ def status(thread_id: str | None = None, codex_home: str | Path | None = None) -
     try:
         index_meta, index_warnings = ensure_index(conn, thread=thread, codex_home=home)
         warnings.extend(index_warnings)
+        current_episode = episode_payload(conn, current_episode_row(conn, thread_id=thread["id"]))
         return {
             "ok": True,
             "thread": thread,
@@ -1833,6 +2893,11 @@ def status(thread_id: str | None = None, codex_home: str | Path | None = None) -
                 "built_at": index_meta["built_at"],
                 "last_rebuild_reason": index_meta["last_rebuild_reason"],
                 "lock_state": index_meta["lock_state"],
+            },
+            "episodes": {
+                "total": episode_count(conn, thread_id=thread["id"]),
+                "current": current_episode,
+                "last_boundary_reason": current_episode["boundary_reason"] if current_episode is not None else None,
             },
         }
     except IndexBusyError as exc:
@@ -1857,6 +2922,8 @@ def recall(
     *,
     evidence_limit: int = 25,
     profile: str = "general",
+    scope: str = "current",
+    episode_id: str | None = None,
 ) -> dict[str, Any]:
     thread, warnings, error = resolve_thread(thread_id=thread_id, codex_home=codex_home)
     if error is not None:
@@ -1867,19 +2934,46 @@ def recall(
     try:
         index_meta, index_warnings = ensure_index(conn, thread=thread, codex_home=home)
         warnings.extend(index_warnings)
+        scope_info, episode_payload_data, scope_error = resolve_scope(
+            conn,
+            thread_id=thread["id"],
+            requested_scope=scope,
+            episode_id=episode_id,
+        )
+        if scope_error is not None:
+            scope_error["thread"] = thread
+            return scope_error
 
         if profile == "shipping":
-            recall_payload = collect_shipping_recall(conn, thread_id=thread["id"], evidence_limit=evidence_limit)
+            recall_payload = collect_shipping_recall(
+                conn,
+                thread_id=thread["id"],
+                evidence_limit=evidence_limit,
+                scope_info=scope_info,
+            )
         elif profile == "debug":
-            recall_payload = collect_debug_recall(conn, thread_id=thread["id"], evidence_limit=evidence_limit)
+            recall_payload = collect_debug_recall(
+                conn,
+                thread_id=thread["id"],
+                evidence_limit=evidence_limit,
+                scope_info=scope_info,
+            )
         else:
-            recall_payload = collect_general_recall(conn, thread_id=thread["id"], evidence_limit=evidence_limit, profile="general")
+            recall_payload = collect_general_recall(
+                conn,
+                thread_id=thread["id"],
+                evidence_limit=evidence_limit,
+                profile="general",
+                scope_info=scope_info,
+            )
 
         return {
             "ok": True,
             "thread": thread,
             "warnings": warnings,
             "index": index_meta,
+            "scope": scope_payload(scope_info),
+            "episode": episode_payload_data,
             "recall": recall_payload,
         }
     except IndexBusyError as exc:
@@ -1906,6 +3000,8 @@ def grep_rollout(
     after: str | None = None,
     before: str | None = None,
     include_noise: bool = False,
+    scope: str = "thread",
+    episode_id: str | None = None,
 ) -> dict[str, Any]:
     thread, warnings, error = resolve_thread(thread_id=thread_id, codex_home=codex_home)
     if error is not None:
@@ -1916,10 +3012,23 @@ def grep_rollout(
     try:
         index_meta, index_warnings = ensure_index(conn, thread=thread, codex_home=home)
         warnings.extend(index_warnings)
+        scope_info, episode_payload_data, scope_error = resolve_scope(
+            conn,
+            thread_id=thread["id"],
+            requested_scope=scope,
+            episode_id=episode_id,
+        )
+        if scope_error is not None:
+            scope_error["thread"] = thread
+            return scope_error
 
         search_column = "raw_text" if include_noise else "search_text"
         where_clauses = ["e.thread_id = ?"]
         params: list[Any] = [thread["id"]]
+        scoped_sql, scoped_params = scope_clause(scope_info, alias="e")
+        if scoped_sql:
+            where_clauses.append(scoped_sql.strip().removeprefix("and ").strip())
+            params.extend(scoped_params)
         if role:
             where_clauses.append("e.role = ?")
             params.append(role)
@@ -1984,6 +3093,8 @@ def grep_rollout(
             "pattern": pattern,
             "warnings": warnings,
             "index": index_meta,
+            "scope": scope_payload(scope_info),
+            "episode": episode_payload_data,
             "results": results,
         }
     except IndexBusyError as exc:
@@ -2005,6 +3116,9 @@ def timeline(
     kind: str = "shipped",
     group: str = "entity",
     limit: int = 10,
+    scope: str = "current",
+    episode_id: str | None = None,
+    include_meta: bool = False,
 ) -> dict[str, Any]:
     thread, warnings, error = resolve_thread(thread_id=thread_id, codex_home=codex_home)
     if error is not None:
@@ -2015,8 +3129,26 @@ def timeline(
     try:
         index_meta, index_warnings = ensure_index(conn, thread=thread, codex_home=home)
         warnings.extend(index_warnings)
+        scope_info, episode_payload_data, scope_error = resolve_scope(
+            conn,
+            thread_id=thread["id"],
+            requested_scope=scope,
+            episode_id=episode_id,
+        )
+        if scope_error is not None:
+            scope_error["thread"] = thread
+            return scope_error
         selected_kinds = selected_event_kinds(kind)
-        entries = fetch_entry_rows_by_ids(conn, timeline_entry_ids(conn, thread_id=thread["id"], kind=kind))
+        entries = fetch_entry_rows_by_ids(
+            conn,
+            timeline_entry_ids(
+                conn,
+                thread_id=thread["id"],
+                kind=kind,
+                scope_info=scope_info,
+                include_meta=include_meta,
+            ),
+        )
 
         flat_events: list[dict[str, Any]] = []
         for entry in entries:
@@ -2034,14 +3166,36 @@ def timeline(
                 "group": group,
                 "warnings": warnings,
                 "index": index_meta,
-                "timeline": flat_events[:limit],
+                "scope": scope_payload(scope_info),
+                "episode": episode_payload_data,
+                "timeline": [{key: value for key, value in event.items() if key != "_entry_id"} for event in flat_events[:limit]],
             }
 
         grouping: dict[str, dict[str, Any]] = {}
         key_name = "entity" if group == "entity" else "repo"
-        seen_map = first_seen_map(conn, thread_id=thread["id"], group=group)
+        ranked_rows = ranked_entity_rows(
+            conn,
+            thread_id=thread["id"],
+            scope_info=scope_info,
+            include_meta=include_meta,
+            prefer_collaborative=not include_meta,
+        ) if group == "entity" else []
+        primary_entity_map = entry_primary_ranked_entities(
+            conn,
+            entry_ids=[entry["id"] for entry in entries],
+            ranked_entities=ranked_rows,
+        ) if group == "entity" else {}
+        seen_map = (
+            {row["entity"]: row["first_seen_at"] for row in ranked_rows}
+            if group == "entity"
+            else first_seen_map(conn, thread_id=thread["id"], group=group, scope_info=scope_info)
+        )
         for event in flat_events:
-            keys = event["entities"] if group == "entity" else event["repos"]
+            if group == "entity":
+                primary_entity = primary_entity_map.get(int(event["_entry_id"]))
+                keys = [primary_entity] if primary_entity else []
+            else:
+                keys = event["repos"]
             for key in keys:
                 bucket = grouping.setdefault(
                     key,
@@ -2060,7 +3214,7 @@ def timeline(
                         "qualified_ids": [],
                     },
                 )
-                bucket["ship_events"].append(event)
+                bucket["ship_events"].append({key_name: value for key_name, value in event.items() if key_name != "_entry_id"})
                 bucket["repos"] = unique_preserving_order(bucket["repos"] + event["repos"])
                 bucket["pr_numbers"] = unique_preserving_order(bucket["pr_numbers"] + event["pr_numbers"])
                 bucket["commit_oids"] = unique_preserving_order(bucket["commit_oids"] + event["commit_oids"])
@@ -2085,6 +3239,8 @@ def timeline(
             "group": group,
             "warnings": warnings,
             "index": index_meta,
+            "scope": scope_payload(scope_info),
+            "episode": episode_payload_data,
             "timeline": grouped_timeline,
         }
     except IndexBusyError as exc:

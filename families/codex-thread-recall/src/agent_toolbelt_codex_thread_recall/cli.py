@@ -20,6 +20,8 @@ def build_parser() -> argparse.ArgumentParser:
     recall_parser = subparsers.add_parser("recall", help="Summarize the current thread's raw rollout history.")
     recall_parser.add_argument("--evidence-limit", type=int, default=25)
     recall_parser.add_argument("--profile", choices=["general", "shipping", "debug"], default="general")
+    recall_parser.add_argument("--scope", choices=["current", "thread", "episode"], default="current")
+    recall_parser.add_argument("--episode-id")
 
     grep_parser = subparsers.add_parser("grep", help="Search the current thread's rollout before looking elsewhere.")
     grep_parser.add_argument("--pattern", required=True)
@@ -30,11 +32,16 @@ def build_parser() -> argparse.ArgumentParser:
     grep_parser.add_argument("--after")
     grep_parser.add_argument("--before")
     grep_parser.add_argument("--include-noise", action="store_true")
+    grep_parser.add_argument("--scope", choices=["current", "thread", "episode"], default="thread")
+    grep_parser.add_argument("--episode-id")
 
     timeline_parser = subparsers.add_parser("timeline", help="Build a structured timeline from the current thread.")
     timeline_parser.add_argument("--kind", choices=["shipped", "published", "merged", "pushed", "installed", "validated", "all"], default="shipped")
     timeline_parser.add_argument("--group", choices=["entity", "repo", "none"], default="entity")
     timeline_parser.add_argument("--limit", type=int, default=10)
+    timeline_parser.add_argument("--scope", choices=["current", "thread", "episode"], default="current")
+    timeline_parser.add_argument("--episode-id")
+    timeline_parser.add_argument("--include-meta", action="store_true")
     return parser
 
 
@@ -49,6 +56,8 @@ def main(argv: list[str] | None = None) -> int:
             codex_home=args.home_override,
             evidence_limit=args.evidence_limit,
             profile=args.profile,
+            scope=args.scope,
+            episode_id=args.episode_id,
         )
     elif args.command == "grep":
         payload = thread_recall.grep_rollout(
@@ -62,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
             after=args.after,
             before=args.before,
             include_noise=args.include_noise,
+            scope=args.scope,
+            episode_id=args.episode_id,
         )
     else:
         payload = thread_recall.timeline(
@@ -70,6 +81,9 @@ def main(argv: list[str] | None = None) -> int:
             kind=args.kind,
             group=args.group,
             limit=args.limit,
+            scope=args.scope,
+            episode_id=args.episode_id,
+            include_meta=args.include_meta,
         )
 
     print(json.dumps(payload, indent=2, ensure_ascii=True))
