@@ -133,7 +133,7 @@ ENTITY_SOURCE_STRENGTH = {
     "qualified_id_prefix": 4,
 }
 CONTENT_CLASSES = {"work", "meta", "command_output", "transcript_dump", "compaction"}
-CACHE_SCHEMA_VERSION = 6
+CACHE_SCHEMA_VERSION = 7
 TEXT_SCAN_LIMIT = 2000
 EVIDENCE_SCAN_LIMIT = 200
 RAW_TEXT_STORE_LIMIT = 16000
@@ -1236,6 +1236,46 @@ def ensure_cache_schema(conn: sqlite3.Connection) -> None:
         if "paths_json" in entry_columns or not required_entry_columns.issubset(entry_columns):
             drop_cache_schema(conn)
 
+    episodes_exists = conn.execute(
+        "select name from sqlite_master where type = 'table' and name = 'episodes'"
+    ).fetchone()
+    if episodes_exists is not None:
+        episode_columns = {row["name"] for row in conn.execute("pragma table_info(episodes)").fetchall()}
+        required_episode_columns = {
+            "id",
+            "thread_id",
+            "episode_index",
+            "started_entry_index",
+            "ended_entry_index",
+            "started_at",
+            "ended_at",
+            "entry_count",
+            "work_entry_count",
+            "substantive_entry_count",
+            "boundary_reason",
+        }
+        if not required_episode_columns.issubset(episode_columns):
+            drop_cache_schema(conn)
+
+    entity_mentions_exists = conn.execute(
+        "select name from sqlite_master where type = 'table' and name = 'entry_entity_mentions'"
+    ).fetchone()
+    if entity_mentions_exists is not None:
+        entity_mention_columns = {
+            row["name"] for row in conn.execute("pragma table_info(entry_entity_mentions)").fetchall()
+        }
+        required_entity_mention_columns = {
+            "entry_id",
+            "entity",
+            "source_kind",
+            "source_text",
+            "base_weight",
+            "is_work_eligible",
+            "is_ship_eligible",
+        }
+        if not required_entity_mention_columns.issubset(entity_mention_columns):
+            drop_cache_schema(conn)
+
     conn.executescript(
         """
         create table if not exists rollout_indexes (
@@ -1281,6 +1321,7 @@ def ensure_cache_schema(conn: sqlite3.Connection) -> None:
             ended_at text,
             entry_count integer not null,
             work_entry_count integer not null,
+            substantive_entry_count integer not null,
             boundary_reason text
         );
 
@@ -1452,7 +1493,12 @@ def all_entries_for_thread(conn: sqlite3.Connection, thread_id: str) -> list[dic
 
 
 def entry_scope_anchors(entry: dict[str, Any]) -> list[str]:
-    return [*entry["entities"], *entry["repos"], *[str(value) for value in entry["qualified_ids"]]]
+    qualified_prefixes = [
+        str(value).split("@", 1)[0]
+        for value in entry["qualified_ids"]
+        if isinstance(value, str) and "@" in value
+    ]
+    return unique_preserving_order([*entry["entities"], *qualified_prefixes])
 
 
 def entry_is_anchor_source(entry: dict[str, Any]) -> bool:
@@ -1471,13 +1517,82 @@ def entry_is_episode_work(entry: dict[str, Any]) -> bool:
     return entry["content_class"] in {"work", "command_output"} and entry["is_noise"] is False
 
 
+def entry_is_substantive(entry: dict[str, Any]) -> bool:
+    if entry["content_class"] != "work" or entry["is_noise"] is True or entry["role"] not in {"assistant", "user"}:
+        return False
+    if entry["goals"] or entry["decisions"] or entry["facts"] or entry["blockers"] or entry["questions"]:
+        return True
+    if entry["entities"] or entry["paths"]:
+        return True
+    return any(kind in SHIP_EVENT_KINDS for kind in entry["event_kinds"])
+
+
+def entry_has_explicit_goal(entry: dict[str, Any]) -> bool:
+    return entry["role"] == "user" and bool(entry["goals"])
+
+
+def entry_has_assistant_semantic(entry: dict[str, Any]) -> bool:
+    return entry["role"] == "assistant" and bool(entry["decisions"] or entry["facts"] or entry["blockers"] or entry["questions"])
+
+
+def entry_has_strong_anchor(entry: dict[str, Any]) -> bool:
+    return bool(entry_scope_anchors(entry))
+
+
 def episode_dominant_anchors(entries: list[dict[str, Any]]) -> set[str]:
     counter: Counter[str] = Counter()
     for entry in entries:
-        if not entry_is_anchor_source(entry):
+        if not entry_is_anchor_source(entry) or not entry_is_substantive(entry):
             continue
         counter.update(entry_scope_anchors(entry))
     return {value for value, _count in counter.most_common(EPISODE_DOMINANT_LIMIT)}
+
+
+def episode_substantive_entry_count(entries: list[dict[str, Any]]) -> int:
+    return sum(1 for entry in entries if entry_is_substantive(entry))
+
+
+def episode_has_user_goal(entries: list[dict[str, Any]]) -> bool:
+    return any(entry_has_explicit_goal(entry) for entry in entries)
+
+
+def episode_has_user_row(entries: list[dict[str, Any]]) -> bool:
+    return any(entry["role"] == "user" for entry in entries)
+
+
+def episode_has_ship_event(entries: list[dict[str, Any]]) -> bool:
+    return any(
+        entry["content_class"] in {"work", "command_output"} and kind in SHIP_EVENT_KINDS
+        for entry in entries
+        for kind in entry["event_kinds"]
+    )
+
+
+def merge_continuation_episodes(episodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    for episode in episodes:
+        if (
+            merged
+            and episode["boundary_reason"] == "dominant-anchor-shift"
+            and not episode_has_user_goal(episode["entries"])
+            and not episode_has_user_row(episode["entries"])
+            and len(episode["entries"]) <= 3
+            and episode_substantive_entry_count(episode["entries"]) <= 1
+        ):
+            previous = merged[-1]
+            previous["entries"].extend(episode["entries"])
+            previous["entry_ids"].extend(episode["entry_ids"])
+            previous["ended_entry_index"] = episode["ended_entry_index"]
+            previous["ended_at"] = episode["ended_at"]
+            previous["entry_count"] = len(previous["entries"])
+            previous["work_entry_count"] = sum(1 for item in previous["entries"] if entry_is_episode_work(item))
+            previous["substantive_entry_count"] = episode_substantive_entry_count(previous["entries"])
+            continue
+        merged.append(episode)
+
+    for index, episode in enumerate(merged, start=1):
+        episode["episode_index"] = index
+    return merged
 
 
 def should_start_new_episode(
@@ -1486,28 +1601,24 @@ def should_start_new_episode(
 ) -> str | None:
     if not current_entries:
         return None
-    current_work_entries = [item for item in current_entries if entry_is_episode_work(item)]
+    current_substantive_entries = [item for item in current_entries if entry_is_substantive(item)]
     previous_relevant = next((item for item in reversed(current_entries) if entry_is_episode_candidate(item)), None)
     if previous_relevant is not None:
         gap = elapsed_seconds(previous_relevant["timestamp"], entry["timestamp"])
-        if gap is not None and gap > EPISODE_GAP_SECONDS and len(current_work_entries) >= 2:
+        if gap is not None and gap > EPISODE_GAP_SECONDS and len(current_substantive_entries) >= 2:
             return "time-gap"
     if entry["role"] == "user":
-        if any(
-            item["content_class"] in {"work", "command_output"}
-            and kind in SHIP_EVENT_KINDS
-            for item in current_entries
-            for kind in item["event_kinds"]
-        ):
+        current_dominant = episode_dominant_anchors(current_entries)
+        next_anchors = set(entry_scope_anchors(entry))
+        has_disjoint_strong_anchor = (
+            len(current_substantive_entries) >= 2
+            and bool(current_dominant)
+            and bool(next_anchors)
+            and current_dominant.isdisjoint(next_anchors)
+        )
+        if episode_has_ship_event(current_entries) and entry_has_explicit_goal(entry) and has_disjoint_strong_anchor:
             return "post-ship-user-request"
-        current_dominant = episode_dominant_anchors(current_entries)
-        next_anchors = set(entry_scope_anchors(entry))
-        if current_dominant and next_anchors and current_dominant.isdisjoint(next_anchors) and len(current_work_entries) >= 2:
-            return "dominant-anchor-shift"
-    elif entry_scope_anchors(entry):
-        current_dominant = episode_dominant_anchors(current_entries)
-        next_anchors = set(entry_scope_anchors(entry))
-        if current_dominant and next_anchors and current_dominant.isdisjoint(next_anchors) and len(current_work_entries) >= 5:
+        if has_disjoint_strong_anchor:
             return "dominant-anchor-shift"
     return None
 
@@ -1540,8 +1651,10 @@ def rebuild_thread_episodes(conn: sqlite3.Connection, *, thread_id: str) -> None
                 "ended_at": current_entries[-1]["timestamp"],
                 "entry_count": len(current_entries),
                 "work_entry_count": sum(1 for item in current_entries if entry_is_episode_work(item)),
+                "substantive_entry_count": episode_substantive_entry_count(current_entries),
                 "boundary_reason": current_reason,
                 "entry_ids": [item["id"] for item in current_entries],
+                "entries": list(current_entries),
             }
         )
         current_entries = []
@@ -1557,14 +1670,15 @@ def rebuild_thread_episodes(conn: sqlite3.Connection, *, thread_id: str) -> None
             current_reason = boundary_reason
         current_entries.append(entry)
     flush_episode()
+    episodes = merge_continuation_episodes(episodes)
 
     for episode in episodes:
         cursor = conn.execute(
             """
             insert into episodes (
                 thread_id, episode_index, started_entry_index, ended_entry_index,
-                started_at, ended_at, entry_count, work_entry_count, boundary_reason
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                started_at, ended_at, entry_count, work_entry_count, substantive_entry_count, boundary_reason
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 thread_id,
@@ -1575,6 +1689,7 @@ def rebuild_thread_episodes(conn: sqlite3.Connection, *, thread_id: str) -> None
                 episode["ended_at"],
                 episode["entry_count"],
                 episode["work_entry_count"],
+                episode["substantive_entry_count"],
                 episode["boundary_reason"],
             ),
         )
@@ -2269,16 +2384,22 @@ def scope_info_for_episode_row(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def episode_payload(conn: sqlite3.Connection, row: sqlite3.Row | None) -> dict[str, Any] | None:
+def episode_payload(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row | None,
+    *,
+    selection_reason: str | None = None,
+) -> dict[str, Any] | None:
     if row is None:
         return None
     episode_id = int(row["id"])
     episode_scope = scope_info_for_episode_row(row)
-    return {
+    payload = {
         "id": episode_public_id(int(row["episode_index"])),
         "started_at": row["started_at"],
         "ended_at": row["ended_at"],
         "entry_count": int(row["entry_count"]),
+        "substantive_entry_count": int(row["substantive_entry_count"]),
         "dominant_entities": ranked_entity_names(
             conn,
             thread_id=row["thread_id"],
@@ -2291,48 +2412,81 @@ def episode_payload(conn: sqlite3.Connection, row: sqlite3.Row | None) -> dict[s
         "started_entry_index": int(row["started_entry_index"]),
         "ended_entry_index": int(row["ended_entry_index"]),
     }
+    if selection_reason is not None:
+        payload["selection_reason"] = selection_reason
+    return payload
+
+
+def episode_rows_desc(conn: sqlite3.Connection, *, thread_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        """
+        select id, thread_id, episode_index, started_entry_index, ended_entry_index, started_at, ended_at,
+               entry_count, work_entry_count, substantive_entry_count, boundary_reason,
+               exists (
+                   select 1
+                   from entry_episode_links eel
+                   join entries e on e.id = eel.entry_id
+                   where eel.episode_id = episodes.id
+                     and e.role = 'user'
+                     and exists (select 1 from entry_goals g where g.entry_id = e.id)
+               ) as has_user_goal,
+               exists (
+                   select 1
+                   from entry_episode_links eel
+                   join entries e on e.id = eel.entry_id
+                   where eel.episode_id = episodes.id
+                     and e.role = 'assistant'
+                     and e.content_class = 'work'
+                     and e.is_noise = 0
+                     and (
+                        exists (select 1 from entry_decisions d where d.entry_id = e.id)
+                        or exists (select 1 from entry_facts f where f.entry_id = e.id)
+                        or exists (select 1 from entry_blockers b where b.entry_id = e.id)
+                        or exists (select 1 from entry_questions q where q.entry_id = e.id)
+                     )
+               ) as has_assistant_semantic
+        from episodes
+        where thread_id = ?
+        order by episode_index desc
+        """,
+        (thread_id,),
+    ).fetchall()
+
+
+def continuity_window_rows(rows: list[sqlite3.Row]) -> list[sqlite3.Row]:
+    window: list[sqlite3.Row] = []
+    for index, row in enumerate(rows):
+        window.append(row)
+        if index > 0 and row["boundary_reason"] == "time-gap":
+            break
+    return window
+
+
+def current_episode_selection(conn: sqlite3.Connection, *, thread_id: str) -> tuple[sqlite3.Row | None, str | None]:
+    rows = episode_rows_desc(conn, thread_id=thread_id)
+    if not rows:
+        return None, None
+    window = continuity_window_rows(rows)
+    for row in window:
+        if row["has_user_goal"] or row["has_assistant_semantic"]:
+            return row, "latest-substantive-episode"
+    for row in window:
+        if int(row["substantive_entry_count"]) < 1:
+            continue
+        dominant_entities = ranked_entity_names(
+            conn,
+            thread_id=row["thread_id"],
+            scope_info=scope_info_for_episode_row(row),
+            limit=1,
+            prefer_collaborative=True,
+        )
+        if dominant_entities:
+            return row, "latest-substantive-episode"
+    return window[0], "latest-episode-fallback"
 
 
 def current_episode_row(conn: sqlite3.Connection, *, thread_id: str) -> sqlite3.Row | None:
-    row = conn.execute(
-        """
-        select id, thread_id, episode_index, started_entry_index, ended_entry_index, started_at, ended_at,
-               entry_count, work_entry_count, boundary_reason
-        from episodes
-        where thread_id = ?
-        order by case
-            when exists (
-                select 1
-                from entry_episode_links eel
-                join entries e on e.id = eel.entry_id
-                where eel.episode_id = episodes.id
-                  and e.content_class = 'work'
-                  and e.is_noise = 0
-                  and e.role in ('assistant', 'user')
-                  and (
-                    exists (select 1 from entry_goals g where g.entry_id = e.id)
-                    or exists (select 1 from entry_decisions d where d.entry_id = e.id)
-                    or exists (select 1 from entry_facts f where f.entry_id = e.id)
-                    or exists (select 1 from entry_blockers b where b.entry_id = e.id)
-                    or exists (select 1 from entry_questions q where q.entry_id = e.id)
-                  )
-            ) then 0
-            when exists (
-                select 1
-                from entry_episode_links eel
-                join entries e on e.id = eel.entry_id
-                where eel.episode_id = episodes.id
-                  and e.content_class = 'work'
-                  and e.is_noise = 0
-                  and e.role in ('assistant', 'user')
-            ) then 1
-            when work_entry_count > 0 then 2
-            else 3
-        end, episode_index desc
-        limit 1
-        """,
-        (thread_id,),
-    ).fetchone()
+    row, _selection_reason = current_episode_selection(conn, thread_id=thread_id)
     return row
 
 
@@ -2348,7 +2502,9 @@ def resolve_episode_row(conn: sqlite3.Connection, *, thread_id: str, episode_id:
     return conn.execute(
         """
         select id, thread_id, episode_index, started_entry_index, ended_entry_index, started_at, ended_at,
-               entry_count, work_entry_count, boundary_reason
+               entry_count, work_entry_count, substantive_entry_count, boundary_reason,
+               0 as has_user_goal,
+               0 as has_assistant_semantic
         from episodes
         where thread_id = ? and episode_index = ?
         """,
@@ -2364,8 +2520,8 @@ def resolve_scope(
     episode_id: str | None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None]:
     total = episode_count(conn, thread_id=thread_id)
-    current_row = current_episode_row(conn, thread_id=thread_id)
-    current_payload = episode_payload(conn, current_row)
+    current_row, current_selection_reason = current_episode_selection(conn, thread_id=thread_id)
+    current_payload = episode_payload(conn, current_row, selection_reason=current_selection_reason)
 
     if requested_scope == "thread":
         return {
@@ -2877,7 +3033,8 @@ def status(thread_id: str | None = None, codex_home: str | Path | None = None) -
     try:
         index_meta, index_warnings = ensure_index(conn, thread=thread, codex_home=home)
         warnings.extend(index_warnings)
-        current_episode = episode_payload(conn, current_episode_row(conn, thread_id=thread["id"]))
+        current_episode_row_value, current_selection_reason = current_episode_selection(conn, thread_id=thread["id"])
+        current_episode = episode_payload(conn, current_episode_row_value, selection_reason=current_selection_reason)
         return {
             "ok": True,
             "thread": thread,

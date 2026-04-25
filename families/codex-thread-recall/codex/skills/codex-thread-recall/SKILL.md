@@ -29,6 +29,7 @@ Noise behavior:
 - use `grep --include-noise` to search raw noisy rows when needed
 - use `timeline --include-meta` when you intentionally want meta-only events back in the grouped output
 - grouped entity timelines prefer concrete artifact anchors over helper/runtime identifiers when both appear in the same episode
+- `status` now tells you why the current episode was selected and how many substantive rows it contains
 
 The helper keeps an append-aware cache under `CODEX_HOME/cache/codex-thread-recall/`.
 The first run may build or rebuild the index; later runs should be warm and only
@@ -90,7 +91,8 @@ python scripts/install_codex_thread_recall_runtime.py
   understand whether a call rebuilt, reused, or incrementally extended the cache.
 - Use `status` when you need runtime and cache diagnostics such as
   `runtime.mode`, `runtime.release_root`, `cache.last_rebuild_reason`,
-  `cache.lock_state`, `episodes.total`, or `episodes.current`.
+  `cache.lock_state`, `episodes.total`, `episodes.current.selection_reason`, or
+  `episodes.current.substantive_entry_count`.
 - Treat timeline/entity extraction as generic helper logic based on explicit identifiers, paths, repos, PRs, commits, and event verbs. Do not assume local repo layouts or marketplace names.
 - If the wrapper cannot find either the private runtime or an explicit development checkout, stop and repair the runtime instead of guessing at another repo path.
 - This family is Codex-only in v1; there is no Claude/plugin parity.
