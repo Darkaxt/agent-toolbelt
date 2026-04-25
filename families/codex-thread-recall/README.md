@@ -33,13 +33,21 @@ The helper is intentionally thread-generic. It uses broad signals such as:
 
 It does not bake in repo-local folder names, marketplace names, or workspace-specific heuristics.
 
+Phase 4 makes recall more episode-aware and more resistant to prompt/runtime noise:
+
+- `recall` and `timeline` now default to the current active episode, not the whole thread, when a thread naturally splits into multiple work slices.
+- `grep` stays thread-wide by default for backward compatibility, but can be narrowed to the current episode or a specific episode.
+- instruction/meta rows, transcript-dump rows, and compaction markers are hidden from default summaries and grouped timelines unless you explicitly opt back in.
+- `status` now reports episode diagnostics so you can see what `current` means before asking for recall.
+- grouped entity views now rank concrete artifact anchors ahead of generic helper/runtime identifiers when both appear in the same work slice.
+
 ## Commands
 
 ```powershell
 uv run --project families/codex-thread-recall agent-toolbelt-codex-thread-recall status
-uv run --project families/codex-thread-recall agent-toolbelt-codex-thread-recall recall --profile general
-uv run --project families/codex-thread-recall agent-toolbelt-codex-thread-recall timeline --kind shipped --group entity
-uv run --project families/codex-thread-recall agent-toolbelt-codex-thread-recall grep --pattern "CODEX_THREAD_ID"
+uv run --project families/codex-thread-recall agent-toolbelt-codex-thread-recall recall --profile general --scope current
+uv run --project families/codex-thread-recall agent-toolbelt-codex-thread-recall timeline --kind shipped --group entity --scope current
+uv run --project families/codex-thread-recall agent-toolbelt-codex-thread-recall grep --pattern "CODEX_THREAD_ID" --scope thread
 ```
 
 To install or refresh the private local runtime from a repo checkout:
@@ -65,19 +73,34 @@ Optional filters and overrides:
 - `--thread-id <id>` for offline debugging or tests
 - `--codex-home <path>` to override the default Codex home directory
 - `recall --profile general|shipping|debug`
+- `recall --scope current|thread|episode --episode-id episode-N`
 - `timeline --kind shipped|published|merged|pushed|installed|validated|all`
 - `timeline --group entity|repo|none`
+- `timeline --scope current|thread|episode --episode-id episode-N --include-meta`
+- `grep --scope current|thread|episode --episode-id episode-N`
 - `grep --role ... --entry-type ... --payload-type ... --after ... --before ... --include-noise`
 
 ## Output shape
 
-- `status` resolves the current thread and rollout path.
+- `status` resolves the current thread and rollout path and reports current-episode diagnostics.
 - `recall` returns a bounded brief with summary, known facts, decisions, touched
   paths, commands, blockers, open questions, and evidence pointers.
 - `timeline` returns grouped or flat event history with timestamps, excerpts,
   entities, repos, PRs, commits, and elapsed timing.
 - `grep` searches the indexed current-thread history and returns bounded evidence
   instead of raw transcript dumps.
+
+Successful scoped responses also include additive scope metadata:
+
+- `scope.requested`
+- `scope.applied`
+- `scope.reason`
+- `episode.id`
+- `episode.started_at`
+- `episode.ended_at`
+- `episode.entry_count`
+- `episode.dominant_entities`
+- `episode.dominant_repos`
 
 Successful indexed responses also include cache metadata:
 
@@ -108,6 +131,9 @@ Successful indexed responses also include cache metadata:
 - `cache.built_at`
 - `cache.last_rebuild_reason`
 - `cache.lock_state`
+- `episodes.total`
+- `episodes.current`
+- `episodes.last_boundary_reason`
 
 Failure is explicit:
 

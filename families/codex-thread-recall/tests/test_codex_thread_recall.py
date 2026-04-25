@@ -327,6 +327,7 @@ class ThreadRecallTests(unittest.TestCase):
                 "entry_commit_oids",
                 "entry_qualified_ids",
                 "entry_event_kinds",
+                "entry_entity_mentions",
             }.issubset(table_names)
         )
 
@@ -445,6 +446,23 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertEqual(payload["cache"]["schema_version"], thread_recall.CACHE_SCHEMA_VERSION)
         self.assertIn("index.sqlite", payload["cache"]["path"])
         self.assertIn(payload["cache"]["lock_state"]["state"], {"unlocked", "not-needed", "acquired"})
+
+    def test_status_reports_current_episode_diagnostics(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Ship `artifact-alpha`."}),
+            make_entry("2026-04-25T08:05:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-alpha` in `example/toolbelt`."}),
+            make_entry("2026-04-25T08:10:00Z", "event_msg", {"type": "user_message", "text": "Now refine `artifact-beta`."}),
+            make_entry("2026-04-25T08:12:00Z", "event_msg", {"type": "agent_message", "text": "Decision: use episode scope for `artifact-beta`."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.status()
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["episodes"]["total"], 2)
+        self.assertEqual(payload["episodes"]["last_boundary_reason"], "post-ship-user-request")
+        self.assertEqual(payload["episodes"]["current"]["dominant_entities"], ["artifact-beta"])
 
     def test_live_index_lock_waits_briefly_then_succeeds(self):
         entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "hello"})]
@@ -578,9 +596,10 @@ class ThreadRecallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
             with self.with_env(codex_home):
-                payload = thread_recall.timeline(kind="shipped", group="entity", limit=10)
+                payload = thread_recall.timeline(kind="shipped", group="entity", limit=10, scope="thread")
 
         self.assertTrue(payload["ok"])
+        self.assertEqual(payload["scope"]["applied"], "thread")
         self.assertEqual(payload["group"], "entity")
         self.assertEqual(len(payload["timeline"]), 1)
         item = payload["timeline"][0]
@@ -597,6 +616,29 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertIn("ed7982b", item["commit_oids"])
         self.assertIn("artifact-alpha@example-market", item["qualified_ids"])
         self.assertEqual(len(item["ship_events"]), 3)
+
+    def test_timeline_entity_grouping_uses_primary_ranked_entity_only(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Please ship `artifact-beta`."}),
+            make_entry(
+                "2026-04-25T08:02:00Z",
+                "event_msg",
+                {"type": "agent_message", "text": "Decision: keep `artifact-beta` inside `thread_recall` while wiring the release."},
+            ),
+            make_entry(
+                "2026-04-25T08:05:00Z",
+                "event_msg",
+                {"type": "agent_message", "text": "Published `artifact-beta` from `thread_recall` with PR `#22`."},
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.timeline(kind="published", group="entity", limit=10, scope="thread")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual([item["entity"] for item in payload["timeline"]], ["artifact-beta"])
+        self.assertEqual(payload["timeline"][0]["first_seen_at"], "2026-04-25T08:00:00Z")
 
     def test_timeline_ignores_email_addresses_as_entities(self):
         entries = [
@@ -617,6 +659,22 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual([item["entity"] for item in payload["timeline"]], ["artifact-beta"])
 
+    def test_path_entity_candidates_ignore_runtime_tools_and_fallback_from_helper_scripts(self):
+        self.assertEqual(
+            thread_recall.entity_candidates_from_path(r"C:\Program Files\PowerShell\7\pwsh.exe"),
+            [],
+        )
+        self.assertEqual(
+            thread_recall.entity_candidates_from_path(r"D:\Work\Projects\artifact-beta\scripts\invoke_refresh_runtime.py"),
+            ["artifact-beta"],
+        )
+
+    def test_entity_extraction_ignores_env_vars_bare_filenames_and_runtime_modules(self):
+        self.assertEqual(
+            thread_recall.extract_entities("Use `PATH`, `SKILL.md`, `__main__`, `pathlib`, and `artifact-beta`."),
+            ["artifact-beta"],
+        )
+
     def test_timeline_none_returns_flat_events(self):
         entries = [
             make_entry("2026-04-25T08:10:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-theta`."}),
@@ -630,6 +688,146 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["group"], "none")
         self.assertEqual([event["kind"] for event in payload["timeline"]], ["published", "merged"])
+
+    def test_timeline_defaults_to_current_episode_scope_and_hides_meta_noise(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Ship `artifact-alpha`."}),
+            make_entry("2026-04-25T08:05:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-alpha` in `example/toolbelt`."}),
+            make_entry(
+                "2026-04-25T08:07:00Z",
+                "response_item",
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [{"type": "output_text", "text": "Installed `sandbox_mode` with `danger-full-access`."}],
+                },
+            ),
+            make_entry(
+                "2026-04-25T08:08:00Z",
+                "response_item",
+                {
+                    "type": "function_call_output",
+                    "output": json.dumps(
+                        {
+                            "stdout": '1:{"timestamp":"2026-04-25T08:05:00Z","type":"event_msg","payload":{"type":"agent_message","text":"Published `artifact-dump`."}}',
+                            "stderr": "",
+                        }
+                    ),
+                },
+            ),
+            make_entry("2026-04-25T08:10:00Z", "event_msg", {"type": "user_message", "text": "Now ship `artifact-beta`."}),
+            make_entry("2026-04-25T08:12:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-beta` in `example/toolbelt`."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                current_payload = thread_recall.timeline(kind="shipped", group="entity", limit=10)
+                thread_payload = thread_recall.timeline(kind="shipped", group="entity", limit=10, scope="thread")
+
+        self.assertTrue(current_payload["ok"])
+        self.assertEqual(current_payload["scope"]["requested"], "current")
+        self.assertEqual(current_payload["scope"]["applied"], "episode")
+        self.assertEqual([item["entity"] for item in current_payload["timeline"]], ["artifact-beta"])
+        self.assertEqual(
+            sorted(item["entity"] for item in thread_payload["timeline"]),
+            ["artifact-alpha", "artifact-beta"],
+        )
+
+    def test_status_current_episode_prefers_semantic_artifact_entities_over_wrapper_paths(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Ship `artifact-alpha`."}),
+            make_entry("2026-04-25T08:05:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-alpha` in `example/toolbelt`."}),
+            make_entry("2026-04-25T08:20:00Z", "event_msg", {"type": "user_message", "text": "Now refine `artifact-beta`."}),
+            make_entry(
+                "2026-04-25T08:21:00Z",
+                "event_msg",
+                {"type": "agent_message", "text": "Decision: keep `artifact-beta` as the current work slice."},
+            ),
+            make_entry(
+                "2026-04-25T08:22:00Z",
+                "response_item",
+                {
+                    "type": "function_call",
+                    "arguments": json.dumps(
+                        {
+                            "command": r"C:\Program Files\PowerShell\7\pwsh.exe -File D:\Work\Projects\artifact-beta\scripts\invoke_refresh_runtime.py"
+                        }
+                    ),
+                },
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.status()
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["episodes"]["current"]["dominant_entities"], ["artifact-beta"])
+
+    def test_status_current_episode_keeps_ranked_artifact_dominant_after_generic_chatter(self):
+        entries = [
+            make_entry("2026-04-25T08:20:00Z", "event_msg", {"type": "user_message", "text": "Please refine `artifact-beta`."}),
+            make_entry(
+                "2026-04-25T08:21:00Z",
+                "event_msg",
+                {"type": "agent_message", "text": "Decision: keep `artifact-beta` as the main work item inside `thread_recall`."},
+            ),
+            make_entry("2026-04-25T08:22:00Z", "event_msg", {"type": "agent_message", "text": "Validated `thread_recall`."}),
+            make_entry("2026-04-25T08:23:00Z", "event_msg", {"type": "agent_message", "text": "Merged follow-up checks for `thread_recall`."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.status()
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["episodes"]["current"]["dominant_entities"], ["artifact-beta"])
+
+    def test_timeline_include_meta_restores_suppressed_meta_events(self):
+        entries = [
+            make_entry(
+                "2026-04-25T08:00:00Z",
+                "response_item",
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [{"type": "output_text", "text": "Installed `artifact-meta` in `example/toolbelt`."}],
+                },
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                hidden = thread_recall.timeline(kind="installed", group="entity", limit=10)
+                restored = thread_recall.timeline(kind="installed", group="entity", limit=10, include_meta=True, scope="thread")
+
+        self.assertTrue(hidden["ok"])
+        self.assertEqual(hidden["timeline"], [])
+        self.assertEqual([item["entity"] for item in restored["timeline"]], ["artifact-meta"])
+
+    def test_timeline_ignores_shipped_markers_that_only_appear_in_command_output(self):
+        entries = [
+            make_entry(
+                "2026-04-25T08:00:00Z",
+                "response_item",
+                {
+                    "type": "function_call_output",
+                    "output": json.dumps({"stdout": "Published `artifact-noise` in `example/toolbelt`.", "stderr": ""}),
+                },
+            ),
+            make_entry(
+                "2026-04-25T08:01:00Z",
+                "event_msg",
+                {"type": "agent_message", "text": "Published `artifact-real` in `example/toolbelt`."},
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.timeline(kind="published", group="entity", limit=10, scope="thread")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual([item["entity"] for item in payload["timeline"]], ["artifact-real"])
 
     def test_recall_shipping_profile_surfaces_ship_context_and_filters_noise(self):
         noisy_blob = "<skills_instructions> " + ("x " * 2000)
@@ -655,6 +853,63 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertIn(12, recall["pr_numbers"])
         self.assertTrue(any("follow-up" in item.lower() for item in recall["follow_up_fixes"]))
         self.assertFalse(any("<skills_instructions>" in item.get("excerpt", "") for item in recall["evidence"]))
+
+    def test_recall_shipping_ranks_real_artifact_above_generic_identifier(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Ship `artifact-gamma`."}),
+            make_entry(
+                "2026-04-25T08:01:00Z",
+                "event_msg",
+                {"type": "agent_message", "text": "Decision: keep `artifact-gamma` inside `thread_recall` for the release."},
+            ),
+            make_entry(
+                "2026-04-25T08:05:00Z",
+                "event_msg",
+                {"type": "agent_message", "text": "Published `artifact-gamma` from `thread_recall` with PR `#11`."},
+            ),
+            make_entry(
+                "2026-04-25T08:06:00Z",
+                "event_msg",
+                {"type": "agent_message", "text": "Merged follow-up checks for `thread_recall`."},
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.recall(profile="shipping", evidence_limit=10, scope="thread")
+
+        self.assertTrue(payload["ok"])
+        self.assertGreaterEqual(len(payload["recall"]["shipped_entities"]), 1)
+        self.assertEqual(payload["recall"]["shipped_entities"][0], "artifact-gamma")
+
+    def test_recall_general_defaults_to_current_episode_and_uses_scoped_semantic_facts(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Ship `artifact-alpha`."}),
+            make_entry("2026-04-25T08:05:00Z", "event_msg", {"type": "agent_message", "text": "Decision: use `artifact-alpha` for the first pass."}),
+            make_entry("2026-04-25T08:06:00Z", "event_msg", {"type": "agent_message", "text": r"Working in D:\Work\artifact-alpha\README.md."}),
+            make_entry("2026-04-25T08:10:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-alpha` in `example/toolbelt`."}),
+            make_entry("2026-04-25T08:20:00Z", "event_msg", {"type": "user_message", "text": "Please implement scoped recall for `artifact-beta`."}),
+            make_entry("2026-04-25T08:21:00Z", "event_msg", {"type": "agent_message", "text": "Decision: use current episode scope by default and fail closed on missing episode ids."}),
+            make_entry("2026-04-25T08:22:00Z", "event_msg", {"type": "agent_message", "text": r"Touched D:\Work\artifact-beta\README.md and repo `example/toolbelt`."}),
+            make_entry("2026-04-25T08:23:00Z", "response_item", {"type": "function_call_output", "output": json.dumps({"stdout": "", "stderr": "Permission denied"})}),
+            make_entry("2026-04-25T08:24:00Z", "event_msg", {"type": "agent_message", "text": "Open question: should grep stay thread-wide by default?"}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.recall(profile="general")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["scope"]["requested"], "current")
+        self.assertEqual(payload["scope"]["applied"], "episode")
+        recall = payload["recall"]
+        self.assertIn("artifact-beta", recall["current_goal"])
+        self.assertTrue(any("current episode scope" in item.lower() for item in recall["decisions"]))
+        self.assertTrue(any(r"D:\Work\artifact-beta\README.md" in item for item in recall["touched_paths"]))
+        self.assertTrue(any("Permission denied" in item for item in recall["blockers"]))
+        self.assertTrue(any("grep stay thread-wide" in item for item in recall["open_questions"]))
+        self.assertFalse(any("artifact-alpha" in item for item in recall["decisions"]))
+        self.assertFalse(any("artifact-alpha" in item for item in recall["known_facts"]))
 
     def test_recall_debug_profile_prioritizes_failures_and_retries(self):
         entries = [
@@ -689,6 +944,25 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertEqual(len(payload["results"]), 1)
         self.assertIn("CODEX_THREAD_ID", payload["results"][0]["excerpt"])
         self.assertIn("artifact-epsilon", payload["results"][0]["matched_facets"]["entities"])
+
+    def test_grep_scope_current_restricts_results_but_thread_default_stays_global(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Ship `artifact-alpha` with CODEX_THREAD_ID notes."}),
+            make_entry("2026-04-25T08:05:00Z", "event_msg", {"type": "agent_message", "text": "CODEX_THREAD_ID helps `artifact-alpha` resolve."}),
+            make_entry("2026-04-25T08:20:00Z", "event_msg", {"type": "user_message", "text": "Now ship `artifact-beta`."}),
+            make_entry("2026-04-25T08:21:00Z", "event_msg", {"type": "agent_message", "text": "Scoped recall keeps `artifact-beta` focused."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                thread_payload = thread_recall.grep_rollout(pattern="artifact", limit=10)
+                current_payload = thread_recall.grep_rollout(pattern="artifact", limit=10, scope="current")
+
+        self.assertTrue(thread_payload["ok"])
+        self.assertEqual(thread_payload["scope"]["applied"], "thread")
+        self.assertGreaterEqual(len(thread_payload["results"]), 2)
+        self.assertEqual(current_payload["scope"]["applied"], "episode")
+        self.assertTrue(all("artifact-beta" in item["excerpt"] for item in current_payload["results"]))
 
     def test_grep_structured_filters_and_include_noise_toggle(self):
         entries = [
@@ -785,6 +1059,33 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertEqual(oversized["noise_reason"], "oversized-output")
         self.assertLess(len(oversized["raw_text"]), len(huge_output))
 
+    def test_transcript_dump_rows_are_classified_and_suppressed_by_default(self):
+        transcript_dump = thread_recall.normalize_entry(
+            {
+                "timestamp": "2026-04-25T08:07:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "output": json.dumps(
+                        {
+                            "stdout": '\n'.join(
+                                [
+                                    '1:{"timestamp":"2026-04-25T08:00:00Z","type":"event_msg","payload":{"type":"user_message","text":"Start `artifact-noise`"}}',
+                                    '2:{"timestamp":"2026-04-25T08:01:00Z","type":"event_msg","payload":{"type":"agent_message","text":"Published `artifact-noise`"}}',
+                                ]
+                            ),
+                            "stderr": "",
+                        }
+                    ),
+                },
+            },
+            10,
+            45,
+        )
+
+        self.assertTrue(transcript_dump["is_noise"])
+        self.assertEqual(transcript_dump["content_class"], "transcript_dump")
+
 
 class ThreadRecallCliTests(unittest.TestCase):
     def test_status_cli_prints_json(self):
@@ -809,10 +1110,11 @@ class ThreadRecallCliTests(unittest.TestCase):
             "warnings": [],
             "role": kwargs.get("role"),
             "include_noise": kwargs.get("include_noise"),
+            "scope": kwargs.get("scope"),
         }
         try:
             with io.StringIO() as buffer, redirect_stdout(buffer):
-                exit_code = cli.main(["grep", "--pattern", "fail closed", "--role", "assistant", "--include-noise"])
+                exit_code = cli.main(["grep", "--pattern", "fail closed", "--role", "assistant", "--include-noise", "--scope", "current"])
                 payload = json.loads(buffer.getvalue())
         finally:
             cli.thread_recall.grep_rollout = original_grep
@@ -821,6 +1123,7 @@ class ThreadRecallCliTests(unittest.TestCase):
         self.assertEqual(payload["pattern"], "fail closed")
         self.assertEqual(payload["role"], "assistant")
         self.assertTrue(payload["include_noise"])
+        self.assertEqual(payload["scope"], "current")
 
     def test_timeline_cli_passes_kind_and_group(self):
         original_timeline = cli.thread_recall.timeline
@@ -828,12 +1131,14 @@ class ThreadRecallCliTests(unittest.TestCase):
             "ok": True,
             "kind": kwargs["kind"],
             "group": kwargs["group"],
+            "scope": kwargs["scope"],
+            "include_meta": kwargs["include_meta"],
             "timeline": [],
             "warnings": [],
         }
         try:
             with io.StringIO() as buffer, redirect_stdout(buffer):
-                exit_code = cli.main(["timeline", "--kind", "shipped", "--group", "entity"])
+                exit_code = cli.main(["timeline", "--kind", "shipped", "--group", "entity", "--scope", "episode", "--episode-id", "episode-2", "--include-meta"])
                 payload = json.loads(buffer.getvalue())
         finally:
             cli.thread_recall.timeline = original_timeline
@@ -841,6 +1146,8 @@ class ThreadRecallCliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["kind"], "shipped")
         self.assertEqual(payload["group"], "entity")
+        self.assertEqual(payload["scope"], "episode")
+        self.assertTrue(payload["include_meta"])
 
     def test_recall_cli_accepts_profile_and_escapes_unicode_for_windows_console_safety(self):
         original_recall = cli.thread_recall.recall
@@ -849,10 +1156,11 @@ class ThreadRecallCliTests(unittest.TestCase):
             "thread": {"id": "demo"},
             "recall": {"profile": kwargs["profile"], "summary": "【unicode evidence】"},
             "warnings": [],
+            "scope": kwargs["scope"],
         }
         try:
             with io.StringIO() as buffer, redirect_stdout(buffer):
-                exit_code = cli.main(["recall", "--profile", "shipping"])
+                exit_code = cli.main(["recall", "--profile", "shipping", "--scope", "current"])
                 rendered = buffer.getvalue()
                 payload = json.loads(rendered)
         finally:
@@ -860,6 +1168,7 @@ class ThreadRecallCliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["recall"]["profile"], "shipping")
+        self.assertEqual(payload["scope"], "current")
         self.assertIn("\\u3010unicode evidence\\u3011", rendered)
 
     def test_cli_module_runs_when_invoked_with_python_m(self):
