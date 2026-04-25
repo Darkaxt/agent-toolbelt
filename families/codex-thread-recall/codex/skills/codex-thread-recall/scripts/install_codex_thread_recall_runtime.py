@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import subprocess
 import sys
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable, Sequence
@@ -17,11 +19,8 @@ if str(SCRIPT_DIR) not in sys.path:
 import runtime_bootstrap
 
 
-def runtime_python_path(codex_home: Path) -> Path:
-    for candidate in runtime_bootstrap.runtime_python_candidates(codex_home):
-        if candidate.parent.name == "Scripts":
-            return candidate
-    return runtime_bootstrap.runtime_python_candidates(codex_home)[0]
+CommandRunner = Callable[[Sequence[str], dict[str, str] | None], object]
+VALIDATION_THREAD_ID = "codex-thread-recall-install-validation"
 
 
 def resolve_repo_root(*, agent_toolbelt_home: str | None = None) -> Path:
@@ -42,13 +41,25 @@ def resolve_repo_root(*, agent_toolbelt_home: str | None = None) -> Path:
     )
 
 
+def release_root_for_install(codex_home: Path, *, release_stamp: str | None = None) -> Path:
+    stamp = release_stamp or datetime.now(tz=UTC).strftime("%Y%m%d-%H%M%S-%fZ")
+    return runtime_bootstrap.releases_root(codex_home) / stamp
+
+
+def runtime_python_path(release_root: Path) -> Path:
+    for candidate in runtime_bootstrap.runtime_python_candidates_from_root(release_root):
+        if candidate.parent.name == "Scripts":
+            return candidate
+    return runtime_bootstrap.runtime_python_candidates_from_root(release_root)[0]
+
+
 def build_install_commands(
     *,
     repo_root: Path,
-    codex_home: Path,
+    release_root: Path,
     python_executable: Path,
 ) -> list[list[str]]:
-    runtime_python = runtime_python_path(codex_home)
+    runtime_python = runtime_python_path(release_root)
     core_source = (repo_root / "packages" / "core").resolve()
     family_source = (repo_root / "families" / "codex-thread-recall").resolve()
 
@@ -58,7 +69,7 @@ def build_install_commands(
         raise RuntimeError(f"Missing agent-toolbelt-codex-thread-recall source: {family_source}")
 
     return [
-        [str(python_executable), "-m", "venv", str(runtime_bootstrap.runtime_root(codex_home) / ".venv")],
+        [str(python_executable), "-m", "venv", str(release_root / ".venv")],
         [str(runtime_python), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"],
         [
             str(runtime_python),
@@ -75,17 +86,21 @@ def build_install_commands(
     ]
 
 
-def write_runtime_manifest(*, repo_root: Path, codex_home: Path) -> Path:
-    runtime_dir = runtime_bootstrap.runtime_root(codex_home)
-    runtime_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = runtime_dir / "runtime.json"
+def default_runner(command: Sequence[str], env: dict[str, str] | None = None) -> object:
+    return subprocess.run(command, check=True, env=env)
+
+
+def write_release_manifest(*, release_root: Path, repo_root: Path) -> Path:
+    release_root.mkdir(parents=True, exist_ok=True)
+    manifest_path = release_root / "release.json"
     manifest_path.write_text(
         json.dumps(
             {
                 "family": "codex-thread-recall",
                 "installed_at": datetime.now(tz=UTC).isoformat(),
                 "repo_root": str(repo_root),
-                "python": str(runtime_python_path(codex_home)),
+                "release_root": str(release_root),
+                "python": str(runtime_python_path(release_root)),
             },
             indent=2,
         )
@@ -95,23 +110,122 @@ def write_runtime_manifest(*, repo_root: Path, codex_home: Path) -> Path:
     return manifest_path
 
 
+def write_active_manifest(*, codex_home: Path, release_root: Path, repo_root: Path) -> Path:
+    manifest_path = runtime_bootstrap.active_runtime_manifest_path(codex_home)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "family": "codex-thread-recall",
+                "activated_at": datetime.now(tz=UTC).isoformat(),
+                "repo_root": str(repo_root),
+                "release_root": str(release_root),
+                "python": str(runtime_python_path(release_root)),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return manifest_path
+
+
+def build_validation_home(parent: Path) -> Path:
+    codex_home = parent / "validation-home"
+    rollout_path = codex_home / "sessions" / "validation" / "rollout.jsonl"
+    rollout_path.parent.mkdir(parents=True, exist_ok=True)
+    rollout_path.write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-04-25T00:00:00Z",
+                "type": "event_msg",
+                "payload": {"type": "user_message", "text": "Validate staged codex-thread-recall runtime."},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    conn = sqlite3.connect(codex_home / "state_5.sqlite")
+    try:
+        conn.execute(
+            """
+            create table threads (
+                id text primary key,
+                title text,
+                cwd text,
+                rollout_path text,
+                created_at integer,
+                updated_at integer
+            )
+            """
+        )
+        conn.execute(
+            "insert into threads (id, title, cwd, rollout_path, created_at, updated_at) values (?, ?, ?, ?, ?, ?)",
+            (
+                VALIDATION_THREAD_ID,
+                "Runtime Validation",
+                r"C:\ThreadRecall\Validation",
+                str(rollout_path),
+                1777077000,
+                1777077300,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return codex_home
+
+
+def validate_staged_runtime(
+    *,
+    release_root: Path,
+    runner: CommandRunner | None = None,
+) -> None:
+    command_runner = runner or default_runner
+    runtime_python = runtime_python_path(release_root)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        validation_home = build_validation_home(Path(temp_dir))
+        command_runner(
+            [
+                str(runtime_python),
+                "-m",
+                "agent_toolbelt_codex_thread_recall.cli",
+                "--codex-home",
+                str(validation_home),
+                "--thread-id",
+                VALIDATION_THREAD_ID,
+                "status",
+            ],
+            dict(os.environ),
+        )
+
+
 def install_runtime(
     *,
     repo_root: Path,
     codex_home: Path,
     python_executable: Path,
-    runner: Callable[[Sequence[str]], object] | None = None,
+    runner: CommandRunner | None = None,
+    validator: Callable[..., None] | None = None,
+    release_stamp: str | None = None,
 ) -> Path:
-    runtime_bootstrap.runtime_root(codex_home).mkdir(parents=True, exist_ok=True)
-    commands = build_install_commands(
+    command_runner = runner or default_runner
+    release_root = release_root_for_install(codex_home, release_stamp=release_stamp)
+    release_root.mkdir(parents=True, exist_ok=False)
+
+    for command in build_install_commands(
         repo_root=repo_root,
-        codex_home=codex_home,
+        release_root=release_root,
         python_executable=python_executable,
-    )
-    command_runner = runner or (lambda command: subprocess.run(command, check=True))
-    for command in commands:
-        command_runner(command)
-    return write_runtime_manifest(repo_root=repo_root, codex_home=codex_home)
+    ):
+        command_runner(command, None)
+
+    write_release_manifest(release_root=release_root, repo_root=repo_root)
+    active_manifest_path = runtime_bootstrap.active_runtime_manifest_path(codex_home)
+    validate = validator or validate_staged_runtime
+    validate(release_root=release_root, runner=command_runner)
+    return write_active_manifest(codex_home=codex_home, release_root=release_root, repo_root=repo_root)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -134,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
         codex_home=codex_home,
         python_executable=python_executable,
     )
-    print(json.dumps({"ok": True, "runtime_manifest": str(manifest_path)}, indent=2))
+    print(json.dumps({"ok": True, "active_manifest": str(manifest_path)}, indent=2))
     return 0
 
 

@@ -4,8 +4,11 @@ import json
 import os
 import re
 import sqlite3
+import sys
+import time
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -45,10 +48,13 @@ ENTITY_STOPWORDS = {
     "validated",
     "status",
 }
-CACHE_SCHEMA_VERSION = 2
+CACHE_SCHEMA_VERSION = 3
 TEXT_SCAN_LIMIT = 2000
 EVIDENCE_SCAN_LIMIT = 200
 RAW_TEXT_STORE_LIMIT = 16000
+INDEX_LOCK_POLL_SECONDS = 0.1
+INDEX_LOCK_WAIT_SECONDS = 5.0
+INDEX_LOCK_STALE_SECONDS = 300.0
 FACET_TABLES: dict[str, tuple[str, str]] = {
     "paths": ("entry_paths", "path"),
     "blockers": ("entry_blockers", "blocker"),
@@ -67,6 +73,12 @@ def failure(error: str, message: str, *, warnings: list[str] | None = None, **ex
     payload: dict[str, Any] = {"ok": False, "error": error, "message": message, "warnings": warnings or []}
     payload.update(extra)
     return payload
+
+
+class IndexBusyError(RuntimeError):
+    def __init__(self, message: str, *, lock_state: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.lock_state = lock_state
 
 
 def default_codex_home(codex_home: str | Path | None = None) -> Path:
@@ -90,6 +102,29 @@ def state_db_path(codex_home: Path) -> Path:
 
 def cache_db_path(codex_home: Path) -> Path:
     return codex_home / "cache" / "codex-thread-recall" / "index.sqlite"
+
+
+def cache_root(codex_home: Path) -> Path:
+    return cache_db_path(codex_home).parent
+
+
+def thread_lock_path(codex_home: Path, thread_id: str) -> Path:
+    digest = sha256(thread_id.encode("utf-8")).hexdigest()[:16]
+    return cache_root(codex_home) / f"thread-{digest}.lock.json"
+
+
+def runtime_context_from_env() -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "mode": os.getenv("CODEX_THREAD_RECALL_RUNTIME_MODE", "direct"),
+        "python": os.getenv("CODEX_THREAD_RECALL_RUNTIME_PYTHON", sys.executable),
+    }
+    release_root = os.getenv("CODEX_THREAD_RECALL_RUNTIME_RELEASE_ROOT")
+    repo_root = os.getenv("CODEX_THREAD_RECALL_RUNTIME_REPO_ROOT")
+    if release_root:
+        payload["release_root"] = release_root
+    if repo_root:
+        payload["repo_root"] = repo_root
+    return payload
 
 
 def normalize_cwd(value: str | None) -> str | None:
@@ -122,6 +157,124 @@ def elapsed_seconds(start: str | None, end: str | None) -> int | None:
     if start_dt is None or end_dt is None:
         return None
     return int((end_dt - start_dt).total_seconds())
+
+
+def pid_is_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def read_lock_metadata(lock_path: Path) -> dict[str, Any] | None:
+    if not lock_path.is_file():
+        return None
+    try:
+        payload = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def classify_lock_state(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    if metadata is None:
+        return {"state": "unlocked"}
+
+    pid = metadata.get("pid")
+    try:
+        started_ts = parse_iso_timestamp(metadata.get("started_at"))
+    except TypeError:
+        started_ts = None
+    age_seconds = None
+    if started_ts is not None:
+        age_seconds = max(0.0, (datetime.now(tz=UTC) - started_ts).total_seconds())
+    pid_alive = isinstance(pid, int) and pid_is_running(pid)
+    state = "locked"
+    if age_seconds is not None and age_seconds > INDEX_LOCK_STALE_SECONDS:
+        state = "stale"
+    elif isinstance(pid, int) and not pid_alive:
+        state = "stale"
+    return {
+        "state": state,
+        "thread_id": metadata.get("thread_id"),
+        "rollout_path": metadata.get("rollout_path"),
+        "pid": pid,
+        "started_at": metadata.get("started_at"),
+        "age_seconds": age_seconds,
+    }
+
+
+class ThreadIndexLock:
+    def __init__(self, *, codex_home: Path, thread: dict[str, Any]) -> None:
+        self.path = thread_lock_path(codex_home, thread["id"])
+        self.metadata = {
+            "thread_id": thread["id"],
+            "rollout_path": thread["rollout_path"],
+            "pid": os.getpid(),
+            "started_at": datetime.now(tz=UTC).isoformat(),
+        }
+        self.state = "acquired"
+        self._acquired = False
+
+    def acquire(self) -> dict[str, Any]:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        started_wait = time.monotonic()
+        waited = False
+        reclaimed = False
+        while True:
+            try:
+                fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    json.dump(self.metadata, handle, indent=2)
+                    handle.write("\n")
+                self._acquired = True
+                if reclaimed:
+                    self.state = "reclaimed-stale"
+                elif waited:
+                    self.state = "waited"
+                return {"state": self.state, **self.metadata}
+            except FileExistsError:
+                existing = classify_lock_state(read_lock_metadata(self.path))
+                if existing["state"] == "stale":
+                    try:
+                        self.path.unlink()
+                    except FileNotFoundError:
+                        continue
+                    reclaimed = True
+                    continue
+                if time.monotonic() - started_wait >= INDEX_LOCK_WAIT_SECONDS:
+                    raise IndexBusyError(
+                        "The thread recall index is currently being built by another live process.",
+                        lock_state={**existing, "state": "busy"},
+                    )
+                waited = True
+                time.sleep(INDEX_LOCK_POLL_SECONDS)
+
+    def release(self) -> None:
+        if not self._acquired:
+            return
+        try:
+            current = read_lock_metadata(self.path)
+            if current is None or current.get("pid") == self.metadata["pid"]:
+                self.path.unlink(missing_ok=True)
+        finally:
+            self._acquired = False
+
+    def __enter__(self) -> dict[str, Any]:
+        return self.acquire()
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        self.release()
+        return False
 
 
 def thread_metadata_from_row(row: sqlite3.Row) -> dict[str, Any]:
@@ -683,6 +836,7 @@ def ensure_cache_schema(conn: sqlite3.Connection) -> None:
             "last_indexed_offset",
             "last_indexed_line",
             "last_indexed_entry",
+            "last_rebuild_reason",
         }
         if not required_rollout_columns.issubset(rollout_columns):
             drop_cache_schema(conn)
@@ -724,7 +878,8 @@ def ensure_cache_schema(conn: sqlite3.Connection) -> None:
             last_indexed_entry integer not null,
             built_at text not null,
             entry_count integer not null,
-            noise_filtered_count integer not null
+            noise_filtered_count integer not null,
+            last_rebuild_reason text
         );
 
         create table if not exists entries (
@@ -776,7 +931,7 @@ def cache_metadata_row(conn: sqlite3.Connection, thread_id: str) -> sqlite3.Row 
         """
         select schema_version, rollout_path, rollout_size, rollout_mtime_ns,
                last_indexed_offset, last_indexed_line, last_indexed_entry,
-               built_at, entry_count, noise_filtered_count
+               built_at, entry_count, noise_filtered_count, last_rebuild_reason
         from rollout_indexes
         where thread_id = ?
         """,
@@ -844,14 +999,16 @@ def upsert_rollout_index(
     last_indexed_entry: int,
     entry_count: int,
     noise_filtered_count: int,
+    last_rebuild_reason: str | None,
+    built_at: str | None = None,
 ) -> None:
     conn.execute(
         """
         insert into rollout_indexes (
             thread_id, schema_version, rollout_path, rollout_size, rollout_mtime_ns,
             last_indexed_offset, last_indexed_line, last_indexed_entry,
-            built_at, entry_count, noise_filtered_count
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            built_at, entry_count, noise_filtered_count, last_rebuild_reason
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         on conflict(thread_id) do update set
             schema_version = excluded.schema_version,
             rollout_path = excluded.rollout_path,
@@ -862,7 +1019,8 @@ def upsert_rollout_index(
             last_indexed_entry = excluded.last_indexed_entry,
             built_at = excluded.built_at,
             entry_count = excluded.entry_count,
-            noise_filtered_count = excluded.noise_filtered_count
+            noise_filtered_count = excluded.noise_filtered_count,
+            last_rebuild_reason = excluded.last_rebuild_reason
         """,
         (
             thread["id"],
@@ -873,9 +1031,10 @@ def upsert_rollout_index(
             last_indexed_offset,
             last_indexed_line,
             last_indexed_entry,
-            datetime.now(tz=UTC).isoformat(),
+            built_at or datetime.now(tz=UTC).isoformat(),
             entry_count,
             noise_filtered_count,
+            last_rebuild_reason,
         ),
     )
 
@@ -890,6 +1049,7 @@ def rebuild_index(
     last_indexed_offset: int,
     last_indexed_line: int,
     last_indexed_entry: int,
+    rebuild_reason: str,
 ) -> None:
     clear_thread_cache(conn, thread["id"])
     insert_entries(conn, thread_id=thread["id"], entries=entries)
@@ -903,6 +1063,7 @@ def rebuild_index(
         last_indexed_entry=last_indexed_entry,
         entry_count=last_indexed_entry,
         noise_filtered_count=sum(1 for entry in entries if entry["is_noise"]),
+        last_rebuild_reason=rebuild_reason,
     )
     conn.commit()
 
@@ -918,6 +1079,7 @@ def append_index(
     last_indexed_offset: int,
     last_indexed_line: int,
     last_indexed_entry: int,
+    rebuild_reason: str,
 ) -> None:
     insert_entries(conn, thread_id=thread["id"], entries=new_entries)
     upsert_rollout_index(
@@ -930,97 +1092,215 @@ def append_index(
         last_indexed_entry=last_indexed_entry,
         entry_count=int(existing["entry_count"]) + len(new_entries),
         noise_filtered_count=int(existing["noise_filtered_count"]) + sum(1 for entry in new_entries if entry["is_noise"]),
+        last_rebuild_reason=rebuild_reason,
     )
     conn.commit()
 
 
-def ensure_index(
+def thread_entry_stats(conn: sqlite3.Connection, thread_id: str) -> sqlite3.Row:
+    return conn.execute(
+        """
+        select count(*) as entry_rows,
+               coalesce(max(entry_index), 0) as max_entry_index,
+               coalesce(max(rollout_line), 0) as max_rollout_line
+        from entries
+        where thread_id = ?
+        """,
+        (thread_id,),
+    ).fetchone()
+
+
+def cache_rebuild_reason(
+    *,
+    existing: sqlite3.Row | None,
+    thread_stats: sqlite3.Row,
+    rollout_path: Path,
+    rollout_size: int,
+    rollout_mtime_ns: int,
+) -> tuple[str | None, bool]:
+    entry_rows = int(thread_stats["entry_rows"])
+    if existing is None:
+        return ("initial-build" if entry_rows == 0 else "orphaned-thread-cache"), False
+
+    if int(existing["schema_version"]) != CACHE_SCHEMA_VERSION:
+        return "schema-version-mismatch", True
+    if existing["rollout_path"] != str(rollout_path):
+        return "rollout-path-changed", True
+    if rollout_size < int(existing["rollout_size"]) or rollout_size < int(existing["last_indexed_offset"]):
+        return "rollout-truncated", True
+    if entry_rows != int(existing["entry_count"]):
+        return "entry-count-mismatch", True
+    if entry_rows and int(thread_stats["max_entry_index"]) != int(existing["last_indexed_entry"]):
+        return "entry-index-mismatch", True
+    if int(thread_stats["max_rollout_line"]) and int(thread_stats["max_rollout_line"]) < int(existing["last_indexed_line"]):
+        return "rollout-line-mismatch", True
+    if rollout_size > int(existing["rollout_size"]):
+        return "append-rollout-growth", False
+    if rollout_size == int(existing["rollout_size"]) and rollout_mtime_ns != int(existing["rollout_mtime_ns"]):
+        return "metadata-drift", False
+    return None, False
+
+
+def refresh_rollout_metadata(
     conn: sqlite3.Connection,
     *,
     thread: dict[str, Any],
-) -> tuple[dict[str, Any], list[str]]:
-    warnings: list[str] = []
-    rollout_path = Path(thread["rollout_path"])
-    rollout_size, rollout_mtime_ns = rollout_signature(rollout_path)
-    ensure_cache_schema(conn)
-    existing = cache_metadata_row(conn, thread["id"])
+    existing: sqlite3.Row,
+    rollout_size: int,
+    rollout_mtime_ns: int,
+) -> None:
+    upsert_rollout_index(
+        conn,
+        thread=thread,
+        rollout_size=rollout_size,
+        rollout_mtime_ns=rollout_mtime_ns,
+        last_indexed_offset=int(existing["last_indexed_offset"]),
+        last_indexed_line=int(existing["last_indexed_line"]),
+        last_indexed_entry=int(existing["last_indexed_entry"]),
+        entry_count=int(existing["entry_count"]),
+        noise_filtered_count=int(existing["noise_filtered_count"]),
+        last_rebuild_reason=existing["last_rebuild_reason"],
+        built_at=existing["built_at"],
+    )
+    conn.commit()
 
-    built = False
-    stale = False
-    appended_entries = 0
-    full_rebuild = False
 
-    if existing is None:
-        entries, parse_warnings, last_offset, last_line, last_entry = load_rollout_delta(rollout_path)
-        warnings.extend(parse_warnings)
-        rebuild_index(
-            conn,
-            thread=thread,
-            entries=entries,
-            rollout_size=rollout_size,
-            rollout_mtime_ns=rollout_mtime_ns,
-            last_indexed_offset=last_offset,
-            last_indexed_line=last_line,
-            last_indexed_entry=last_entry,
-        )
-        built = True
-    else:
-        full_rebuild = (
-            int(existing["schema_version"]) != CACHE_SCHEMA_VERSION
-            or existing["rollout_path"] != str(rollout_path)
-            or rollout_size < int(existing["rollout_size"])
-            or rollout_size < int(existing["last_indexed_offset"])
-            or (rollout_size == int(existing["rollout_size"]) and rollout_mtime_ns != int(existing["rollout_mtime_ns"]))
-        )
-        if full_rebuild:
-            entries, parse_warnings, last_offset, last_line, last_entry = load_rollout_delta(rollout_path)
-            warnings.extend(parse_warnings)
-            rebuild_index(
-                conn,
-                thread=thread,
-                entries=entries,
-                rollout_size=rollout_size,
-                rollout_mtime_ns=rollout_mtime_ns,
-                last_indexed_offset=last_offset,
-                last_indexed_line=last_line,
-                last_indexed_entry=last_entry,
-            )
-            built = True
-            stale = True
-        elif rollout_size > int(existing["rollout_size"]):
-            new_entries, parse_warnings, last_offset, last_line, last_entry = load_rollout_delta(
-                rollout_path,
-                start_offset=int(existing["last_indexed_offset"]),
-                start_line=int(existing["last_indexed_line"]),
-                start_entry=int(existing["last_indexed_entry"]),
-            )
-            warnings.extend(parse_warnings)
-            if new_entries:
-                append_index(
-                    conn,
-                    thread=thread,
-                    existing=existing,
-                    new_entries=new_entries,
-                    rollout_size=rollout_size,
-                    rollout_mtime_ns=rollout_mtime_ns,
-                    last_indexed_offset=last_offset,
-                    last_indexed_line=last_line,
-                    last_indexed_entry=last_entry,
-                )
-                built = True
-                stale = True
-                appended_entries = len(new_entries)
-
-    metadata_row = cache_metadata_row(conn, thread["id"])
-    index_meta = {
+def index_meta_payload(
+    codex_home: Path,
+    metadata_row: sqlite3.Row | None,
+    *,
+    built: bool,
+    stale: bool,
+    appended_entries: int,
+    lock_state: dict[str, Any],
+) -> dict[str, Any]:
+    return {
         "used": True,
         "built": built,
         "stale": stale,
         "entry_count": int(metadata_row["entry_count"]) if metadata_row is not None else 0,
         "noise_filtered_count": int(metadata_row["noise_filtered_count"]) if metadata_row is not None else 0,
         "appended_entries": appended_entries,
+        "schema_version": int(metadata_row["schema_version"]) if metadata_row is not None else CACHE_SCHEMA_VERSION,
+        "cache_path": str(cache_db_path(codex_home)),
+        "last_indexed_line": int(metadata_row["last_indexed_line"]) if metadata_row is not None else 0,
+        "last_indexed_offset": int(metadata_row["last_indexed_offset"]) if metadata_row is not None else 0,
+        "built_at": metadata_row["built_at"] if metadata_row is not None else None,
+        "last_rebuild_reason": metadata_row["last_rebuild_reason"] if metadata_row is not None else None,
+        "lock_state": lock_state,
     }
-    return index_meta, warnings
+
+
+def ensure_index(
+    conn: sqlite3.Connection,
+    *,
+    thread: dict[str, Any],
+    codex_home: Path,
+) -> tuple[dict[str, Any], list[str]]:
+    warnings: list[str] = []
+    rollout_path = Path(thread["rollout_path"])
+    rollout_size, rollout_mtime_ns = rollout_signature(rollout_path)
+    ensure_cache_schema(conn)
+    existing = cache_metadata_row(conn, thread["id"])
+    thread_stats = thread_entry_stats(conn, thread["id"])
+
+    built = False
+    stale = False
+    appended_entries = 0
+    lock_state = classify_lock_state(read_lock_metadata(thread_lock_path(codex_home, thread["id"])))
+
+    rebuild_reason, force_rebuild = cache_rebuild_reason(
+        existing=existing,
+        thread_stats=thread_stats,
+        rollout_path=rollout_path,
+        rollout_size=rollout_size,
+        rollout_mtime_ns=rollout_mtime_ns,
+    )
+
+    def _reload_state() -> tuple[sqlite3.Row | None, sqlite3.Row]:
+        ensure_cache_schema(conn)
+        refreshed_existing = cache_metadata_row(conn, thread["id"])
+        refreshed_stats = thread_entry_stats(conn, thread["id"])
+        return refreshed_existing, refreshed_stats
+
+    if rebuild_reason == "metadata-drift" and existing is not None:
+        refresh_rollout_metadata(
+            conn,
+            thread=thread,
+            existing=existing,
+            rollout_size=rollout_size,
+            rollout_mtime_ns=rollout_mtime_ns,
+        )
+    elif rebuild_reason is not None:
+        with ThreadIndexLock(codex_home=codex_home, thread=thread) as active_lock_state:
+            lock_state = active_lock_state
+            existing, thread_stats = _reload_state()
+            rebuild_reason, force_rebuild = cache_rebuild_reason(
+                existing=existing,
+                thread_stats=thread_stats,
+                rollout_path=rollout_path,
+                rollout_size=rollout_size,
+                rollout_mtime_ns=rollout_mtime_ns,
+            )
+            if rebuild_reason == "metadata-drift" and existing is not None:
+                refresh_rollout_metadata(
+                    conn,
+                    thread=thread,
+                    existing=existing,
+                    rollout_size=rollout_size,
+                    rollout_mtime_ns=rollout_mtime_ns,
+                )
+            elif rebuild_reason is not None:
+                if existing is None or force_rebuild or rebuild_reason != "append-rollout-growth":
+                    entries, parse_warnings, last_offset, last_line, last_entry = load_rollout_delta(rollout_path)
+                    warnings.extend(parse_warnings)
+                    rebuild_index(
+                        conn,
+                        thread=thread,
+                        entries=entries,
+                        rollout_size=rollout_size,
+                        rollout_mtime_ns=rollout_mtime_ns,
+                        last_indexed_offset=last_offset,
+                        last_indexed_line=last_line,
+                        last_indexed_entry=last_entry,
+                        rebuild_reason=rebuild_reason,
+                    )
+                    built = True
+                    stale = rebuild_reason != "initial-build"
+                elif existing is not None:
+                    new_entries, parse_warnings, last_offset, last_line, last_entry = load_rollout_delta(
+                        rollout_path,
+                        start_offset=int(existing["last_indexed_offset"]),
+                        start_line=int(existing["last_indexed_line"]),
+                        start_entry=int(existing["last_indexed_entry"]),
+                    )
+                    warnings.extend(parse_warnings)
+                    if new_entries:
+                        append_index(
+                            conn,
+                            thread=thread,
+                            existing=existing,
+                            new_entries=new_entries,
+                            rollout_size=rollout_size,
+                            rollout_mtime_ns=rollout_mtime_ns,
+                            last_indexed_offset=last_offset,
+                            last_indexed_line=last_line,
+                            last_indexed_entry=last_entry,
+                            rebuild_reason=rebuild_reason,
+                        )
+                        built = True
+                        stale = True
+                        appended_entries = len(new_entries)
+
+    metadata_row = cache_metadata_row(conn, thread["id"])
+    return index_meta_payload(
+        codex_home,
+        metadata_row,
+        built=built,
+        stale=stale,
+        appended_entries=appended_entries,
+        lock_state=lock_state,
+    ), warnings
 
 
 def load_facets_for_entries(conn: sqlite3.Connection, entry_ids: list[int]) -> dict[int, dict[str, list[Any]]]:
@@ -1519,11 +1799,56 @@ def first_seen_map(conn: sqlite3.Connection, *, thread_id: str, group: str) -> d
     return output
 
 
+def index_busy_failure(thread: dict[str, Any], warnings: list[str], error: IndexBusyError) -> dict[str, Any]:
+    return failure(
+        "index_busy",
+        str(error),
+        warnings=warnings,
+        thread=thread,
+        cache={"lock_state": error.lock_state, "path": str(cache_db_path(default_codex_home()))},
+    )
+
+
 def status(thread_id: str | None = None, codex_home: str | Path | None = None) -> dict[str, Any]:
     thread, warnings, error = resolve_thread(thread_id=thread_id, codex_home=codex_home)
     if error is not None:
         return error
-    return {"ok": True, "thread": thread, "warnings": warnings}
+    home = default_codex_home(codex_home)
+    conn = connect_cache(home)
+    try:
+        index_meta, index_warnings = ensure_index(conn, thread=thread, codex_home=home)
+        warnings.extend(index_warnings)
+        return {
+            "ok": True,
+            "thread": thread,
+            "warnings": warnings,
+            "runtime": runtime_context_from_env(),
+            "cache": {
+                "path": index_meta["cache_path"],
+                "schema_version": index_meta["schema_version"],
+                "entry_count": index_meta["entry_count"],
+                "noise_filtered_count": index_meta["noise_filtered_count"],
+                "last_indexed_line": index_meta["last_indexed_line"],
+                "last_indexed_offset": index_meta["last_indexed_offset"],
+                "built_at": index_meta["built_at"],
+                "last_rebuild_reason": index_meta["last_rebuild_reason"],
+                "lock_state": index_meta["lock_state"],
+            },
+        }
+    except IndexBusyError as exc:
+        return failure(
+            "index_busy",
+            str(exc),
+            warnings=warnings,
+            thread=thread,
+            runtime=runtime_context_from_env(),
+            cache={
+                "path": str(cache_db_path(home)),
+                "lock_state": exc.lock_state,
+            },
+        )
+    finally:
+        conn.close()
 
 
 def recall(
@@ -1540,7 +1865,7 @@ def recall(
     home = default_codex_home(codex_home)
     conn = connect_cache(home)
     try:
-        index_meta, index_warnings = ensure_index(conn, thread=thread)
+        index_meta, index_warnings = ensure_index(conn, thread=thread, codex_home=home)
         warnings.extend(index_warnings)
 
         if profile == "shipping":
@@ -1557,6 +1882,14 @@ def recall(
             "index": index_meta,
             "recall": recall_payload,
         }
+    except IndexBusyError as exc:
+        return failure(
+            "index_busy",
+            str(exc),
+            warnings=warnings,
+            thread=thread,
+            cache={"path": str(cache_db_path(home)), "lock_state": exc.lock_state},
+        )
     finally:
         conn.close()
 
@@ -1581,7 +1914,7 @@ def grep_rollout(
     home = default_codex_home(codex_home)
     conn = connect_cache(home)
     try:
-        index_meta, index_warnings = ensure_index(conn, thread=thread)
+        index_meta, index_warnings = ensure_index(conn, thread=thread, codex_home=home)
         warnings.extend(index_warnings)
 
         search_column = "raw_text" if include_noise else "search_text"
@@ -1653,6 +1986,14 @@ def grep_rollout(
             "index": index_meta,
             "results": results,
         }
+    except IndexBusyError as exc:
+        return failure(
+            "index_busy",
+            str(exc),
+            warnings=warnings,
+            thread=thread,
+            cache={"path": str(cache_db_path(home)), "lock_state": exc.lock_state},
+        )
     finally:
         conn.close()
 
@@ -1672,7 +2013,7 @@ def timeline(
     home = default_codex_home(codex_home)
     conn = connect_cache(home)
     try:
-        index_meta, index_warnings = ensure_index(conn, thread=thread)
+        index_meta, index_warnings = ensure_index(conn, thread=thread, codex_home=home)
         warnings.extend(index_warnings)
         selected_kinds = selected_event_kinds(kind)
         entries = fetch_entry_rows_by_ids(conn, timeline_entry_ids(conn, thread_id=thread["id"], kind=kind))
@@ -1746,5 +2087,13 @@ def timeline(
             "index": index_meta,
             "timeline": grouped_timeline,
         }
+    except IndexBusyError as exc:
+        return failure(
+            "index_busy",
+            str(exc),
+            warnings=warnings,
+            thread=thread,
+            cache={"path": str(cache_db_path(home)), "lock_state": exc.lock_state},
+        )
     finally:
         conn.close()
