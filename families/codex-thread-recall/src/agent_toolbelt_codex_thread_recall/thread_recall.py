@@ -48,6 +48,7 @@ ENTITY_STOPWORDS = {
 CACHE_SCHEMA_VERSION = 2
 TEXT_SCAN_LIMIT = 2000
 EVIDENCE_SCAN_LIMIT = 200
+RAW_TEXT_STORE_LIMIT = 16000
 FACET_TABLES: dict[str, tuple[str, str]] = {
     "paths": ("entry_paths", "path"),
     "blockers": ("entry_blockers", "blocker"),
@@ -334,6 +335,14 @@ def summarize_text(text: str, limit: int = 220) -> str:
     return compact[: limit - 3] + "..."
 
 
+def bounded_analysis_text(text: str, *, limit: int = TEXT_SCAN_LIMIT) -> str:
+    if len(text) <= limit:
+        return text
+    head = max(1, limit // 2)
+    tail = max(1, limit - head)
+    return f"{text[:head]}\n...[truncated]...\n{text[-tail:]}"
+
+
 def unique_preserving_order(items: list[Any], *, limit: int | None = None) -> list[Any]:
     output: list[Any] = []
     seen: set[Any] = set()
@@ -514,29 +523,57 @@ def classify_search_text(text: str, *, entry_type: str | None, payload_type: str
 
 def normalize_entry(entry: dict[str, Any], entry_index: int, line_number: int) -> dict[str, Any]:
     payload = entry.get("payload") or {}
+    if entry.get("type") == "compacted":
+        return {
+            "timestamp": entry.get("timestamp"),
+            "entry_index": entry_index,
+            "rollout_line": line_number,
+            "entry_type": entry.get("type"),
+            "payload_type": payload.get("type"),
+            "role": None,
+            "command": None,
+            "raw_text": "Context compacted.",
+            "search_text": "",
+            "excerpt": "Context compacted.",
+            "paths": [],
+            "blockers": [],
+            "retry_signals": [],
+            "questions": [],
+            "entities": [],
+            "repos": [],
+            "pr_numbers": [],
+            "commit_oids": [],
+            "qualified_ids": [],
+            "event_kinds": [],
+            "is_noise": True,
+            "noise_reason": "compaction-marker",
+        }
+
     command = command_from_payload(payload)
     flattened = flatten_content(payload)
     combined_text = " ".join(part for part in flattened if part).strip()
     if command and command not in combined_text:
         combined_text = f"{command}\n{combined_text}".strip()
-    if entry.get("type") == "compacted" and not combined_text:
-        combined_text = "Context compacted."
+    analysis_text = bounded_analysis_text(combined_text)
 
     role = payload_role(payload)
     search_text, is_noise, noise_reason = classify_search_text(
-        combined_text,
+        analysis_text,
         entry_type=entry.get("type"),
         payload_type=payload.get("type"),
         role=role,
     )
-    event_kinds = detect_event_kinds(combined_text, entry_type=entry.get("type"), payload_type=payload.get("type"))
-    entities = extract_entities(combined_text)
-    repos = extract_repos(combined_text)
-    pr_numbers = extract_pr_numbers(combined_text)
-    commit_oids = extract_commit_oids(combined_text)
-    qualified_ids = extract_qualified_ids(combined_text)
-    blockers = extract_blockers(combined_text)
-    retry_signals = extract_retry_signals(combined_text)
+    event_kinds = detect_event_kinds(analysis_text, entry_type=entry.get("type"), payload_type=payload.get("type"))
+    entities = extract_entities(analysis_text)
+    repos = extract_repos(analysis_text)
+    pr_numbers = extract_pr_numbers(analysis_text)
+    commit_oids = extract_commit_oids(analysis_text)
+    qualified_ids = extract_qualified_ids(analysis_text)
+    blockers = extract_blockers(analysis_text)
+    retry_signals = extract_retry_signals(analysis_text)
+    raw_text = combined_text
+    if is_noise and len(raw_text) > RAW_TEXT_STORE_LIMIT:
+        raw_text = bounded_analysis_text(raw_text, limit=RAW_TEXT_STORE_LIMIT)
 
     return {
         "timestamp": entry.get("timestamp"),
@@ -546,13 +583,13 @@ def normalize_entry(entry: dict[str, Any], entry_index: int, line_number: int) -
         "payload_type": payload.get("type"),
         "role": role,
         "command": command,
-        "raw_text": combined_text,
+        "raw_text": raw_text,
         "search_text": search_text,
-        "excerpt": summarize_text(search_text or combined_text) if (search_text or combined_text) else "",
-        "paths": extract_paths(combined_text),
+        "excerpt": summarize_text(search_text or analysis_text) if (search_text or analysis_text) else "",
+        "paths": extract_paths(analysis_text),
         "blockers": blockers,
         "retry_signals": retry_signals,
-        "questions": extract_questions(combined_text),
+        "questions": extract_questions(analysis_text),
         "entities": entities,
         "repos": repos,
         "pr_numbers": pr_numbers,
@@ -726,6 +763,7 @@ def ensure_cache_schema(conn: sqlite3.Connection) -> None:
     for facet_name, (table_name, column_name) in FACET_TABLES.items():
         conn.execute(f"create index if not exists idx_{table_name}_entry on {table_name}(entry_id)")
         conn.execute(f"create index if not exists idx_{table_name}_value on {table_name}({column_name})")
+        conn.execute(f"create index if not exists idx_{table_name}_value_entry on {table_name}({column_name}, entry_id)")
 
 
 def rollout_signature(rollout_path: Path) -> tuple[int, int]:
@@ -1437,21 +1475,23 @@ def ship_kinds_for_entry(entry: dict[str, Any]) -> list[str]:
 
 def timeline_entry_ids(conn: sqlite3.Connection, *, thread_id: str, kind: str) -> list[int]:
     if kind == "all":
-        where_sql = "exists (select 1 from entry_event_kinds ek where ek.entry_id = e.id)"
+        where_sql = ""
         params: tuple[Any, ...] = ()
     elif kind == "shipped":
-        where_sql = "exists (select 1 from entry_event_kinds ek where ek.entry_id = e.id and ek.event_kind in (?, ?, ?, ?))"
+        where_sql = "and ek.event_kind in (?, ?, ?, ?)"
         params = tuple(sorted(SHIP_EVENT_KINDS))
     else:
-        where_sql = "exists (select 1 from entry_event_kinds ek where ek.entry_id = e.id and ek.event_kind = ?)"
+        where_sql = "and ek.event_kind = ?"
         params = (kind,)
 
     rows = conn.execute(
         f"""
-        select e.id
+        select distinct e.id, coalesce(e.timestamp, '') as sort_timestamp, e.entry_index
         from entries e
-        where e.thread_id = ? and {where_sql}
-        order by coalesce(e.timestamp, ''), e.entry_index
+        join entry_event_kinds ek on ek.entry_id = e.id
+        where e.thread_id = ?
+          {where_sql}
+        order by sort_timestamp, e.entry_index
         """,
         (thread_id, *params),
     ).fetchall()
@@ -1463,19 +1503,20 @@ def first_seen_map(conn: sqlite3.Connection, *, thread_id: str, group: str) -> d
     table_name, column_name = FACET_TABLES[facet_name]
     rows = conn.execute(
         f"""
-        select firsts.group_key, e.timestamp
-        from (
-            select f.{column_name} as group_key, min(e.entry_index) as first_entry_index
-            from {table_name} f
-            join entries e on e.id = f.entry_id
-            where e.thread_id = ?
-            group by f.{column_name}
-        ) firsts
-        join entries e on e.thread_id = ? and e.entry_index = firsts.first_entry_index
+        select f.{column_name} as group_key, e.timestamp
+        from {table_name} f
+        join entries e on e.id = f.entry_id
+        where e.thread_id = ?
+        order by e.entry_index
         """,
-        (thread_id, thread_id),
+        (thread_id,),
     ).fetchall()
-    return {row["group_key"]: row["timestamp"] for row in rows}
+    output: dict[str, str | None] = {}
+    for row in rows:
+        key = row["group_key"]
+        if key not in output:
+            output[key] = row["timestamp"]
+    return output
 
 
 def status(thread_id: str | None = None, codex_home: str | Path | None = None) -> dict[str, Any]:

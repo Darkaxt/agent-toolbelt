@@ -78,3 +78,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def entrypoint() -> None:
     raise SystemExit(main(sys.argv[1:]))
+
+
+if __name__ == "__main__":
+    entrypoint()

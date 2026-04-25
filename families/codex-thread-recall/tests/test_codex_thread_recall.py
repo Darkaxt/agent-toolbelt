@@ -1,6 +1,8 @@
 import io
+import importlib.util
 import json
 import os
+import runpy
 import sqlite3
 import sys
 import tempfile
@@ -12,6 +14,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CORE_SRC = REPO_ROOT / "packages" / "core" / "src"
 FAMILY_SRC = REPO_ROOT / "families" / "codex-thread-recall" / "src"
+SKILL_SCRIPTS = REPO_ROOT / "families" / "codex-thread-recall" / "codex" / "skills" / "codex-thread-recall" / "scripts"
 for path in (CORE_SRC, FAMILY_SRC):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
@@ -24,6 +27,37 @@ THREAD_ID = "019-thread-test"
 
 def make_entry(timestamp: str, entry_type: str, payload: dict) -> dict:
     return {"timestamp": timestamp, "type": entry_type, "payload": payload}
+
+
+def load_skill_script_module(name: str):
+    script_path = SKILL_SCRIPTS / name
+    if not script_path.is_file():
+        raise AssertionError(f"Missing skill script: {script_path}")
+    spec = importlib.util.spec_from_file_location(script_path.stem, script_path)
+    if spec is None or spec.loader is None:
+        raise AssertionError(f"Could not load skill script: {script_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def make_repo_bundle(root: Path) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "pyproject.toml").write_text("[tool.uv.workspace]\nmembers=[]\n", encoding="utf-8")
+    for relative in (
+        Path("packages") / "core" / "src",
+        Path("families") / "codex-thread-recall" / "src",
+        Path("families") / "codex-thread-recall" / "codex" / "skills" / "codex-thread-recall" / "scripts",
+    ):
+        (root / relative).mkdir(parents=True, exist_ok=True)
+    return root / "families" / "codex-thread-recall" / "codex" / "skills" / "codex-thread-recall" / "scripts" / "invoke_codex_thread_recall.py"
+
+
+def make_runtime_python(codex_home: Path) -> Path:
+    runtime_python = codex_home / "tools" / "codex-thread-recall" / ".venv" / "Scripts" / "python.exe"
+    runtime_python.parent.mkdir(parents=True, exist_ok=True)
+    runtime_python.write_text("", encoding="utf-8")
+    return runtime_python
 
 
 def make_codex_home(
@@ -142,7 +176,7 @@ class ThreadRecallTests(unittest.TestCase):
 
     def test_recall_extracts_decisions_commands_paths_blockers_and_evidence(self):
         entries = [
-            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Please implement codex-thread-recall."}),
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Please implement the thread recall helper."}),
             make_entry(
                 "2026-04-25T08:01:00Z",
                 "response_item",
@@ -351,7 +385,7 @@ class ThreadRecallTests(unittest.TestCase):
                 "event_msg",
                 {
                     "type": "agent_message",
-                    "text": "Published and installed. PR `#11` was merged with commit `ed7982b`. Enabled `artifact-alpha@local-market`.",
+                    "text": "Published and installed. PR `#11` was merged with commit `ed7982b`. Enabled `artifact-alpha@example-market`.",
                 },
             ),
             make_entry(
@@ -380,7 +414,7 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertIn(11, item["pr_numbers"])
         self.assertIn(12, item["pr_numbers"])
         self.assertIn("ed7982b", item["commit_oids"])
-        self.assertIn("artifact-alpha@local-market", item["qualified_ids"])
+        self.assertIn("artifact-alpha@example-market", item["qualified_ids"])
         self.assertEqual(len(item["ship_events"]), 3)
 
     def test_timeline_ignores_email_addresses_as_entities(self):
@@ -404,8 +438,8 @@ class ThreadRecallTests(unittest.TestCase):
 
     def test_timeline_none_returns_flat_events(self):
         entries = [
-            make_entry("2026-04-25T08:10:00Z", "event_msg", {"type": "agent_message", "text": "Published `codex-thread-recall`."}),
-            make_entry("2026-04-25T08:15:00Z", "event_msg", {"type": "agent_message", "text": "Merged PR `#14` for `codex-thread-recall`."}),
+            make_entry("2026-04-25T08:10:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-theta`."}),
+            make_entry("2026-04-25T08:15:00Z", "event_msg", {"type": "agent_message", "text": "Merged PR `#14` for `artifact-theta`."}),
         ]
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
@@ -512,6 +546,64 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertTrue(any("malformed JSONL" in warning for warning in payload["warnings"]))
 
+    def test_compacted_entries_are_indexed_as_markers_without_replaying_replacement_history(self):
+        compacted = thread_recall.normalize_entry(
+            {
+                "timestamp": "2026-04-25T08:05:00Z",
+                "type": "compacted",
+                "payload": {
+                    "message": "",
+                    "replacement_history": [
+                        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Published `artifact-lambda`."}]}
+                    ],
+                },
+            },
+            7,
+            42,
+        )
+
+        self.assertEqual(compacted["raw_text"], "Context compacted.")
+        self.assertEqual(compacted["excerpt"], "Context compacted.")
+        self.assertEqual(compacted["noise_reason"], "compaction-marker")
+        self.assertEqual(compacted["entities"], [])
+        self.assertEqual(compacted["event_kinds"], [])
+
+    def test_oversized_entries_use_bounded_storage_but_keep_tail_blockers(self):
+        huge_output = ("alpha " * 2000) + "Permission denied"
+        oversized = thread_recall.normalize_entry(
+            {
+                "timestamp": "2026-04-25T08:06:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "output": json.dumps({"stdout": huge_output, "stderr": ""}),
+                },
+            },
+            8,
+            43,
+        )
+
+        self.assertTrue(any("Permission denied" in item for item in oversized["blockers"]))
+
+    def test_oversized_noise_entries_use_bounded_storage(self):
+        huge_output = ("alpha " * 4000) + "artifact-omega"
+        oversized = thread_recall.normalize_entry(
+            {
+                "timestamp": "2026-04-25T08:07:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "output": json.dumps({"stdout": huge_output, "stderr": ""}),
+                },
+            },
+            9,
+            44,
+        )
+
+        self.assertTrue(oversized["is_noise"])
+        self.assertEqual(oversized["noise_reason"], "oversized-output")
+        self.assertLess(len(oversized["raw_text"]), len(huge_output))
+
 
 class ThreadRecallCliTests(unittest.TestCase):
     def test_status_cli_prints_json(self):
@@ -588,6 +680,131 @@ class ThreadRecallCliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["recall"]["profile"], "shipping")
         self.assertIn("\\u3010unicode evidence\\u3011", rendered)
+
+    def test_cli_module_runs_when_invoked_with_python_m(self):
+        original_status = cli.thread_recall.status
+        original_cli_module = sys.modules.pop("agent_toolbelt_codex_thread_recall.cli", None)
+        cli.thread_recall.status = lambda **kwargs: {"ok": True, "thread": {"id": "demo"}, "warnings": []}
+        original_argv = list(sys.argv)
+        try:
+            sys.argv = ["agent_toolbelt_codex_thread_recall.cli", "status"]
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                with self.assertRaises(SystemExit) as ctx:
+                    runpy.run_module("agent_toolbelt_codex_thread_recall.cli", run_name="__main__")
+                rendered = buffer.getvalue()
+        finally:
+            sys.argv = original_argv
+            cli.thread_recall.status = original_status
+            if original_cli_module is not None:
+                sys.modules["agent_toolbelt_codex_thread_recall.cli"] = original_cli_module
+
+        self.assertEqual(ctx.exception.code, 0)
+        self.assertIn('"id": "demo"', rendered)
+
+
+class ThreadRecallRuntimeTests(unittest.TestCase):
+    def test_runtime_bootstrap_prefers_agent_toolbelt_home_override_over_local_runtime(self):
+        module = load_skill_script_module("runtime_bootstrap.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            repo_root = temp_root / "dev-repo"
+            script_path = make_repo_bundle(repo_root)
+            codex_home = temp_root / "codex-home"
+            runtime_python = make_runtime_python(codex_home)
+
+            target = module.resolve_execution_target(
+                script_path=script_path,
+                env={
+                    "AGENT_TOOLBELT_HOME": str(repo_root),
+                    "CODEX_HOME": str(codex_home),
+                },
+            )
+
+        self.assertEqual(target["mode"], "repo")
+        self.assertEqual(Path(target["repo_root"]), repo_root.resolve())
+        self.assertEqual(Path(target["runtime_python"]), runtime_python.resolve())
+
+    def test_runtime_bootstrap_uses_repo_relative_bundle_when_present(self):
+        module = load_skill_script_module("runtime_bootstrap.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir) / "repo-bundle"
+            script_path = make_repo_bundle(repo_root)
+
+            target = module.resolve_execution_target(script_path=script_path, env={})
+
+        self.assertEqual(target["mode"], "repo")
+        self.assertEqual(Path(target["repo_root"]), repo_root.resolve())
+
+    def test_runtime_bootstrap_uses_local_runtime_when_no_repo_override_exists(self):
+        module = load_skill_script_module("runtime_bootstrap.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            codex_home = temp_root / "codex-home"
+            runtime_python = make_runtime_python(codex_home)
+            script_path = temp_root / "installed-skill" / "scripts" / "invoke_codex_thread_recall.py"
+            script_path.parent.mkdir(parents=True, exist_ok=True)
+            script_path.write_text("", encoding="utf-8")
+
+            target = module.resolve_execution_target(
+                script_path=script_path,
+                env={"CODEX_HOME": str(codex_home)},
+            )
+
+        self.assertEqual(target["mode"], "runtime")
+        self.assertEqual(Path(target["runtime_python"]), runtime_python.resolve())
+
+    def test_runtime_bootstrap_fails_closed_when_no_runtime_or_repo_exists(self):
+        module = load_skill_script_module("runtime_bootstrap.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            codex_home = temp_root / "codex-home"
+            script_path = temp_root / "installed-skill" / "scripts" / "invoke_codex_thread_recall.py"
+            script_path.parent.mkdir(parents=True, exist_ok=True)
+            script_path.write_text("", encoding="utf-8")
+
+            with self.assertRaises(RuntimeError) as ctx:
+                module.resolve_execution_target(
+                    script_path=script_path,
+                    env={"CODEX_HOME": str(codex_home)},
+                )
+
+        self.assertIn("AGENT_TOOLBELT_HOME", str(ctx.exception))
+        self.assertIn("tools", str(ctx.exception))
+
+    def test_runtime_installer_plans_venv_and_package_install_commands(self):
+        module = load_skill_script_module("install_codex_thread_recall_runtime.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            repo_root = temp_root / "repo"
+            make_repo_bundle(repo_root)
+            codex_home = temp_root / "codex-home"
+            commands = module.build_install_commands(
+                repo_root=repo_root,
+                codex_home=codex_home,
+                python_executable=Path("C:/Python312/python.exe"),
+            )
+
+        flattened = [" ".join(str(part) for part in command) for command in commands]
+        self.assertTrue(any(" -m venv " in f" {command} " for command in flattened))
+        self.assertTrue(any("agent-toolbelt-core" in command for command in flattened))
+        self.assertTrue(any("agent-toolbelt-codex-thread-recall" in command for command in flattened))
+        self.assertTrue(any("--no-cache-dir" in command for command in flattened))
+        self.assertTrue(any(str(codex_home / "tools" / "codex-thread-recall" / ".venv") in command for command in flattened))
+
+    def test_runtime_installer_accepts_agent_toolbelt_home_env_override(self):
+        module = load_skill_script_module("install_codex_thread_recall_runtime.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir) / "repo"
+            make_repo_bundle(repo_root)
+            original_env = dict(os.environ)
+            try:
+                os.environ["AGENT_TOOLBELT_HOME"] = str(repo_root)
+                resolved = module.resolve_repo_root()
+            finally:
+                os.environ.clear()
+                os.environ.update(original_env)
+
+        self.assertEqual(resolved, repo_root.resolve())
 
 
 if __name__ == "__main__":
