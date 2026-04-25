@@ -101,6 +101,8 @@ Successful scoped responses also include additive scope metadata:
 - `episode.entry_count`
 - `episode.dominant_entities`
 - `episode.dominant_repos`
+- `episode.selection_reason`
+- `episode.substantive_entry_count`
 
 Successful indexed responses also include cache metadata:
 
@@ -134,6 +136,8 @@ Successful indexed responses also include cache metadata:
 - `episodes.total`
 - `episodes.current`
 - `episodes.last_boundary_reason`
+- `episodes.current.selection_reason`
+- `episodes.current.substantive_entry_count`
 
 Failure is explicit:
 

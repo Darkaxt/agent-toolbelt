@@ -331,6 +331,82 @@ class ThreadRecallTests(unittest.TestCase):
             }.issubset(table_names)
         )
 
+    def test_legacy_episode_schema_is_dropped_before_rebuild(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Ship `artifact-alpha`."}),
+            make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-alpha`."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            cache_db = codex_home / "cache" / "codex-thread-recall" / "index.sqlite"
+            cache_db.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(cache_db)
+            try:
+                conn.executescript(
+                    """
+                    create table rollout_indexes (
+                        thread_id text primary key,
+                        schema_version integer not null,
+                        rollout_path text not null,
+                        rollout_size integer not null,
+                        rollout_mtime_ns integer not null,
+                        last_indexed_offset integer not null,
+                        last_indexed_line integer not null,
+                        last_indexed_entry integer not null,
+                        built_at text not null,
+                        entry_count integer not null,
+                        noise_filtered_count integer not null,
+                        last_rebuild_reason text
+                    );
+                    create table entries (
+                        id integer primary key,
+                        thread_id text not null,
+                        entry_index integer not null,
+                        rollout_line integer not null,
+                        timestamp text,
+                        entry_type text,
+                        payload_type text,
+                        role text,
+                        command text,
+                        raw_text text,
+                        search_text text,
+                        excerpt text,
+                        is_noise integer not null,
+                        noise_reason text,
+                        content_class text not null
+                    );
+                    create table episodes (
+                        id integer primary key,
+                        thread_id text not null,
+                        episode_index integer not null,
+                        started_entry_index integer not null,
+                        ended_entry_index integer not null,
+                        started_at text,
+                        ended_at text,
+                        entry_count integer not null,
+                        work_entry_count integer not null,
+                        boundary_reason text
+                    );
+                    """
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            with self.with_env(codex_home):
+                payload = thread_recall.status()
+
+            conn = sqlite3.connect(cache_db)
+            try:
+                episode_columns = {
+                    row[1] for row in conn.execute("pragma table_info(episodes)").fetchall()
+                }
+            finally:
+                conn.close()
+
+        self.assertTrue(payload["ok"])
+        self.assertIn("substantive_entry_count", episode_columns)
+
     def test_append_only_indexes_new_complete_lines_and_ignores_partial_line(self):
         entries = [
             make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Start thread recall."}),
@@ -463,6 +539,130 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertEqual(payload["episodes"]["total"], 2)
         self.assertEqual(payload["episodes"]["last_boundary_reason"], "post-ship-user-request")
         self.assertEqual(payload["episodes"]["current"]["dominant_entities"], ["artifact-beta"])
+
+    def test_assistant_only_validation_tail_stays_in_same_episode(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Implement `artifact-beta`."}),
+            make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Decision: use `artifact-beta` as the active work item."}),
+            make_entry("2026-04-25T08:02:00Z", "event_msg", {"type": "agent_message", "text": r"Touched D:\Work\artifact-beta\README.md."}),
+            make_entry("2026-04-25T08:03:00Z", "event_msg", {"type": "agent_message", "text": "Validated the release wiring for `thread_recall`."}),
+            make_entry("2026-04-25T08:04:00Z", "event_msg", {"type": "agent_message", "text": "Merged follow-up checks for `thread_recall`."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.status()
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["episodes"]["total"], 1)
+        self.assertEqual(payload["episodes"]["current"]["dominant_entities"], ["artifact-beta"])
+        self.assertEqual(payload["episodes"]["current"]["selection_reason"], "latest-substantive-episode")
+        self.assertGreaterEqual(payload["episodes"]["current"]["substantive_entry_count"], 3)
+
+    def test_repo_only_churn_does_not_split_episode(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Implement `artifact-beta`."}),
+            make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Decision: keep `artifact-beta` as the current work slice."}),
+            make_entry("2026-04-25T08:02:00Z", "event_msg", {"type": "agent_message", "text": "Working in repo `example/toolbelt`."}),
+            make_entry("2026-04-25T08:03:00Z", "event_msg", {"type": "user_message", "text": "Keep using repo `example/other-repo` but continue `artifact-beta`."}),
+            make_entry("2026-04-25T08:04:00Z", "event_msg", {"type": "agent_message", "text": "Updated repo notes for `artifact-beta`."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.status()
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["episodes"]["total"], 1)
+        self.assertEqual(payload["episodes"]["current"]["dominant_entities"], ["artifact-beta"])
+
+    def test_post_ship_user_follow_up_without_new_strong_anchor_stays_in_same_episode(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Ship `artifact-alpha`."}),
+            make_entry("2026-04-25T08:05:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-alpha` in `example/toolbelt`."}),
+            make_entry("2026-04-25T08:06:00Z", "event_msg", {"type": "user_message", "text": "Please verify the shipping output again."}),
+            make_entry("2026-04-25T08:07:00Z", "event_msg", {"type": "agent_message", "text": "Validated `artifact-alpha` and the shipping output."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.status()
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["episodes"]["total"], 1)
+        self.assertEqual(payload["episodes"]["current"]["dominant_entities"], ["artifact-alpha"])
+
+    def test_user_row_with_disjoint_strong_anchor_starts_new_episode(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Ship `artifact-alpha`."}),
+            make_entry("2026-04-25T08:05:00Z", "event_msg", {"type": "agent_message", "text": "Decision: use `artifact-alpha` for the first pass."}),
+            make_entry("2026-04-25T08:06:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-alpha` in `example/toolbelt`."}),
+            make_entry("2026-04-25T08:20:00Z", "event_msg", {"type": "user_message", "text": "Now implement `artifact-beta`."}),
+            make_entry("2026-04-25T08:21:00Z", "event_msg", {"type": "agent_message", "text": "Decision: use `artifact-beta` as the active slice."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.status()
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["episodes"]["total"], 2)
+        self.assertEqual(payload["episodes"]["last_boundary_reason"], "post-ship-user-request")
+        self.assertEqual(payload["episodes"]["current"]["dominant_entities"], ["artifact-beta"])
+
+    def test_tiny_assistant_only_trailing_episode_merges_back_into_prior_work(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Implement `artifact-beta`."}),
+            make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Decision: use `artifact-beta` as the active work item."}),
+            make_entry("2026-04-25T08:02:00Z", "event_msg", {"type": "agent_message", "text": r"Touched D:\Work\artifact-beta\README.md."}),
+            make_entry("2026-04-25T08:03:00Z", "event_msg", {"type": "agent_message", "text": "Validated `thread_recall`."}),
+            make_entry("2026-04-25T08:04:00Z", "event_msg", {"type": "agent_message", "text": "Installed `thread_recall`."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.status()
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["episodes"]["total"], 1)
+        self.assertEqual(payload["episodes"]["current"]["dominant_entities"], ["artifact-beta"])
+
+    def test_time_gap_episode_does_not_merge_back(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Implement `artifact-beta`."}),
+            make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Decision: use `artifact-beta` as the active work item."}),
+            make_entry("2026-04-25T08:02:00Z", "event_msg", {"type": "agent_message", "text": r"Touched D:\Work\artifact-beta\README.md."}),
+            make_entry("2026-04-25T10:30:00Z", "event_msg", {"type": "agent_message", "text": "Validated `thread_recall` after the long pause."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.status()
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["episodes"]["total"], 2)
+        self.assertEqual(payload["episodes"]["last_boundary_reason"], "time-gap")
+
+    def test_current_falls_back_from_thin_empty_tail_to_previous_substantive_episode(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Implement `artifact-beta`."}),
+            make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Decision: keep `artifact-beta` as the active work item."}),
+            make_entry("2026-04-25T08:02:00Z", "event_msg", {"type": "agent_message", "text": r"Touched D:\Work\artifact-beta\README.md."}),
+            make_entry("2026-04-25T08:20:00Z", "event_msg", {"type": "user_message", "text": "Now implement `artifact-gamma`."}),
+            make_entry("2026-04-25T08:21:00Z", "event_msg", {"type": "agent_message", "text": "Decision: keep `artifact-gamma` as the active work item."}),
+            make_entry("2026-04-25T08:22:00Z", "event_msg", {"type": "agent_message", "text": r"Touched D:\Work\artifact-gamma\README.md."}),
+            make_entry("2026-04-25T08:30:00Z", "response_item", {"type": "function_call_output", "output": json.dumps({"stdout": "done", "stderr": ""})}),
+            make_entry("2026-04-25T08:31:00Z", "event_msg", {"type": "agent_message", "text": "ok"}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.status()
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["episodes"]["current"]["dominant_entities"], ["artifact-gamma"])
+        self.assertEqual(payload["episodes"]["current"]["selection_reason"], "latest-substantive-episode")
+        self.assertGreaterEqual(payload["episodes"]["current"]["substantive_entry_count"], 3)
 
     def test_live_index_lock_waits_briefly_then_succeeds(self):
         entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "hello"})]
