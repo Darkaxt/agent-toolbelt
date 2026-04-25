@@ -50,11 +50,19 @@ EXPECTED_FAMILIES = {
         "project_name": "agent-toolbelt-linkedin-cv",
         "script_name": "agent-toolbelt-linkedin-cv",
         "package_dir": "agent_toolbelt_linkedin_cv",
+        "has_claude": True,
+    },
+    "codex-thread-recall": {
+        "project_name": "agent-toolbelt-codex-thread-recall",
+        "script_name": "agent-toolbelt-codex-thread-recall",
+        "package_dir": "agent_toolbelt_codex_thread_recall",
+        "has_claude": False,
     },
     "whatsapp-wacli": {
         "project_name": "agent-toolbelt-whatsapp-wacli",
         "script_name": "agent-toolbelt-whatsapp-wacli",
         "package_dir": "agent_toolbelt_whatsapp_wacli",
+        "has_claude": True,
     },
 }
 
@@ -77,6 +85,7 @@ class MonorepoLayoutTests(unittest.TestCase):
                 "families/mail-domain-quarantine",
                 "families/amazon-cli",
                 "families/linkedin-cv",
+                "families/codex-thread-recall",
                 "families/whatsapp-wacli",
             ],
         )
@@ -96,7 +105,10 @@ class MonorepoLayoutTests(unittest.TestCase):
                 self.assertTrue((family_root / "src").is_dir())
                 self.assertTrue((family_root / "tests").is_dir())
                 self.assertTrue((family_root / "codex").is_dir())
-                self.assertTrue((family_root / "claude").is_dir())
+                if metadata.get("has_claude", True):
+                    self.assertTrue((family_root / "claude").is_dir())
+                else:
+                    self.assertFalse((family_root / "claude").exists())
 
                 pyproject = tomllib.loads((family_root / "pyproject.toml").read_text(encoding="utf-8"))
                 self.assertEqual(pyproject["project"]["name"], metadata["project_name"])
@@ -105,6 +117,15 @@ class MonorepoLayoutTests(unittest.TestCase):
                     f"{metadata['package_dir']}.cli:entrypoint",
                 )
                 self.assertTrue((family_root / "src" / metadata["package_dir"] / "cli.py").is_file())
+
+    def test_codex_thread_recall_is_documented_as_codex_only(self):
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        codex_install = (REPO_ROOT / "docs" / "codex-install.md").read_text(encoding="utf-8")
+        claude_install = (REPO_ROOT / "docs" / "claude-install.md").read_text(encoding="utf-8")
+
+        self.assertIn("Codex Thread Recall", readme)
+        self.assertIn("families/codex-thread-recall/codex/skills/codex-thread-recall", codex_install)
+        self.assertNotIn("codex-thread-recall", claude_install)
 
     def test_root_runtime_package_is_removed(self):
         self.assertFalse((REPO_ROOT / "src" / "agent_toolbelt").exists())

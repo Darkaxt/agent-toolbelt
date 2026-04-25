@@ -13,6 +13,7 @@ FAMILY_NAMES = (
     "outlook-classic-mail",
     "amazon-cli",
     "linkedin-cv",
+    "codex-thread-recall",
     "whatsapp-wacli",
 )
 

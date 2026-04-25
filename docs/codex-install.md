@@ -12,6 +12,7 @@ Each family ships its own Codex skill bundle. Install only the family you want.
 - Observable Reputation: `families/observable-reputation/codex/skills/observable-reputation`
 - Mail Domain Quarantine: `families/mail-domain-quarantine/codex/skills/mail-domain-quarantine`
 - LinkedIn CV: `families/linkedin-cv/codex/skills/linkedin-cv`
+- Codex Thread Recall: `families/codex-thread-recall/codex/skills/codex-thread-recall`
 
 ## Install flow
 

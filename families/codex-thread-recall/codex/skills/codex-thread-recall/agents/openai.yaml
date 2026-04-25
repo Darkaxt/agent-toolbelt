@@ -1,0 +1,6 @@
+interface:
+  display_name: "Codex Thread Recall"
+  short_description: "Read the current Codex thread's raw rollout history before broad exploration."
+  default_prompt: "Use $codex-thread-recall to inspect this current Codex thread's own rollout history before broad repo or web exploration."
+policy:
+  allow_implicit_invocation: true
