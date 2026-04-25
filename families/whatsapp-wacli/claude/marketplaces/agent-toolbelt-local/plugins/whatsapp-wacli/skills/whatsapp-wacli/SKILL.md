@@ -19,7 +19,7 @@ This skill is experimental and local-first. Do not expose raw `wacli` command pa
 ## Workflows
 
 - For "latest conversation with X", run `auth-status`, then `sync-once` when needed, then `find-chat --query "<name-or-phone>"`, then `latest --chat "<name-or-jid>" --limit <n>`.
-- Check `resolved_jid` and `resolution_source` because WhatsApp may store direct-message history under a LID JID even when contact lookup resolves to a phone-number JID.
+- Check `chat_jid`, `resolved_jid`, and `resolution_source`, but let the adapter choose the actual history JID. The adapter now uses a fallback chain instead of blindly preferring the mapped LID.
 - Allow bounded auto-backfill for `latest` unless the user asks for current synced data only.
 - If `backfill_seed_missing` is returned, report that the local store lacks the anchor needed for targeted history backfill instead of implying there are no messages.
 - For reply drafting, fetch latest messages or context, draft text in chat, and do not send unless the user explicitly confirms the exact outgoing message.

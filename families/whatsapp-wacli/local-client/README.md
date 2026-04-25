@@ -17,7 +17,7 @@ uv run --project <path-to-whatsapp-wacli-agent> whatsapp-wacli-agent latest --ch
 
 `find-chat` searches local chat rows first, then falls back to `wacli contacts search` so contacts with WhatsApp profile names or aliases can resolve even when no chat row is stored yet.
 
-WhatsApp may store one-to-one chats under LID JIDs even when contacts resolve by phone-number JID. The adapter reads the configured `wacli` session store read-only and maps phone-number JIDs such as `15551234567@s.whatsapp.net` to LID JIDs such as `900001234567@lid` for history operations. Results include `contact_jid`, `resolved_jid`, and `resolution_source` so agents can see which identity was used.
+WhatsApp may store one-to-one chats under either phone-number JIDs or LID JIDs. The adapter reads the configured `wacli` session store read-only, records `contact_jid`, `resolved_jid`, and `resolution_source`, then chooses history/backfill JIDs from a fallback chain instead of blindly preferring the mapped LID. When the local store already has messages under the phone JID, reads prefer that chat JID first; if `wacli` returns `messages:null` or a seed-missing backfill result, the adapter retries alternate JIDs automatically.
 
 If a contact has neither local messages nor a PN-to-LID mapping, targeted backfill may fail because `wacli` needs an existing anchor message. In that case `latest` reports `backfill_seed_missing` instead of returning empty history as if it were complete.
 

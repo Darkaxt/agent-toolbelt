@@ -356,6 +356,17 @@ def resolution_summary(chat_info: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def unique_jids(*values: Any) -> list[str]:
+    seen: set[str] = set()
+    candidates: list[str] = []
+    for value in values:
+        jid = str(value or "").strip()
+        if jid and jid not in seen:
+            seen.add(jid)
+            candidates.append(jid)
+    return candidates
+
+
 def search_contacts(
     query: str,
     *,
@@ -405,6 +416,109 @@ def message_items_from_response(response: dict[str, Any]) -> list[dict[str, Any]
         response.get("result", {}).get("payload"),
         ("messages", "data", "items", "results"),
     )
+
+
+def nested_key_container(payload: Any, key: str) -> dict[str, Any] | None:
+    if isinstance(payload, dict):
+        if key in payload:
+            return payload
+        for value in payload.values():
+            found = nested_key_container(value, key)
+            if found is not None:
+                return found
+    elif isinstance(payload, list):
+        for item in payload:
+            found = nested_key_container(item, key)
+            if found is not None:
+                return found
+    return None
+
+
+def response_has_null_messages(response: dict[str, Any]) -> bool:
+    container = nested_key_container(response.get("result", {}).get("payload"), "messages")
+    return container is not None and container.get("messages") is None
+
+
+def normalize_null_messages(response: dict[str, Any]) -> bool:
+    container = nested_key_container(response.get("result", {}).get("payload"), "messages")
+    if container is None or container.get("messages") is not None:
+        return False
+    container["messages"] = []
+    return True
+
+
+def history_jid_candidates(
+    *,
+    resolution: dict[str, Any],
+    config: Config,
+) -> tuple[list[str], dict[str, int | None]]:
+    candidates = unique_jids(
+        resolution.get("chat_jid"),
+        resolution.get("resolved_jid"),
+        resolution.get("contact_jid"),
+    )
+    counts = {jid: message_count_for_chat(config, jid) for jid in candidates}
+    if len(candidates) <= 1:
+        return candidates, counts
+
+    seeded = [jid for jid in candidates if (counts.get(jid) or 0) > 0]
+    seeded.sort(key=lambda jid: (-(counts.get(jid) or 0), candidates.index(jid)))
+    unseeded = [jid for jid in candidates if jid not in seeded]
+    return seeded + unseeded, counts
+
+
+def enrich_history_resolution(
+    *,
+    resolution: dict[str, Any],
+    config: Config,
+    used_jid: str | None = None,
+    attempted_jids: list[str] | None = None,
+) -> dict[str, Any]:
+    candidates, counts = history_jid_candidates(resolution=resolution, config=config)
+    enriched = dict(resolution)
+    enriched["history_jids"] = candidates
+    enriched["history_jid_message_counts"] = counts
+    if used_jid:
+        enriched["used_jid"] = used_jid
+    if attempted_jids:
+        enriched["attempted_jids"] = attempted_jids
+    return enriched
+
+
+def invoke_history_read(
+    *,
+    operation: str,
+    jids: list[str],
+    command_builder: Callable[[str], list[str]],
+    runner: Callable[..., ProcessResult],
+    config: Config,
+    timeout_sec: int,
+) -> tuple[dict[str, Any], str | None, list[str]]:
+    attempted: list[str] = []
+    last_response: dict[str, Any] | None = None
+
+    for jid in jids:
+        response = invoke_wacli(
+            operation,
+            command_builder(jid),
+            runner=runner,
+            config=config,
+            timeout_sec=timeout_sec,
+            read_only_env=True,
+        )
+        attempted.append(jid)
+        last_response = response
+        if not response["ok"]:
+            return response, jid, attempted
+        if response_has_null_messages(response) and len(attempted) < len(jids):
+            continue
+        if normalize_null_messages(response):
+            response["warnings"] = [*response.get("warnings", []), "messages_null_normalized"]
+        if len(attempted) > 1:
+            response["warnings"] = [*response.get("warnings", []), "jid_fallback_used"]
+        return response, jid, attempted
+
+    return last_response or make_result(ok=False, operation=operation, exit_code=1), None, attempted
 
 
 def is_jid(value: str) -> bool:
@@ -583,18 +697,23 @@ def latest(
     )
     if resolution_error:
         return resolution_error
-    jid = str(resolution.get("resolved_jid") or chat)
-    response = invoke_wacli(
-        "latest",
-        ["messages", "list", "--chat", jid, "--limit", str(limit)],
+    candidate_jids, _ = history_jid_candidates(resolution=resolution, config=config)
+    response, jid, attempted_jids = invoke_history_read(
+        operation="latest",
+        jids=candidate_jids,
+        command_builder=lambda candidate_jid: ["messages", "list", "--chat", candidate_jid, "--limit", str(limit)],
         runner=runner,
         config=config,
         timeout_sec=timeout_sec,
-        read_only_env=True,
     )
     if not response["ok"]:
         return response
-    response["result"]["resolution"] = resolution
+    response["result"]["resolution"] = enrich_history_resolution(
+        resolution=resolution,
+        config=config,
+        used_jid=jid,
+        attempted_jids=attempted_jids,
+    )
 
     messages_returned = len(message_items_from_response(response))
     if not auto_backfill:
@@ -609,7 +728,7 @@ def latest(
         return response
 
     backfill_result = backfill(
-        jid,
+        chat,
         count=backfill_count,
         requests=backfill_requests,
         wait_sec=backfill_wait_sec,
@@ -636,7 +755,12 @@ def latest(
         read_only_env=True,
     )
     if refreshed["ok"]:
-        refreshed["result"]["resolution"] = resolution
+        refreshed["result"]["resolution"] = enrich_history_resolution(
+            resolution=resolution,
+            config=config,
+            used_jid=jid,
+            attempted_jids=attempted_jids,
+        )
         refreshed["result"]["backfill"] = backfill_result["result"]
         refreshed["result"]["backfill"]["trigger"] = "messages_returned_below_limit"
         refreshed["result"]["backfill"]["initial_messages_returned"] = messages_returned
@@ -667,49 +791,67 @@ def backfill(
     )
     if resolution_error:
         return resolution_error
-    jid = str(resolution.get("resolved_jid") or chat)
+    candidate_jids, counts = history_jid_candidates(resolution=resolution, config=config)
+    attempted_jids: list[str] = []
+    last_result: dict[str, Any] | None = None
 
-    before_count = message_count_for_chat(config, jid)
-    response = invoke_wacli(
-        "backfill",
-        [
-            "history",
+    for jid in candidate_jids:
+        attempted_jids.append(jid)
+        before_count = counts.get(jid)
+        response = invoke_wacli(
             "backfill",
-            "--chat",
-            jid,
-            "--count",
-            str(count),
-            "--requests",
-            str(requests),
-            "--wait",
-            f"{wait_sec}s",
-        ],
-        runner=runner,
-        config=config,
-        timeout_sec=timeout_sec,
-        read_only_env=False,
-    )
-    after_count = message_count_for_chat(config, jid)
-    messages_added = (
-        after_count - before_count
-        if before_count is not None and after_count is not None
-        else None
-    )
-    return make_result(
-        ok=response["ok"],
-        operation="backfill",
-        result={
-            "chat": resolution,
-            "before_count": before_count,
-            "after_count": after_count,
-            "messages_added": messages_added,
-            "backfill_attempted": True,
-            "payload": response.get("result", {}).get("payload"),
-        },
-        warnings=response.get("warnings", []),
-        stderr=response.get("stderr", ""),
-        exit_code=response.get("exit_code", 0),
-    )
+            [
+                "history",
+                "backfill",
+                "--chat",
+                jid,
+                "--count",
+                str(count),
+                "--requests",
+                str(requests),
+                "--wait",
+                f"{wait_sec}s",
+            ],
+            runner=runner,
+            config=config,
+            timeout_sec=timeout_sec,
+            read_only_env=False,
+        )
+        after_count = message_count_for_chat(config, jid)
+        messages_added = (
+            after_count - before_count
+            if before_count is not None and after_count is not None
+            else None
+        )
+        result = make_result(
+            ok=response["ok"],
+            operation="backfill",
+            result={
+                "chat": enrich_history_resolution(
+                    resolution=resolution,
+                    config=config,
+                    used_jid=jid,
+                    attempted_jids=attempted_jids,
+                ),
+                "before_count": before_count,
+                "after_count": after_count,
+                "messages_added": messages_added,
+                "backfill_attempted": True,
+                "payload": response.get("result", {}).get("payload"),
+            },
+            warnings=response.get("warnings", []),
+            stderr=response.get("stderr", ""),
+            exit_code=response.get("exit_code", 0),
+        )
+        if len(attempted_jids) > 1 and result["ok"]:
+            result["warnings"] = [*result.get("warnings", []), "jid_fallback_used"]
+        if result["ok"]:
+            return result
+        last_result = result
+        if not is_backfill_seed_missing(result) or len(attempted_jids) >= len(candidate_jids):
+            return result
+
+    return last_result or make_result(ok=False, operation="backfill", exit_code=1)
 
 
 def search_messages(
@@ -732,8 +874,25 @@ def search_messages(
         )
         if resolution_error:
             return resolution_error
-        args.extend(["--chat", str(resolution.get("resolved_jid") or chat)])
-    response = invoke_wacli(
+        resolved_config = config or resolve_config()
+        candidate_jids, _ = history_jid_candidates(resolution=resolution, config=resolved_config)
+        response, jid, attempted_jids = invoke_history_read(
+            operation="search",
+            jids=candidate_jids,
+            command_builder=lambda candidate_jid: [*args, "--chat", candidate_jid],
+            runner=runner,
+            config=resolved_config,
+            timeout_sec=timeout_sec,
+        )
+        if response["ok"]:
+            response["result"]["resolution"] = enrich_history_resolution(
+                resolution=resolution,
+                config=resolved_config,
+                used_jid=jid,
+                attempted_jids=attempted_jids,
+            )
+        return response
+    return invoke_wacli(
         "search",
         args,
         runner=runner,
@@ -741,9 +900,6 @@ def search_messages(
         timeout_sec=timeout_sec,
         read_only_env=True,
     )
-    if resolution and response["ok"]:
-        response["result"]["resolution"] = resolution
-    return response
 
 
 def context(
