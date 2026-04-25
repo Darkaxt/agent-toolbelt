@@ -171,6 +171,10 @@ class IndexBusyError(RuntimeError):
         self.lock_state = lock_state
 
 
+class TailEpisodeRebuildError(RuntimeError):
+    pass
+
+
 def default_codex_home(codex_home: str | Path | None = None) -> Path:
     if codex_home is not None:
         return Path(codex_home).expanduser()
@@ -1257,6 +1261,18 @@ def ensure_cache_schema(conn: sqlite3.Connection) -> None:
         if not required_episode_columns.issubset(episode_columns):
             drop_cache_schema(conn)
 
+    episode_links_exists = conn.execute(
+        "select name from sqlite_master where type = 'table' and name = 'entry_episode_links'"
+    ).fetchone()
+    if episode_links_exists is not None:
+        episode_link_columns = {row["name"] for row in conn.execute("pragma table_info(entry_episode_links)").fetchall()}
+        required_episode_link_columns = {
+            "entry_id",
+            "episode_id",
+        }
+        if not required_episode_link_columns.issubset(episode_link_columns):
+            drop_cache_schema(conn)
+
     entity_mentions_exists = conn.execute(
         "select name from sqlite_master where type = 'table' and name = 'entry_entity_mentions'"
     ).fetchone()
@@ -1568,7 +1584,11 @@ def episode_has_ship_event(entries: list[dict[str, Any]]) -> bool:
     )
 
 
-def merge_continuation_episodes(episodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def merge_continuation_episodes(
+    episodes: list[dict[str, Any]],
+    *,
+    starting_episode_index: int = 1,
+) -> list[dict[str, Any]]:
     merged: list[dict[str, Any]] = []
     for episode in episodes:
         if (
@@ -1590,7 +1610,7 @@ def merge_continuation_episodes(episodes: list[dict[str, Any]]) -> list[dict[str
             continue
         merged.append(episode)
 
-    for index, episode in enumerate(merged, start=1):
+    for index, episode in enumerate(merged, start=starting_episode_index):
         episode["episode_index"] = index
     return merged
 
@@ -1623,25 +1643,23 @@ def should_start_new_episode(
     return None
 
 
-def rebuild_thread_episodes(conn: sqlite3.Connection, *, thread_id: str) -> None:
-    entries = all_entries_for_thread(conn, thread_id)
-    conn.execute(
-        "delete from entry_episode_links where episode_id in (select id from episodes where thread_id = ?)",
-        (thread_id,),
-    )
-    conn.execute("delete from episodes where thread_id = ?", (thread_id,))
+def build_episode_records(
+    entries: list[dict[str, Any]],
+    *,
+    starting_episode_index: int = 1,
+    initial_boundary_reason: str = "thread-start",
+) -> list[dict[str, Any]]:
     if not entries:
-        return
-
+        return []
     episodes: list[dict[str, Any]] = []
     current_entries: list[dict[str, Any]] = []
-    current_reason = "thread-start"
+    current_reason = initial_boundary_reason
 
     def flush_episode() -> None:
         nonlocal current_entries, current_reason
         if not current_entries:
             return
-        episode_index = len(episodes) + 1
+        episode_index = starting_episode_index + len(episodes)
         episodes.append(
             {
                 "episode_index": episode_index,
@@ -1658,7 +1676,7 @@ def rebuild_thread_episodes(conn: sqlite3.Connection, *, thread_id: str) -> None
             }
         )
         current_entries = []
-        current_reason = "thread-start"
+        current_reason = initial_boundary_reason
 
     for entry in entries:
         if not current_entries:
@@ -1670,8 +1688,10 @@ def rebuild_thread_episodes(conn: sqlite3.Connection, *, thread_id: str) -> None
             current_reason = boundary_reason
         current_entries.append(entry)
     flush_episode()
-    episodes = merge_continuation_episodes(episodes)
+    return merge_continuation_episodes(episodes, starting_episode_index=starting_episode_index)
 
+
+def insert_episode_records(conn: sqlite3.Connection, *, thread_id: str, episodes: list[dict[str, Any]]) -> None:
     for episode in episodes:
         cursor = conn.execute(
             """
@@ -1698,6 +1718,118 @@ def rebuild_thread_episodes(conn: sqlite3.Connection, *, thread_id: str) -> None
             "insert into entry_episode_links (entry_id, episode_id) values (?, ?)",
             [(entry_id, episode_id) for entry_id in episode["entry_ids"]],
         )
+
+
+def clear_thread_episodes(conn: sqlite3.Connection, *, thread_id: str) -> None:
+    conn.execute(
+        "delete from entry_episode_links where episode_id in (select id from episodes where thread_id = ?)",
+        (thread_id,),
+    )
+    conn.execute("delete from episodes where thread_id = ?", (thread_id,))
+
+
+def rebuild_thread_episodes(conn: sqlite3.Connection, *, thread_id: str) -> None:
+    entries = all_entries_for_thread(conn, thread_id)
+    clear_thread_episodes(conn, thread_id=thread_id)
+    if not entries:
+        return
+    episodes = build_episode_records(entries)
+    insert_episode_records(conn, thread_id=thread_id, episodes=episodes)
+
+
+def episode_tail_rebuild_seed(conn: sqlite3.Connection, *, thread_id: str) -> dict[str, Any]:
+    rows = conn.execute(
+        """
+        select episode_index, started_entry_index, boundary_reason
+        from episodes
+        where thread_id = ?
+        order by episode_index desc
+        limit 2
+        """,
+        (thread_id,),
+    ).fetchall()
+    if not rows:
+        raise TailEpisodeRebuildError("no stored episodes available for tail rebuild")
+
+    seed_row = rows[-1]
+    start_episode_index = int(seed_row["episode_index"])
+    start_entry_index = int(seed_row["started_entry_index"])
+    if start_episode_index < 1 or start_entry_index < 1:
+        raise TailEpisodeRebuildError("invalid tail rebuild checkpoint")
+    boundary_reason = seed_row["boundary_reason"] or "thread-start"
+    return {
+        "start_episode_index": start_episode_index,
+        "start_entry_index": start_entry_index,
+        "boundary_reason": boundary_reason,
+    }
+
+
+def entries_for_tail_rebuild(
+    conn: sqlite3.Connection,
+    *,
+    thread_id: str,
+    start_entry_index: int,
+) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        select id, entry_index, rollout_line, timestamp, entry_type, payload_type, role, content_class,
+               command, raw_text, search_text, excerpt, is_noise, noise_reason
+        from entries
+        where thread_id = ? and entry_index >= ?
+        order by entry_index
+        """,
+        (thread_id, start_entry_index),
+    ).fetchall()
+    if not rows:
+        raise TailEpisodeRebuildError("tail rebuild slice is empty")
+
+    entry_ids = [int(row["id"]) for row in rows]
+    facets_by_entry = load_facets_for_entries(conn, entry_ids)
+    entries = [entry_from_row(row, facets_by_entry[int(row["id"])]) for row in rows]
+    if entries[0]["entry_index"] != start_entry_index:
+        raise TailEpisodeRebuildError("tail rebuild slice does not start at the expected entry")
+    return entries
+
+
+def delete_episode_tail(conn: sqlite3.Connection, *, thread_id: str, start_episode_index: int) -> None:
+    rows = conn.execute(
+        """
+        select id
+        from episodes
+        where thread_id = ? and episode_index >= ?
+        order by episode_index
+        """,
+        (thread_id, start_episode_index),
+    ).fetchall()
+    if not rows:
+        raise TailEpisodeRebuildError("no stored tail episodes available for deletion")
+    episode_ids = [int(row["id"]) for row in rows]
+    placeholders = ",".join("?" for _ in episode_ids)
+    conn.execute(
+        f"delete from entry_episode_links where episode_id in ({placeholders})",
+        episode_ids,
+    )
+    conn.execute(
+        f"delete from episodes where id in ({placeholders})",
+        episode_ids,
+    )
+
+
+def rebuild_tail_thread_episodes(conn: sqlite3.Connection, *, thread_id: str) -> None:
+    seed = episode_tail_rebuild_seed(conn, thread_id=thread_id)
+    entries = entries_for_tail_rebuild(
+        conn,
+        thread_id=thread_id,
+        start_entry_index=seed["start_entry_index"],
+    )
+    delete_episode_tail(conn, thread_id=thread_id, start_episode_index=seed["start_episode_index"])
+    episodes = build_episode_records(
+        entries,
+        starting_episode_index=seed["start_episode_index"],
+        initial_boundary_reason=seed["boundary_reason"],
+    )
+    insert_episode_records(conn, thread_id=thread_id, episodes=episodes)
+
 
 def upsert_rollout_index(
     conn: sqlite3.Connection,
@@ -1794,7 +1926,10 @@ def append_index(
     rebuild_reason: str,
 ) -> None:
     insert_entries(conn, thread_id=thread["id"], entries=new_entries)
-    rebuild_thread_episodes(conn, thread_id=thread["id"])
+    try:
+        rebuild_tail_thread_episodes(conn, thread_id=thread["id"])
+    except TailEpisodeRebuildError:
+        rebuild_thread_episodes(conn, thread_id=thread["id"])
     upsert_rollout_index(
         conn,
         thread=thread,
