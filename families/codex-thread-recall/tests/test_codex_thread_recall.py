@@ -444,6 +444,230 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertEqual(third["index"]["appended_entries"], 1)
         self.assertIn(12, third["recall"]["pr_numbers"])
 
+    def test_episode_tail_rebuild_seed_uses_first_episode_when_only_one_episode_exists(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Implement `artifact-alpha`."}),
+            make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Decision: keep `artifact-alpha` active."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.status()
+                conn = thread_recall.connect_cache(codex_home)
+                try:
+                    seed = thread_recall.episode_tail_rebuild_seed(conn, thread_id=THREAD_ID)
+                finally:
+                    conn.close()
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(seed["start_episode_index"], 1)
+        self.assertEqual(seed["start_entry_index"], 1)
+        self.assertEqual(seed["boundary_reason"], "thread-start")
+
+    def test_episode_tail_rebuild_seed_uses_last_two_episodes_when_available(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Ship `artifact-alpha`."}),
+            make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-alpha` in `example/toolbelt`."}),
+            make_entry("2026-04-25T08:02:00Z", "event_msg", {"type": "user_message", "text": "Implement `artifact-beta`."}),
+            make_entry("2026-04-25T08:03:00Z", "event_msg", {"type": "agent_message", "text": "Decision: keep `artifact-beta` active."}),
+            make_entry("2026-04-25T08:04:00Z", "event_msg", {"type": "user_message", "text": "Implement `artifact-gamma`."}),
+            make_entry("2026-04-25T08:05:00Z", "event_msg", {"type": "agent_message", "text": "Decision: keep `artifact-gamma` active."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.status()
+                conn = thread_recall.connect_cache(codex_home)
+                try:
+                    seed = thread_recall.episode_tail_rebuild_seed(conn, thread_id=THREAD_ID)
+                finally:
+                    conn.close()
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(seed["start_episode_index"], 2)
+        self.assertEqual(seed["start_entry_index"], 3)
+        self.assertEqual(seed["boundary_reason"], "post-ship-user-request")
+
+    def test_append_growth_uses_tail_rebuild_instead_of_full_episode_rebuild(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Ship `artifact-alpha`."}),
+            make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-alpha` in `example/toolbelt`."}),
+            make_entry("2026-04-25T08:02:00Z", "event_msg", {"type": "user_message", "text": "Implement `artifact-beta`."}),
+            make_entry("2026-04-25T08:03:00Z", "event_msg", {"type": "agent_message", "text": "Decision: keep `artifact-beta` active."}),
+            make_entry("2026-04-25T08:04:00Z", "event_msg", {"type": "user_message", "text": "Implement `artifact-gamma`."}),
+            make_entry("2026-04-25T08:05:00Z", "event_msg", {"type": "agent_message", "text": "Decision: keep `artifact-gamma` active."}),
+        ]
+        appended_entry = make_entry(
+            "2026-04-25T08:06:00Z",
+            "event_msg",
+            {"type": "agent_message", "text": "Validated `artifact-gamma` after wiring the release."},
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, rollout_path = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                first = thread_recall.status()
+                original_full_rebuild = thread_recall.rebuild_thread_episodes
+                try:
+                    thread_recall.rebuild_thread_episodes = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                        AssertionError("append growth should not use full episode rebuild")
+                    )
+                    with rollout_path.open("a", encoding="utf-8") as handle:
+                        handle.write(json.dumps(appended_entry, ensure_ascii=False) + "\n")
+                    second = thread_recall.status()
+                finally:
+                    thread_recall.rebuild_thread_episodes = original_full_rebuild
+
+        self.assertTrue(first["ok"])
+        self.assertTrue(second["ok"])
+        self.assertEqual(second["episodes"]["total"], 3)
+        self.assertEqual(second["episodes"]["current"]["dominant_entities"], ["artifact-gamma"])
+
+    def test_append_growth_falls_back_to_full_rebuild_when_tail_rebuild_fails(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Ship `artifact-alpha`."}),
+            make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-alpha` in `example/toolbelt`."}),
+            make_entry("2026-04-25T08:02:00Z", "event_msg", {"type": "user_message", "text": "Implement `artifact-beta`."}),
+            make_entry("2026-04-25T08:03:00Z", "event_msg", {"type": "agent_message", "text": "Decision: keep `artifact-beta` active."}),
+            make_entry("2026-04-25T08:04:00Z", "event_msg", {"type": "user_message", "text": "Implement `artifact-gamma`."}),
+            make_entry("2026-04-25T08:05:00Z", "event_msg", {"type": "agent_message", "text": "Decision: keep `artifact-gamma` active."}),
+        ]
+        appended_entry = make_entry(
+            "2026-04-25T08:06:00Z",
+            "event_msg",
+            {"type": "agent_message", "text": "Validated `artifact-gamma` after wiring the release."},
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, rollout_path = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                first = thread_recall.status()
+                original_tail_rebuild = thread_recall.rebuild_tail_thread_episodes
+                original_full_rebuild = thread_recall.rebuild_thread_episodes
+                full_rebuild_called = {"value": False}
+
+                def wrapped_full_rebuild(*args, **kwargs):
+                    full_rebuild_called["value"] = True
+                    return original_full_rebuild(*args, **kwargs)
+
+                def failing_tail_rebuild(*_args, **_kwargs):
+                    raise thread_recall.TailEpisodeRebuildError("boom")
+
+                try:
+                    thread_recall.rebuild_tail_thread_episodes = failing_tail_rebuild
+                    thread_recall.rebuild_thread_episodes = wrapped_full_rebuild
+                    with rollout_path.open("a", encoding="utf-8") as handle:
+                        handle.write(json.dumps(appended_entry, ensure_ascii=False) + "\n")
+                    second = thread_recall.status()
+                finally:
+                    thread_recall.rebuild_tail_thread_episodes = original_tail_rebuild
+                    thread_recall.rebuild_thread_episodes = original_full_rebuild
+
+        self.assertTrue(first["ok"])
+        self.assertTrue(second["ok"])
+        self.assertTrue(full_rebuild_called["value"])
+        self.assertEqual(second["episodes"]["current"]["dominant_entities"], ["artifact-gamma"])
+
+    def test_append_growth_rebuilds_single_episode_from_episode_one_checkpoint(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Implement `artifact-alpha`."}),
+            make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Decision: keep `artifact-alpha` active."}),
+        ]
+        appended_entry = make_entry(
+            "2026-04-25T08:02:00Z",
+            "event_msg",
+            {"type": "agent_message", "text": "Validated `artifact-alpha` after wiring the release."},
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, rollout_path = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                first = thread_recall.status()
+                original_full_rebuild = thread_recall.rebuild_thread_episodes
+                try:
+                    thread_recall.rebuild_thread_episodes = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                        AssertionError("single-episode append should rebuild from episode one without full rebuild")
+                    )
+                    with rollout_path.open("a", encoding="utf-8") as handle:
+                        handle.write(json.dumps(appended_entry, ensure_ascii=False) + "\n")
+                    second = thread_recall.status()
+                finally:
+                    thread_recall.rebuild_thread_episodes = original_full_rebuild
+
+        self.assertTrue(first["ok"])
+        self.assertTrue(second["ok"])
+        self.assertEqual(second["episodes"]["total"], 1)
+        self.assertEqual(second["episodes"]["current"]["dominant_entities"], ["artifact-alpha"])
+
+    def test_append_growth_starts_new_episode_for_disjoint_user_goal(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Ship `artifact-alpha`."}),
+            make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-alpha` in `example/toolbelt`."}),
+        ]
+        appended_entries = [
+            make_entry("2026-04-25T08:02:00Z", "event_msg", {"type": "user_message", "text": "Implement `artifact-beta`."}),
+            make_entry("2026-04-25T08:03:00Z", "event_msg", {"type": "agent_message", "text": "Decision: keep `artifact-beta` active."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, rollout_path = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                first = thread_recall.status()
+                with rollout_path.open("a", encoding="utf-8") as handle:
+                    for entry in appended_entries:
+                        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                second = thread_recall.status()
+
+        self.assertTrue(first["ok"])
+        self.assertTrue(second["ok"])
+        self.assertEqual(second["episodes"]["total"], 2)
+        self.assertEqual(second["episodes"]["last_boundary_reason"], "post-ship-user-request")
+        self.assertEqual(second["episodes"]["current"]["dominant_entities"], ["artifact-beta"])
+
+    def test_append_growth_rebuilds_cleanly_when_tail_episode_checkpoint_is_corrupt(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Ship `artifact-alpha`."}),
+            make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-alpha` in `example/toolbelt`."}),
+            make_entry("2026-04-25T08:02:00Z", "event_msg", {"type": "user_message", "text": "Implement `artifact-beta`."}),
+            make_entry("2026-04-25T08:03:00Z", "event_msg", {"type": "agent_message", "text": "Decision: keep `artifact-beta` active."}),
+            make_entry("2026-04-25T08:04:00Z", "event_msg", {"type": "user_message", "text": "Implement `artifact-gamma`."}),
+            make_entry("2026-04-25T08:05:00Z", "event_msg", {"type": "agent_message", "text": "Decision: keep `artifact-gamma` active."}),
+        ]
+        appended_entry = make_entry(
+            "2026-04-25T08:06:00Z",
+            "event_msg",
+            {"type": "agent_message", "text": "Validated `artifact-gamma` after wiring the release."},
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, rollout_path = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                first = thread_recall.status()
+                cache_db = codex_home / "cache" / "codex-thread-recall" / "index.sqlite"
+                conn = sqlite3.connect(cache_db)
+                try:
+                    conn.execute(
+                        "update episodes set started_entry_index = 999 where thread_id = ? and episode_index = 3",
+                        (THREAD_ID,),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+                with rollout_path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(appended_entry, ensure_ascii=False) + "\n")
+                second = thread_recall.status()
+                conn = sqlite3.connect(cache_db)
+                try:
+                    repaired_starts = [
+                        row[0]
+                        for row in conn.execute(
+                            "select started_entry_index from episodes where thread_id = ? order by episode_index",
+                            (THREAD_ID,),
+                        ).fetchall()
+                    ]
+                finally:
+                    conn.close()
+
+        self.assertTrue(first["ok"])
+        self.assertTrue(second["ok"])
+        self.assertEqual(second["episodes"]["current"]["dominant_entities"], ["artifact-gamma"])
+        self.assertTrue(all(value < 999 for value in repaired_starts))
+
     def test_rollout_truncation_forces_full_rebuild(self):
         entries = [
             make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Start thread recall."}),
