@@ -253,6 +253,27 @@ def elapsed_seconds(start: str | None, end: str | None) -> int | None:
     return int((end_dt - start_dt).total_seconds())
 
 
+def format_duration_human(seconds: int | None) -> str | None:
+    if seconds is None:
+        return None
+    if seconds <= 0:
+        return "0s"
+    remaining = int(seconds)
+    days, remaining = divmod(remaining, 86400)
+    hours, remaining = divmod(remaining, 3600)
+    minutes, secs = divmod(remaining, 60)
+    parts: list[str] = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if secs and not parts:
+        parts.append(f"{secs}s")
+    return " ".join(parts[:2]) or "0s"
+
+
 def pid_is_running(pid: int) -> bool:
     if pid <= 0:
         return False
@@ -427,6 +448,86 @@ def resolve_thread(
             thread=thread,
         )
     return thread, warnings, None
+
+
+def thread_source_item(thread: dict[str, Any], *, reason: str | None = None) -> dict[str, Any]:
+    payload = {
+        "thread_id": thread["id"],
+        "thread_title": thread["title"],
+        "thread_cwd": thread["cwd"],
+        "updated_at": thread["updated_at_iso"],
+    }
+    if reason is not None:
+        payload["reason"] = reason
+    return payload
+
+
+def resolve_thread_set(
+    thread_id: str | None = None,
+    codex_home: str | Path | None = None,
+    *,
+    thread_source: str = "current",
+    max_threads: int = 10,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]] | None, list[str], dict[str, Any] | None, dict[str, Any] | None]:
+    current_thread, warnings, error = resolve_thread(thread_id=thread_id, codex_home=codex_home)
+    if error is not None:
+        return None, None, warnings, error, None
+
+    max_threads = max(1, int(max_threads))
+    if thread_source == "current":
+        payload = {
+            "requested": thread_source,
+            "applied": "current",
+            "workspace_cwd": current_thread["cwd"],
+            "included_threads": [thread_source_item(current_thread)],
+            "skipped_threads": [],
+            "max_threads": max_threads,
+        }
+        return current_thread, [current_thread], warnings, None, payload
+
+    workspace_cwd = current_thread["cwd"]
+    if not workspace_cwd:
+        return None, None, warnings, failure(
+            "workspace_unavailable",
+            "Workspace thread expansion requires the current thread to have a recorded cwd.",
+        ), None
+
+    home = default_codex_home(codex_home)
+    conn = sqlite3.connect(state_db_path(home))
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "select id, title, cwd, rollout_path, created_at, updated_at from threads order by updated_at desc"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    included_threads: list[dict[str, Any]] = [current_thread]
+    skipped_threads: list[dict[str, Any]] = []
+    for row in rows:
+        candidate = thread_metadata_from_row(row)
+        if candidate["id"] == current_thread["id"]:
+            continue
+        if candidate["cwd"] != workspace_cwd:
+            continue
+        rollout_path = Path(candidate["rollout_path"])
+        if not rollout_path.is_file():
+            skipped_threads.append(thread_source_item(candidate, reason="rollout_missing"))
+            continue
+        if len(included_threads) >= max_threads:
+            skipped_threads.append(thread_source_item(candidate, reason="max_threads"))
+            continue
+        included_threads.append(candidate)
+
+    payload = {
+        "requested": thread_source,
+        "applied": "workspace",
+        "workspace_cwd": workspace_cwd,
+        "included_threads": [thread_source_item(item) for item in included_threads],
+        "skipped_threads": skipped_threads,
+        "max_threads": max_threads,
+    }
+    return current_thread, included_threads, warnings, None, payload
 
 
 def parse_json_maybe(value: Any) -> Any:
@@ -1490,7 +1591,7 @@ def insert_entries(
 def all_entries_for_thread(conn: sqlite3.Connection, thread_id: str) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
-        select id, entry_index, rollout_line, timestamp, entry_type, payload_type, role, content_class,
+        select id, thread_id, entry_index, rollout_line, timestamp, entry_type, payload_type, role, content_class,
                command, raw_text, search_text, excerpt, is_noise, noise_reason
         from entries
         where thread_id = ?
@@ -1772,7 +1873,7 @@ def entries_for_tail_rebuild(
 ) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
-        select id, entry_index, rollout_line, timestamp, entry_type, payload_type, role, content_class,
+        select id, thread_id, entry_index, rollout_line, timestamp, entry_type, payload_type, role, content_class,
                command, raw_text, search_text, excerpt, is_noise, noise_reason
         from entries
         where thread_id = ? and entry_index >= ?
@@ -2177,6 +2278,7 @@ def load_facets_for_entries(conn: sqlite3.Connection, entry_ids: list[int]) -> d
 def entry_from_row(row: sqlite3.Row, facets: dict[str, list[Any]]) -> dict[str, Any]:
     return {
         "id": int(row["id"]),
+        "thread_id": row["thread_id"],
         "entry_index": int(row["entry_index"]),
         "rollout_line": int(row["rollout_line"]),
         "timestamp": row["timestamp"],
@@ -2200,7 +2302,7 @@ def fetch_entry_rows_by_ids(conn: sqlite3.Connection, entry_ids: list[int]) -> l
     placeholders = ",".join("?" for _ in entry_ids)
     rows = conn.execute(
         f"""
-        select id, entry_index, rollout_line, timestamp, entry_type, payload_type, role, content_class,
+        select id, thread_id, entry_index, rollout_line, timestamp, entry_type, payload_type, role, content_class,
                command, raw_text, search_text, excerpt, is_noise, noise_reason
         from entries
         where id in ({placeholders})
@@ -2224,10 +2326,197 @@ def matched_facets(entry: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def thread_filter_sql(thread_ids: list[str], *, alias: str = "e") -> tuple[str, tuple[Any, ...]]:
+    placeholders = ", ".join("?" for _ in thread_ids)
+    return f"{alias}.thread_id in ({placeholders})", tuple(thread_ids)
+
+
+def search_order_sql(sort: str) -> str:
+    if sort == "time-desc":
+        return "coalesce(e.timestamp, '') desc, e.entry_index desc, facet_score desc"
+    if sort == "time-asc":
+        return "coalesce(e.timestamp, ''), e.entry_index, facet_score desc"
+    return "facet_score desc, coalesce(e.timestamp, ''), e.entry_index"
+
+
+def substantive_match_sql(*, alias: str = "e") -> str:
+    ship_literals = ", ".join(f"'{value}'" for value in sorted(SHIP_EVENT_KINDS))
+    return f"""
+        {alias}.role in ('assistant', 'user')
+        and {alias}.content_class = 'work'
+        and {alias}.is_noise = 0
+        and (
+            exists (select 1 from entry_goals g where g.entry_id = {alias}.id)
+            or exists (select 1 from entry_decisions d where d.entry_id = {alias}.id)
+            or exists (select 1 from entry_facts f where f.entry_id = {alias}.id)
+            or exists (select 1 from entry_blockers b where b.entry_id = {alias}.id)
+            or exists (select 1 from entry_questions q where q.entry_id = {alias}.id)
+            or exists (select 1 from entry_entities en where en.entry_id = {alias}.id)
+            or exists (select 1 from entry_paths p where p.entry_id = {alias}.id)
+            or exists (
+                select 1 from entry_event_kinds ek
+                where ek.entry_id = {alias}.id and ek.event_kind in ({ship_literals})
+            )
+        )
+    """
+
+
+def build_search_where(
+    *,
+    thread_ids: list[str],
+    search_column: str,
+    patterns: list[str],
+    scope_info: dict[str, Any],
+    role: str | None = None,
+    entry_type: str | None = None,
+    payload_type: str | None = None,
+    after: str | None = None,
+    before: str | None = None,
+    substantive_only: bool = False,
+) -> tuple[list[str], list[Any]]:
+    thread_sql, thread_params = thread_filter_sql(thread_ids, alias="e")
+    where_clauses = [thread_sql]
+    params: list[Any] = list(thread_params)
+    scoped_sql, scoped_params = scope_clause(scope_info, alias="e")
+    if scoped_sql:
+        where_clauses.append(scoped_sql.strip().removeprefix("and ").strip())
+        params.extend(scoped_params)
+    if role:
+        where_clauses.append("e.role = ?")
+        params.append(role)
+    if entry_type:
+        where_clauses.append("e.entry_type = ?")
+        params.append(entry_type)
+    if payload_type:
+        where_clauses.append("e.payload_type = ?")
+        params.append(payload_type)
+    if after:
+        where_clauses.append("(e.timestamp is null or e.timestamp >= ?)")
+        params.append(after)
+    if before:
+        where_clauses.append("(e.timestamp is null or e.timestamp <= ?)")
+        params.append(before)
+    if substantive_only:
+        where_clauses.append(substantive_match_sql(alias="e"))
+    if patterns:
+        where_clauses.append(
+            "(" + " or ".join(f"instr(lower(coalesce(e.{search_column}, '')), lower(?)) > 0" for _ in patterns) + ")"
+        )
+        params.extend(patterns)
+    return where_clauses, params
+
+
+def search_candidate_rows(
+    conn: sqlite3.Connection,
+    *,
+    thread_ids: list[str],
+    search_column: str,
+    patterns: list[str],
+    scope_info: dict[str, Any],
+    role: str | None = None,
+    entry_type: str | None = None,
+    payload_type: str | None = None,
+    after: str | None = None,
+    before: str | None = None,
+    substantive_only: bool = False,
+    sort: str = "relevance",
+) -> list[sqlite3.Row]:
+    where_clauses, params = build_search_where(
+        thread_ids=thread_ids,
+        search_column=search_column,
+        patterns=patterns,
+        scope_info=scope_info,
+        role=role,
+        entry_type=entry_type,
+        payload_type=payload_type,
+        after=after,
+        before=before,
+        substantive_only=substantive_only,
+    )
+    order_sql = search_order_sql(sort)
+    return conn.execute(
+        f"""
+        select e.id, e.thread_id, e.entry_index, e.rollout_line, e.timestamp, e.entry_type, e.payload_type, e.role,
+               ((select count(*) from entry_entities en where en.entry_id = e.id)
+                + (select count(*) from entry_repos rp where rp.entry_id = e.id)
+                + (select count(*) from entry_pr_numbers pn where pn.entry_id = e.id)
+                + (select count(*) from entry_commit_oids co where co.entry_id = e.id)
+                + (select count(*) from entry_qualified_ids qi where qi.entry_id = e.id)
+                + (select count(*) from entry_event_kinds ek where ek.entry_id = e.id)) as facet_score
+        from entries e
+        where {' and '.join(where_clauses)}
+        order by {order_sql}
+        """,
+        params,
+    ).fetchall()
+
+
+def collapse_candidate_rank(entry: dict[str, Any]) -> int | None:
+    payload_type = entry["payload_type"]
+    if payload_type in {"user_message", "agent_message"} and entry["role"] in {"assistant", "user"}:
+        return 0
+    if entry["entry_type"] == "response_item" and payload_type == "message" and entry["role"] in {"assistant", "user"}:
+        return 1
+    if payload_type == "task_complete":
+        return 2
+    if entry["content_class"] == "command_output":
+        return 3
+    return None
+
+
+def collapse_entry_text(entry: dict[str, Any]) -> str:
+    return " ".join(
+        (
+            entry.get("search_text")
+            or entry.get("raw_text")
+            or entry.get("excerpt")
+            or ""
+        ).split()
+    )
+
+
+def collapse_time_key(timestamp: str | None) -> str:
+    parsed = parse_iso_timestamp(timestamp)
+    if parsed is None:
+        return ""
+    return parsed.replace(microsecond=0).isoformat()
+
+
+def collapse_mirror_entries(entries: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    passthrough: list[dict[str, Any]] = []
+    for entry in entries:
+        rank = collapse_candidate_rank(entry)
+        text_key = collapse_entry_text(entry)
+        if rank is None or not text_key:
+            passthrough.append(entry)
+            continue
+        key = (entry["thread_id"], collapse_time_key(entry["timestamp"]), text_key)
+        grouped[key].append(entry)
+
+    collapsed: list[dict[str, Any]] = []
+    collapsed_count = 0
+    for group_entries in grouped.values():
+        if len(group_entries) == 1:
+            collapsed.append(group_entries[0])
+            continue
+        group_entries.sort(
+            key=lambda item: (
+                collapse_candidate_rank(item),
+                item["entry_index"],
+            )
+        )
+        collapsed.append(group_entries[0])
+        collapsed_count += len(group_entries) - 1
+    collapsed.extend(passthrough)
+    collapsed.sort(key=lambda item: (item["timestamp"] or "", item["entry_index"]))
+    return collapsed, collapsed_count
+
+
 def recent_distinct_values(
     conn: sqlite3.Connection,
     *,
-    thread_id: str,
+    thread_ids: list[str],
     facet_name: str,
     limit: int,
     scope_info: dict[str, Any] | None = None,
@@ -2236,51 +2525,55 @@ def recent_distinct_values(
 ) -> list[Any]:
     table_name, column_name = FACET_TABLES[facet_name]
     scoped_sql, scoped_params = scope_clause(scope_info or {"applied": "thread"}, alias="e")
+    thread_sql, thread_params = thread_filter_sql(thread_ids, alias="e")
     rows = conn.execute(
         f"""
-        select f.{column_name} as value, max(e.entry_index) as latest_index
+        select f.{column_name} as value, max(coalesce(e.timestamp, '')) as latest_timestamp, max(e.entry_index) as latest_index
         from {table_name} f
         join entries e on e.id = f.entry_id
-        where e.thread_id = ? {scoped_sql} {extra_where}
+        where {thread_sql} {scoped_sql} {extra_where}
         group by f.{column_name}
-        order by latest_index desc
+        order by latest_timestamp desc, latest_index desc
         limit ?
         """,
-        (thread_id, *scoped_params, *params, limit),
+        (*thread_params, *scoped_params, *params, limit),
     ).fetchall()
     return [row["value"] for row in rows]
 
 
-def recent_commands(conn: sqlite3.Connection, *, thread_id: str, limit: int, scope_info: dict[str, Any]) -> list[str]:
+def recent_commands(conn: sqlite3.Connection, *, thread_ids: list[str], limit: int, scope_info: dict[str, Any]) -> list[str]:
     scoped_sql, scoped_params = scope_clause(scope_info, alias="entries")
+    thread_sql, thread_params = thread_filter_sql(thread_ids, alias="entries")
     rows = conn.execute(
         """
         select command
         from entries
-        where thread_id = ? {scoped_sql} and command is not null and command != ''
-        order by entry_index desc
+        where {thread_sql} {scoped_sql} and command is not null and command != ''
+        order by coalesce(timestamp, '') desc, entry_index desc
         limit 250
-        """.format(scoped_sql=scoped_sql),
-        (thread_id, *scoped_params),
+        """.format(thread_sql=thread_sql, scoped_sql=scoped_sql),
+        (*thread_params, *scoped_params),
     ).fetchall()
     return unique_recent([row["command"] for row in rows], limit=limit)
 
 
-def aggregate_counts(conn: sqlite3.Connection, *, thread_id: str, scope_info: dict[str, Any]) -> tuple[dict[str, int], dict[str, int]]:
+def aggregate_counts(conn: sqlite3.Connection, *, thread_ids: list[str], scope_info: dict[str, Any]) -> tuple[dict[str, int], dict[str, int]]:
     scoped_sql, scoped_params = scope_clause(scope_info, alias="entries")
+    thread_sql, thread_params = thread_filter_sql(thread_ids, alias="entries")
     entry_counts = {
         row["entry_type"]: int(row["count"])
         for row in conn.execute(
             """
             select entry_type, count(*) as count
             from entries
-            where thread_id = ? {scoped_sql}
+            where {thread_sql} {scoped_sql}
             group by entry_type
-            """.format(scoped_sql=scoped_sql),
-            (thread_id, *scoped_params),
+            """.format(thread_sql=thread_sql, scoped_sql=scoped_sql),
+            (*thread_params, *scoped_params),
         ).fetchall()
     }
     scoped_event_sql, scoped_event_params = scope_clause(scope_info, alias="e")
+    event_thread_sql, event_thread_params = thread_filter_sql(thread_ids, alias="e")
     event_counts = {
         row["event_kind"]: int(row["count"])
         for row in conn.execute(
@@ -2288,10 +2581,10 @@ def aggregate_counts(conn: sqlite3.Connection, *, thread_id: str, scope_info: di
             select ek.event_kind, count(*) as count
             from entry_event_kinds ek
             join entries e on e.id = ek.entry_id
-            where e.thread_id = ? {scoped_sql}
+            where {thread_sql} {scoped_sql}
             group by ek.event_kind
-            """.format(scoped_sql=scoped_event_sql),
-            (thread_id, *scoped_event_params),
+            """.format(thread_sql=event_thread_sql, scoped_sql=scoped_event_sql),
+            (*event_thread_params, *scoped_event_params),
         ).fetchall()
     }
     return entry_counts, event_counts
@@ -2328,13 +2621,14 @@ def ranked_entity_sort_key(item: dict[str, Any]) -> tuple[Any, ...]:
 def ranked_entity_rows(
     conn: sqlite3.Connection,
     *,
-    thread_id: str,
+    thread_ids: list[str],
     scope_info: dict[str, Any],
     include_meta: bool = False,
     kind_filter: set[str] | None = None,
     prefer_collaborative: bool = False,
 ) -> list[dict[str, Any]]:
     scoped_sql, scoped_params = scope_clause(scope_info, alias="e")
+    thread_sql, thread_params = thread_filter_sql(thread_ids, alias="e")
     eligibility_sql = "m.is_work_eligible = 1"
     if include_meta:
         eligibility_sql = f"({eligibility_sql} or e.content_class = 'meta')"
@@ -2373,12 +2667,12 @@ def ranked_entity_rows(
             min(e.timestamp) as first_eligible_timestamp
         from entry_entity_mentions m
         join entries e on e.id = m.entry_id
-        where e.thread_id = ?
+        where {thread_sql}
           {scoped_sql}
           and {eligibility_sql}
         group by m.entity
         """,
-        (thread_id, *scoped_params),
+        (*thread_params, *scoped_params),
     ).fetchall()
     ranked_rows: list[dict[str, Any]] = []
     for row in rows:
@@ -2411,7 +2705,7 @@ def ranked_entity_rows(
 def ranked_entity_names(
     conn: sqlite3.Connection,
     *,
-    thread_id: str,
+    thread_ids: list[str],
     scope_info: dict[str, Any],
     limit: int,
     include_meta: bool = False,
@@ -2420,7 +2714,7 @@ def ranked_entity_names(
 ) -> list[str]:
     rows = ranked_entity_rows(
         conn,
-        thread_id=thread_id,
+        thread_ids=thread_ids,
         scope_info=scope_info,
         include_meta=include_meta,
         kind_filter=kind_filter,
@@ -2537,7 +2831,7 @@ def episode_payload(
         "substantive_entry_count": int(row["substantive_entry_count"]),
         "dominant_entities": ranked_entity_names(
             conn,
-            thread_id=row["thread_id"],
+            thread_ids=[row["thread_id"]],
             scope_info=episode_scope,
             limit=5,
             prefer_collaborative=True,
@@ -2610,7 +2904,7 @@ def current_episode_selection(conn: sqlite3.Connection, *, thread_id: str) -> tu
             continue
         dominant_entities = ranked_entity_names(
             conn,
-            thread_id=row["thread_id"],
+            thread_ids=[row["thread_id"]],
             scope_info=scope_info_for_episode_row(row),
             limit=1,
             prefer_collaborative=True,
@@ -2722,7 +3016,166 @@ def scope_payload(scope_info: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def evidence_entry_ids(conn: sqlite3.Connection, *, thread_id: str, profile: str, limit: int, scope_info: dict[str, Any]) -> list[int]:
+def thread_map_from_threads(threads: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {thread["id"]: thread for thread in threads}
+
+
+def apply_thread_context(payload: dict[str, Any], *, thread_id: str, thread_map: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    thread = thread_map.get(thread_id)
+    if thread is None:
+        payload["thread_id"] = thread_id
+        return payload
+    payload.update(
+        {
+            "thread_id": thread["id"],
+            "thread_title": thread["title"],
+            "thread_cwd": thread["cwd"],
+        }
+    )
+    return payload
+
+
+def ensure_index_for_threads(
+    conn: sqlite3.Connection,
+    *,
+    threads: list[dict[str, Any]],
+    codex_home: Path,
+) -> tuple[dict[str, Any], list[str]]:
+    index_meta: dict[str, Any] | None = None
+    warnings: list[str] = []
+    for position, thread in enumerate(threads):
+        item_meta, item_warnings = ensure_index(conn, thread=thread, codex_home=codex_home)
+        warnings.extend(item_warnings)
+        if position == 0:
+            index_meta = item_meta
+    return index_meta or {}, warnings
+
+
+def resolve_query_scope(
+    conn: sqlite3.Connection,
+    *,
+    thread: dict[str, Any],
+    requested_scope: str,
+    episode_id: str | None,
+    thread_source: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None]:
+    if thread_source != "workspace":
+        return resolve_scope(
+            conn,
+            thread_id=thread["id"],
+            requested_scope=requested_scope,
+            episode_id=episode_id,
+        )
+    if requested_scope == "episode" or episode_id:
+        return None, None, failure(
+            "scope_unavailable",
+            "Episode scope is unavailable when using workspace thread expansion.",
+        )
+    reason = "workspace-thread-set"
+    if requested_scope == "current":
+        reason = "workspace-thread-source-coerces-current-to-thread"
+    return {
+        "requested": requested_scope,
+        "applied": "thread",
+        "reason": reason,
+        "episode_row": None,
+        "episodes_total": None,
+        "current_episode": None,
+    }, None, None
+
+
+def search_entry_sort_in_place(entries: list[dict[str, Any]], *, sort: str) -> None:
+    if sort == "time-desc":
+        entries.sort(
+            key=lambda item: (
+                item["timestamp"] or "",
+                int(item["entry_index"]),
+                int(item.get("_facet_score", 0)),
+            ),
+            reverse=True,
+        )
+        return
+    if sort == "time-asc":
+        entries.sort(
+            key=lambda item: (
+                item["timestamp"] or "",
+                int(item["entry_index"]),
+                -int(item.get("_facet_score", 0)),
+            )
+        )
+        return
+    entries.sort(
+        key=lambda item: (
+            -int(item.get("_facet_score", 0)),
+            item["timestamp"] or "",
+            int(item["entry_index"]),
+        )
+    )
+
+
+def search_entry_payload(
+    entry: dict[str, Any],
+    *,
+    include_noise: bool,
+    thread_map: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    haystack = entry["raw_text"] if include_noise else entry["search_text"]
+    payload = {
+        "entry_index": entry["entry_index"],
+        "rollout_line": entry["rollout_line"],
+        "timestamp": entry["timestamp"],
+        "entry_type": entry["entry_type"],
+        "payload_type": entry["payload_type"],
+        "role": entry["role"],
+        "excerpt": summarize_text(haystack),
+        "matched_facets": matched_facets(entry),
+    }
+    return apply_thread_context(payload, thread_id=entry["thread_id"], thread_map=thread_map)
+
+
+def logical_search_entries(
+    conn: sqlite3.Connection,
+    *,
+    thread_ids: list[str],
+    thread_map: dict[str, dict[str, Any]],
+    search_column: str,
+    patterns: list[str],
+    scope_info: dict[str, Any],
+    role: str | None = None,
+    entry_type: str | None = None,
+    payload_type: str | None = None,
+    after: str | None = None,
+    before: str | None = None,
+    substantive_only: bool = False,
+    sort: str = "relevance",
+) -> tuple[list[dict[str, Any]], int]:
+    rows = search_candidate_rows(
+        conn,
+        thread_ids=thread_ids,
+        search_column=search_column,
+        patterns=patterns,
+        scope_info=scope_info,
+        role=role,
+        entry_type=entry_type,
+        payload_type=payload_type,
+        after=after,
+        before=before,
+        substantive_only=substantive_only,
+        sort=sort,
+    )
+    entry_ids = [int(row["id"]) for row in rows]
+    entries = {entry["id"]: entry for entry in fetch_entry_rows_by_ids(conn, entry_ids)}
+    logical_entries: list[dict[str, Any]] = []
+    for row in rows:
+        entry = dict(entries[int(row["id"])])
+        entry["_facet_score"] = int(row["facet_score"] or 0)
+        logical_entries.append(entry)
+    collapsed_entries, collapsed_count = collapse_mirror_entries(logical_entries)
+    search_entry_sort_in_place(collapsed_entries, sort=sort)
+    return collapsed_entries, collapsed_count
+
+
+def evidence_entry_ids(conn: sqlite3.Connection, *, thread_ids: list[str], profile: str, limit: int, scope_info: dict[str, Any]) -> list[int]:
     if profile == "shipping":
         where_sql = """
             e.entry_type = 'compacted'
@@ -2744,16 +3197,17 @@ def evidence_entry_ids(conn: sqlite3.Connection, *, thread_id: str, profile: str
         where_sql = "e.entry_type = 'compacted' or (e.content_class = 'work' and e.search_text != '' and e.is_noise = 0)"
 
     scoped_sql, scoped_params = scope_clause(scope_info, alias="e")
+    thread_sql, thread_params = thread_filter_sql(thread_ids, alias="e")
 
     rows = conn.execute(
         f"""
         select e.id
         from entries e
-        where e.thread_id = ? and ({where_sql}) {scoped_sql}
-        order by e.entry_index asc
+        where {thread_sql} and ({where_sql}) {scoped_sql}
+        order by coalesce(e.timestamp, ''), e.entry_index
         limit ?
         """,
-        (thread_id, *scoped_params, limit),
+        (*thread_params, *scoped_params, limit),
     ).fetchall()
     return [int(row["id"]) for row in rows]
 
@@ -2761,28 +3215,33 @@ def evidence_entry_ids(conn: sqlite3.Connection, *, thread_id: str, profile: str
 def build_evidence(
     conn: sqlite3.Connection,
     *,
-    thread_id: str,
+    thread_ids: list[str],
+    thread_map: dict[str, dict[str, Any]],
     limit: int,
     profile: str,
     scope_info: dict[str, Any],
 ) -> list[dict[str, Any]]:
     entries = fetch_entry_rows_by_ids(
         conn,
-        evidence_entry_ids(conn, thread_id=thread_id, profile=profile, limit=limit, scope_info=scope_info),
+        evidence_entry_ids(conn, thread_ids=thread_ids, profile=profile, limit=limit, scope_info=scope_info),
     )
     evidence: list[dict[str, Any]] = []
     for entry in entries:
         evidence.append(
-            {
-                "entry_index": entry["entry_index"],
-                "rollout_line": entry["rollout_line"],
-                "timestamp": entry["timestamp"],
-                "entry_type": entry["entry_type"],
-                "payload_type": entry["payload_type"],
-                "role": entry["role"],
-                "excerpt": entry["excerpt"] or "Context compacted.",
-                "matched_facets": matched_facets(entry),
-            }
+            apply_thread_context(
+                {
+                    "entry_index": entry["entry_index"],
+                    "rollout_line": entry["rollout_line"],
+                    "timestamp": entry["timestamp"],
+                    "entry_type": entry["entry_type"],
+                    "payload_type": entry["payload_type"],
+                    "role": entry["role"],
+                    "excerpt": entry["excerpt"] or "Context compacted.",
+                    "matched_facets": matched_facets(entry),
+                },
+                thread_id=entry["thread_id"],
+                thread_map=thread_map,
+            )
         )
     return evidence
 
@@ -2835,15 +3294,16 @@ def build_debug_summary(recall: dict[str, Any]) -> str:
 def collect_general_recall(
     conn: sqlite3.Connection,
     *,
-    thread_id: str,
+    thread_ids: list[str],
+    thread_map: dict[str, dict[str, Any]],
     evidence_limit: int,
     profile: str,
     scope_info: dict[str, Any],
 ) -> dict[str, Any]:
-    commands = recent_commands(conn, thread_id=thread_id, limit=25, scope_info=scope_info)
+    commands = recent_commands(conn, thread_ids=thread_ids, limit=25, scope_info=scope_info)
     touched_paths = recent_distinct_values(
         conn,
-        thread_id=thread_id,
+        thread_ids=thread_ids,
         facet_name="paths",
         limit=25,
         scope_info=scope_info,
@@ -2851,14 +3311,14 @@ def collect_general_recall(
     )
     blockers = [
         item
-        for item in recent_distinct_values(conn, thread_id=thread_id, facet_name="blockers", limit=10, scope_info=scope_info)
+        for item in recent_distinct_values(conn, thread_ids=thread_ids, facet_name="blockers", limit=10, scope_info=scope_info)
         if is_human_scale_sentence(str(item))
     ]
     open_questions = [
         item
         for item in recent_distinct_values(
             conn,
-            thread_id=thread_id,
+            thread_ids=thread_ids,
             facet_name="questions",
             limit=10,
             scope_info=scope_info,
@@ -2870,7 +3330,7 @@ def collect_general_recall(
         item
         for item in recent_distinct_values(
             conn,
-            thread_id=thread_id,
+            thread_ids=thread_ids,
             facet_name="goals",
             limit=10,
             scope_info=scope_info,
@@ -2882,7 +3342,7 @@ def collect_general_recall(
         item
         for item in recent_distinct_values(
             conn,
-            thread_id=thread_id,
+            thread_ids=thread_ids,
             facet_name="decisions",
             limit=10,
             scope_info=scope_info,
@@ -2894,7 +3354,7 @@ def collect_general_recall(
         item
         for item in recent_distinct_values(
             conn,
-            thread_id=thread_id,
+            thread_ids=thread_ids,
             facet_name="facts",
             limit=10,
             scope_info=scope_info,
@@ -2902,8 +3362,15 @@ def collect_general_recall(
         )
         if is_human_scale_sentence(str(item))
     ]
-    entry_counts, event_counts = aggregate_counts(conn, thread_id=thread_id, scope_info=scope_info)
-    evidence = build_evidence(conn, thread_id=thread_id, limit=evidence_limit, profile=profile, scope_info=scope_info)
+    entry_counts, event_counts = aggregate_counts(conn, thread_ids=thread_ids, scope_info=scope_info)
+    evidence = build_evidence(
+        conn,
+        thread_ids=thread_ids,
+        thread_map=thread_map,
+        limit=evidence_limit,
+        profile=profile,
+        scope_info=scope_info,
+    )
     current_goal = goals[0] if goals else None
 
     return {
@@ -2926,7 +3393,8 @@ def collect_general_recall(
 def collect_shipping_recall(
     conn: sqlite3.Connection,
     *,
-    thread_id: str,
+    thread_ids: list[str],
+    thread_map: dict[str, dict[str, Any]],
     evidence_limit: int,
     scope_info: dict[str, Any],
 ) -> dict[str, Any]:
@@ -2934,31 +3402,32 @@ def collect_shipping_recall(
     ship_params: tuple[Any, ...] = tuple(sorted(SHIP_EVENT_KINDS))
     recall = collect_general_recall(
         conn,
-        thread_id=thread_id,
+        thread_ids=thread_ids,
+        thread_map=thread_map,
         evidence_limit=evidence_limit,
         profile="shipping",
         scope_info=scope_info,
     )
     shipped_entities = ranked_entity_names(
         conn,
-        thread_id=thread_id,
+        thread_ids=thread_ids,
         scope_info=scope_info,
         limit=15,
         kind_filter=SHIP_EVENT_KINDS,
         prefer_collaborative=True,
     )
     repos_touched = recent_distinct_values(
-        conn, thread_id=thread_id, facet_name="repos", limit=10, scope_info=scope_info, extra_where=ship_where, params=ship_params
+        conn, thread_ids=thread_ids, facet_name="repos", limit=10, scope_info=scope_info, extra_where=ship_where, params=ship_params
     )
     pr_numbers = recent_distinct_values(
-        conn, thread_id=thread_id, facet_name="pr_numbers", limit=15, scope_info=scope_info, extra_where=ship_where, params=ship_params
+        conn, thread_ids=thread_ids, facet_name="pr_numbers", limit=15, scope_info=scope_info, extra_where=ship_where, params=ship_params
     )
     commit_oids = recent_distinct_values(
-        conn, thread_id=thread_id, facet_name="commit_oids", limit=15, scope_info=scope_info, extra_where=ship_where, params=ship_params
+        conn, thread_ids=thread_ids, facet_name="commit_oids", limit=15, scope_info=scope_info, extra_where=ship_where, params=ship_params
     )
     installed_entities = ranked_entity_names(
         conn,
-        thread_id=thread_id,
+        thread_ids=thread_ids,
         scope_info=scope_info,
         limit=15,
         kind_filter={"installed"},
@@ -2966,7 +3435,7 @@ def collect_shipping_recall(
     )
     installed_identifiers = recent_distinct_values(
         conn,
-        thread_id=thread_id,
+        thread_ids=thread_ids,
         facet_name="qualified_ids",
         limit=15,
         scope_info=scope_info,
@@ -2974,18 +3443,19 @@ def collect_shipping_recall(
         params=("installed",),
     )
     scoped_sql, scoped_params = scope_clause(scope_info, alias="e")
+    thread_sql, thread_params = thread_filter_sql(thread_ids, alias="e")
     follow_up_rows = conn.execute(
         """
         select ff.fact
         from entry_facts ff
         join entries e on e.id = ff.entry_id
-        where e.thread_id = ? {scoped_sql}
+        where {thread_sql} {scoped_sql}
           and exists (select 1 from entry_event_kinds ek where ek.entry_id = e.id and ek.event_kind = 'merged')
           and (lower(ff.fact) like '%follow-up%' or lower(ff.fact) like '%fix%')
         order by e.entry_index desc
         limit 100
-        """.format(scoped_sql=scoped_sql),
-        (thread_id, *scoped_params),
+        """.format(thread_sql=thread_sql, scoped_sql=scoped_sql),
+        (*thread_params, *scoped_params),
     ).fetchall()
     follow_up_fixes = unique_recent(
         [
@@ -3013,25 +3483,27 @@ def collect_shipping_recall(
 def collect_debug_recall(
     conn: sqlite3.Connection,
     *,
-    thread_id: str,
+    thread_ids: list[str],
+    thread_map: dict[str, dict[str, Any]],
     evidence_limit: int,
     scope_info: dict[str, Any],
 ) -> dict[str, Any]:
     recall = collect_general_recall(
         conn,
-        thread_id=thread_id,
+        thread_ids=thread_ids,
+        thread_map=thread_map,
         evidence_limit=evidence_limit,
         profile="debug",
         scope_info=scope_info,
     )
     failure_events = [
         item
-        for item in recent_distinct_values(conn, thread_id=thread_id, facet_name="blockers", limit=15, scope_info=scope_info)
+        for item in recent_distinct_values(conn, thread_ids=thread_ids, facet_name="blockers", limit=15, scope_info=scope_info)
         if is_human_scale_sentence(str(item))
     ]
     retry_signals = [
         item
-        for item in recent_distinct_values(conn, thread_id=thread_id, facet_name="retry_signals", limit=15, scope_info=scope_info)
+        for item in recent_distinct_values(conn, thread_ids=thread_ids, facet_name="retry_signals", limit=15, scope_info=scope_info)
         if is_human_scale_sentence(str(item))
     ]
     recall.update({"failure_events": failure_events, "retry_signals": retry_signals})
@@ -3050,6 +3522,8 @@ def selected_event_kinds(kind: str) -> set[str]:
 def build_timeline_event(entry: dict[str, Any], kind: str) -> dict[str, Any]:
     return {
         "_entry_id": entry["id"],
+        "thread_id": entry["thread_id"],
+        "entry_index": entry["entry_index"],
         "timestamp": entry["timestamp"],
         "kind": kind,
         "entry_type": entry["entry_type"],
@@ -3085,7 +3559,7 @@ def ship_kinds_for_entry(entry: dict[str, Any]) -> list[str]:
 def timeline_entry_ids(
     conn: sqlite3.Connection,
     *,
-    thread_id: str,
+    thread_ids: list[str],
     kind: str,
     scope_info: dict[str, Any],
     include_meta: bool,
@@ -3100,6 +3574,7 @@ def timeline_entry_ids(
         where_sql = "and ek.event_kind = ?"
         params = (kind,)
     scoped_sql, scoped_params = scope_clause(scope_info, alias="e")
+    thread_sql, thread_params = thread_filter_sql(thread_ids, alias="e")
     class_sql = "" if include_meta else "and e.content_class in ('work', 'command_output')"
 
     rows = conn.execute(
@@ -3107,39 +3582,40 @@ def timeline_entry_ids(
         select distinct e.id, coalesce(e.timestamp, '') as sort_timestamp, e.entry_index
         from entries e
         join entry_event_kinds ek on ek.entry_id = e.id
-        where e.thread_id = ?
+        where {thread_sql}
           {scoped_sql}
           {class_sql}
           {where_sql}
         order by sort_timestamp, e.entry_index
         """,
-        (thread_id, *scoped_params, *params),
+        (*thread_params, *scoped_params, *params),
     ).fetchall()
     return [int(row["id"]) for row in rows]
 
 
-def first_seen_map(conn: sqlite3.Connection, *, thread_id: str, group: str, scope_info: dict[str, Any]) -> dict[str, str | None]:
+def first_seen_map(conn: sqlite3.Connection, *, thread_ids: list[str], group: str, scope_info: dict[str, Any]) -> dict[str, str | None]:
     if group == "entity":
         rows = ranked_entity_rows(
             conn,
-            thread_id=thread_id,
+            thread_ids=thread_ids,
             scope_info=scope_info,
         )
         return {row["entity"]: row["first_seen_at"] for row in rows}
     facet_name = "entities" if group == "entity" else "repos"
     table_name, column_name = FACET_TABLES[facet_name]
     scoped_sql, scoped_params = scope_clause(scope_info, alias="e")
+    thread_sql, thread_params = thread_filter_sql(thread_ids, alias="e")
     rows = conn.execute(
         f"""
         select f.{column_name} as group_key, e.timestamp
         from {table_name} f
         join entries e on e.id = f.entry_id
-        where e.thread_id = ?
+        where {thread_sql}
           {scoped_sql}
           and e.content_class in ('work', 'command_output')
-        order by e.entry_index
+        order by coalesce(e.timestamp, ''), e.entry_index
         """,
-        (thread_id, *scoped_params),
+        (*thread_params, *scoped_params),
     ).fetchall()
     output: dict[str, str | None] = {}
     for row in rows:
@@ -3216,44 +3692,59 @@ def recall(
     profile: str = "general",
     scope: str = "current",
     episode_id: str | None = None,
+    thread_source: str = "current",
+    max_threads: int = 10,
 ) -> dict[str, Any]:
-    thread, warnings, error = resolve_thread(thread_id=thread_id, codex_home=codex_home)
+    thread, threads, warnings, error, thread_source_payload = resolve_thread_set(
+        thread_id=thread_id,
+        codex_home=codex_home,
+        thread_source=thread_source,
+        max_threads=max_threads,
+    )
     if error is not None:
         return error
 
     home = default_codex_home(codex_home)
     conn = connect_cache(home)
     try:
-        index_meta, index_warnings = ensure_index(conn, thread=thread, codex_home=home)
+        index_meta, index_warnings = ensure_index_for_threads(conn, threads=threads or [], codex_home=home)
         warnings.extend(index_warnings)
-        scope_info, episode_payload_data, scope_error = resolve_scope(
+        scope_info, episode_payload_data, scope_error = resolve_query_scope(
             conn,
-            thread_id=thread["id"],
+            thread=thread,
             requested_scope=scope,
             episode_id=episode_id,
+            thread_source=thread_source,
         )
         if scope_error is not None:
             scope_error["thread"] = thread
+            if thread_source_payload is not None:
+                scope_error["thread_source"] = thread_source_payload
             return scope_error
 
+        thread_ids = [item["id"] for item in (threads or [thread])]
+        thread_map = thread_map_from_threads(threads or [thread])
         if profile == "shipping":
             recall_payload = collect_shipping_recall(
                 conn,
-                thread_id=thread["id"],
+                thread_ids=thread_ids,
+                thread_map=thread_map,
                 evidence_limit=evidence_limit,
                 scope_info=scope_info,
             )
         elif profile == "debug":
             recall_payload = collect_debug_recall(
                 conn,
-                thread_id=thread["id"],
+                thread_ids=thread_ids,
+                thread_map=thread_map,
                 evidence_limit=evidence_limit,
                 scope_info=scope_info,
             )
         else:
             recall_payload = collect_general_recall(
                 conn,
-                thread_id=thread["id"],
+                thread_ids=thread_ids,
+                thread_map=thread_map,
                 evidence_limit=evidence_limit,
                 profile="general",
                 scope_info=scope_info,
@@ -3266,6 +3757,7 @@ def recall(
             "index": index_meta,
             "scope": scope_payload(scope_info),
             "episode": episode_payload_data,
+            "thread_source": thread_source_payload,
             "recall": recall_payload,
         }
     except IndexBusyError as exc:
@@ -3275,9 +3767,69 @@ def recall(
             warnings=warnings,
             thread=thread,
             cache={"path": str(cache_db_path(home)), "lock_state": exc.lock_state},
+            thread_source=thread_source_payload,
         )
     finally:
         conn.close()
+
+
+def collapse_timeline_events(events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    passthrough: list[dict[str, Any]] = []
+    for event in events:
+        rank = collapse_candidate_rank(event)
+        text_key = collapse_entry_text(event)
+        if rank is None or not text_key:
+            passthrough.append(event)
+            continue
+        key = (
+            event["thread_id"],
+            event["kind"],
+            collapse_time_key(event["timestamp"]),
+            text_key,
+        )
+        grouped[key].append(event)
+
+    collapsed: list[dict[str, Any]] = []
+    collapsed_count = 0
+    for group_events in grouped.values():
+        if len(group_events) == 1:
+            collapsed.append(group_events[0])
+            continue
+        group_events.sort(
+            key=lambda item: (
+                collapse_candidate_rank(item),
+                int(item["entry_index"]),
+            )
+        )
+        collapsed.append(group_events[0])
+        collapsed_count += len(group_events) - 1
+    collapsed.extend(passthrough)
+    return collapsed, collapsed_count
+
+
+def timeline_sort_in_place(events: list[dict[str, Any]], *, sort: str) -> None:
+    if sort == "time-desc":
+        events.sort(
+            key=lambda item: (
+                item["timestamp"] or "",
+                int(item["entry_index"]),
+                item["kind"],
+            ),
+            reverse=True,
+        )
+        return
+    events.sort(
+        key=lambda item: (
+            item["timestamp"] or "",
+            int(item["entry_index"]),
+            item["kind"],
+        )
+    )
+
+
+def serialize_timeline_event(event: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in event.items() if key != "_entry_id"}
 
 
 def grep_rollout(
@@ -3286,6 +3838,8 @@ def grep_rollout(
     codex_home: str | Path | None = None,
     *,
     limit: int = 10,
+    all_matches: bool = False,
+    sort: str = "relevance",
     role: str | None = None,
     entry_type: str | None = None,
     payload_type: str | None = None,
@@ -3294,90 +3848,60 @@ def grep_rollout(
     include_noise: bool = False,
     scope: str = "thread",
     episode_id: str | None = None,
+    thread_source: str = "current",
+    max_threads: int = 10,
 ) -> dict[str, Any]:
-    thread, warnings, error = resolve_thread(thread_id=thread_id, codex_home=codex_home)
+    thread, threads, warnings, error, thread_source_payload = resolve_thread_set(
+        thread_id=thread_id,
+        codex_home=codex_home,
+        thread_source=thread_source,
+        max_threads=max_threads,
+    )
     if error is not None:
         return error
 
     home = default_codex_home(codex_home)
     conn = connect_cache(home)
     try:
-        index_meta, index_warnings = ensure_index(conn, thread=thread, codex_home=home)
+        index_meta, index_warnings = ensure_index_for_threads(conn, threads=threads or [], codex_home=home)
         warnings.extend(index_warnings)
-        scope_info, episode_payload_data, scope_error = resolve_scope(
+        scope_info, episode_payload_data, scope_error = resolve_query_scope(
             conn,
-            thread_id=thread["id"],
+            thread=thread,
             requested_scope=scope,
             episode_id=episode_id,
+            thread_source=thread_source,
         )
         if scope_error is not None:
             scope_error["thread"] = thread
+            if thread_source_payload is not None:
+                scope_error["thread_source"] = thread_source_payload
             return scope_error
 
         search_column = "raw_text" if include_noise else "search_text"
-        where_clauses = ["e.thread_id = ?"]
-        params: list[Any] = [thread["id"]]
-        scoped_sql, scoped_params = scope_clause(scope_info, alias="e")
-        if scoped_sql:
-            where_clauses.append(scoped_sql.strip().removeprefix("and ").strip())
-            params.extend(scoped_params)
-        if role:
-            where_clauses.append("e.role = ?")
-            params.append(role)
-        if entry_type:
-            where_clauses.append("e.entry_type = ?")
-            params.append(entry_type)
-        if payload_type:
-            where_clauses.append("e.payload_type = ?")
-            params.append(payload_type)
-        if after:
-            where_clauses.append("(e.timestamp is null or e.timestamp >= ?)")
-            params.append(after)
-        if before:
-            where_clauses.append("(e.timestamp is null or e.timestamp <= ?)")
-            params.append(before)
-        where_clauses.append(f"instr(lower(coalesce(e.{search_column}, '')), lower(?)) > 0")
-        params.append(pattern)
-
-        rows = conn.execute(
-            f"""
-            select e.id, e.entry_index, e.rollout_line, e.timestamp, e.entry_type, e.payload_type, e.role,
-                   ((select count(*) from entry_entities en where en.entry_id = e.id)
-                    + (select count(*) from entry_repos rp where rp.entry_id = e.id)
-                    + (select count(*) from entry_pr_numbers pn where pn.entry_id = e.id)
-                    + (select count(*) from entry_commit_oids co where co.entry_id = e.id)
-                    + (select count(*) from entry_qualified_ids qi where qi.entry_id = e.id)
-                    + (select count(*) from entry_event_kinds ek where ek.entry_id = e.id)) as facet_score
-            from entries e
-            where {' and '.join(where_clauses)}
-            order by facet_score desc, coalesce(e.timestamp, ''), e.entry_index
-            limit ?
-            """,
-            (*params, limit),
-        ).fetchall()
-
-        entry_ids = [int(row["id"]) for row in rows]
-        entries = {entry["id"]: entry for entry in fetch_entry_rows_by_ids(conn, entry_ids)}
-        facet_scores = {int(row["id"]): int(row["facet_score"]) for row in rows}
-        results = []
-        for entry_id in entry_ids:
-            entry = entries[entry_id]
-            haystack = entry["raw_text"] if include_noise else entry["search_text"]
-            results.append(
-                {
-                    "entry_index": entry["entry_index"],
-                    "rollout_line": entry["rollout_line"],
-                    "timestamp": entry["timestamp"],
-                    "entry_type": entry["entry_type"],
-                    "payload_type": entry["payload_type"],
-                    "role": entry["role"],
-                    "excerpt": summarize_text(haystack),
-                    "matched_facets": matched_facets(entry),
-                    "_facet_score": facet_scores[entry_id],
-                }
-            )
-        for result in results:
-            result.pop("_facet_score", None)
+        thread_ids = [item["id"] for item in (threads or [thread])]
+        thread_map = thread_map_from_threads(threads or [thread])
+        logical_entries, collapsed_count = logical_search_entries(
+            conn,
+            thread_ids=thread_ids,
+            thread_map=thread_map,
+            search_column=search_column,
+            patterns=[pattern],
+            scope_info=scope_info,
+            role=role,
+            entry_type=entry_type,
+            payload_type=payload_type,
+            after=after,
+            before=before,
+            substantive_only=False,
+            sort=sort,
+        )
+        total_matches = len(logical_entries)
+        returned_entries = logical_entries if all_matches else logical_entries[:limit]
+        results = [
+            search_entry_payload(entry, include_noise=include_noise, thread_map=thread_map)
+            for entry in returned_entries
+        ]
 
         return {
             "ok": True,
@@ -3387,6 +3911,11 @@ def grep_rollout(
             "index": index_meta,
             "scope": scope_payload(scope_info),
             "episode": episode_payload_data,
+            "thread_source": thread_source_payload,
+            "returned_matches": len(results),
+            "total_matches": total_matches,
+            "truncated": (not all_matches) and total_matches > len(results),
+            "collapsed_mirror_matches": collapsed_count,
             "results": results,
         }
     except IndexBusyError as exc:
@@ -3396,6 +3925,7 @@ def grep_rollout(
             warnings=warnings,
             thread=thread,
             cache={"path": str(cache_db_path(home)), "lock_state": exc.lock_state},
+            thread_source=thread_source_payload,
         )
     finally:
         conn.close()
@@ -3408,34 +3938,48 @@ def timeline(
     kind: str = "shipped",
     group: str = "entity",
     limit: int = 10,
+    all_matches: bool = False,
+    sort: str = "time-asc",
     scope: str = "current",
     episode_id: str | None = None,
     include_meta: bool = False,
+    thread_source: str = "current",
+    max_threads: int = 10,
 ) -> dict[str, Any]:
-    thread, warnings, error = resolve_thread(thread_id=thread_id, codex_home=codex_home)
+    thread, threads, warnings, error, thread_source_payload = resolve_thread_set(
+        thread_id=thread_id,
+        codex_home=codex_home,
+        thread_source=thread_source,
+        max_threads=max_threads,
+    )
     if error is not None:
         return error
 
     home = default_codex_home(codex_home)
     conn = connect_cache(home)
     try:
-        index_meta, index_warnings = ensure_index(conn, thread=thread, codex_home=home)
+        index_meta, index_warnings = ensure_index_for_threads(conn, threads=threads or [], codex_home=home)
         warnings.extend(index_warnings)
-        scope_info, episode_payload_data, scope_error = resolve_scope(
+        scope_info, episode_payload_data, scope_error = resolve_query_scope(
             conn,
-            thread_id=thread["id"],
+            thread=thread,
             requested_scope=scope,
             episode_id=episode_id,
+            thread_source=thread_source,
         )
         if scope_error is not None:
             scope_error["thread"] = thread
+            if thread_source_payload is not None:
+                scope_error["thread_source"] = thread_source_payload
             return scope_error
         selected_kinds = selected_event_kinds(kind)
+        thread_ids = [item["id"] for item in (threads or [thread])]
+        thread_map = thread_map_from_threads(threads or [thread])
         entries = fetch_entry_rows_by_ids(
             conn,
             timeline_entry_ids(
                 conn,
-                thread_id=thread["id"],
+                thread_ids=thread_ids,
                 kind=kind,
                 scope_info=scope_info,
                 include_meta=include_meta,
@@ -3447,10 +3991,20 @@ def timeline(
             matched_kinds = ship_kinds_for_entry(entry) if kind == "shipped" else entry["event_kinds"]
             for matched_kind in matched_kinds:
                 if matched_kind in selected_kinds:
-                    flat_events.append(build_timeline_event(entry, matched_kind))
+                    flat_events.append(
+                        apply_thread_context(
+                            build_timeline_event(entry, matched_kind),
+                            thread_id=entry["thread_id"],
+                            thread_map=thread_map,
+                        )
+                    )
 
-        flat_events.sort(key=lambda item: (item["timestamp"] or "", item["rollout_line"]))
+        timeline_sort_in_place(flat_events, sort="time-asc")
         if group == "none":
+            collapsed_events, collapsed_count = collapse_timeline_events(flat_events)
+            timeline_sort_in_place(collapsed_events, sort=sort)
+            total_matches = len(collapsed_events)
+            returned_events = collapsed_events if all_matches else collapsed_events[:limit]
             return {
                 "ok": True,
                 "thread": thread,
@@ -3460,14 +4014,19 @@ def timeline(
                 "index": index_meta,
                 "scope": scope_payload(scope_info),
                 "episode": episode_payload_data,
-                "timeline": [{key: value for key, value in event.items() if key != "_entry_id"} for event in flat_events[:limit]],
+                "thread_source": thread_source_payload,
+                "returned_matches": len(returned_events),
+                "total_matches": total_matches,
+                "truncated": (not all_matches) and total_matches > len(returned_events),
+                "collapsed_mirror_matches": collapsed_count,
+                "timeline": [serialize_timeline_event(event) for event in returned_events],
             }
 
         grouping: dict[str, dict[str, Any]] = {}
         key_name = "entity" if group == "entity" else "repo"
         ranked_rows = ranked_entity_rows(
             conn,
-            thread_id=thread["id"],
+            thread_ids=thread_ids,
             scope_info=scope_info,
             include_meta=include_meta,
             prefer_collaborative=not include_meta,
@@ -3480,7 +4039,7 @@ def timeline(
         seen_map = (
             {row["entity"]: row["first_seen_at"] for row in ranked_rows}
             if group == "entity"
-            else first_seen_map(conn, thread_id=thread["id"], group=group, scope_info=scope_info)
+            else first_seen_map(conn, thread_ids=thread_ids, group=group, scope_info=scope_info)
         )
         for event in flat_events:
             if group == "entity":
@@ -3523,7 +4082,13 @@ def timeline(
                 )
                 bucket["revisit_count"] = max(0, len(distinct_ship_times) - 1)
 
-        grouped_timeline = sorted(grouping.values(), key=lambda item: item["first_seen_at"] or "")[:limit]
+        grouped_timeline = list(grouping.values())
+        if sort == "time-desc":
+            grouped_timeline.sort(key=lambda item: ((item["first_seen_at"] or ""), item[key_name]), reverse=True)
+        else:
+            grouped_timeline.sort(key=lambda item: ((item["first_seen_at"] or ""), item[key_name]))
+        total_matches = len(grouped_timeline)
+        returned_timeline = grouped_timeline if all_matches else grouped_timeline[:limit]
         return {
             "ok": True,
             "thread": thread,
@@ -3533,7 +4098,12 @@ def timeline(
             "index": index_meta,
             "scope": scope_payload(scope_info),
             "episode": episode_payload_data,
-            "timeline": grouped_timeline,
+            "thread_source": thread_source_payload,
+            "returned_matches": len(returned_timeline),
+            "total_matches": total_matches,
+            "truncated": (not all_matches) and total_matches > len(returned_timeline),
+            "collapsed_mirror_matches": 0,
+            "timeline": returned_timeline,
         }
     except IndexBusyError as exc:
         return failure(
@@ -3542,6 +4112,130 @@ def timeline(
             warnings=warnings,
             thread=thread,
             cache={"path": str(cache_db_path(home)), "lock_state": exc.lock_state},
+            thread_source=thread_source_payload,
+        )
+    finally:
+        conn.close()
+
+
+def worklog(
+    *,
+    patterns: list[str],
+    thread_id: str | None = None,
+    codex_home: str | Path | None = None,
+    role: str | None = None,
+    entry_type: str | None = None,
+    payload_type: str | None = None,
+    after: str | None = None,
+    before: str | None = None,
+    include_incidental: bool = False,
+    include_noise: bool = False,
+    scope: str = "thread",
+    episode_id: str | None = None,
+    thread_source: str = "current",
+    max_threads: int = 10,
+) -> dict[str, Any]:
+    if not patterns:
+        return failure("invalid_request", "worklog requires at least one --pattern value.")
+
+    thread, threads, warnings, error, thread_source_payload = resolve_thread_set(
+        thread_id=thread_id,
+        codex_home=codex_home,
+        thread_source=thread_source,
+        max_threads=max_threads,
+    )
+    if error is not None:
+        return error
+
+    home = default_codex_home(codex_home)
+    conn = connect_cache(home)
+    try:
+        index_meta, index_warnings = ensure_index_for_threads(conn, threads=threads or [], codex_home=home)
+        warnings.extend(index_warnings)
+        scope_info, episode_payload_data, scope_error = resolve_query_scope(
+            conn,
+            thread=thread,
+            requested_scope=scope,
+            episode_id=episode_id,
+            thread_source=thread_source,
+        )
+        if scope_error is not None:
+            scope_error["thread"] = thread
+            if thread_source_payload is not None:
+                scope_error["thread_source"] = thread_source_payload
+            return scope_error
+
+        search_column = "search_text"
+        substantive_only = not include_incidental
+        if include_incidental and include_noise:
+            search_column = "raw_text"
+        thread_ids = [item["id"] for item in (threads or [thread])]
+        thread_map = thread_map_from_threads(threads or [thread])
+        rows = search_candidate_rows(
+            conn,
+            thread_ids=thread_ids,
+            search_column=search_column,
+            patterns=patterns,
+            scope_info=scope_info,
+            role=role,
+            entry_type=entry_type,
+            payload_type=payload_type,
+            after=after,
+            before=before,
+            substantive_only=substantive_only,
+            sort="time-asc",
+        )
+        raw_matches = len(rows)
+        entries = {entry["id"]: entry for entry in fetch_entry_rows_by_ids(conn, [int(row["id"]) for row in rows])}
+        logical_entries: list[dict[str, Any]] = []
+        for row in rows:
+            entry = dict(entries[int(row["id"])])
+            entry["_facet_score"] = int(row["facet_score"] or 0)
+            logical_entries.append(entry)
+        logical_entries, collapsed_count = collapse_mirror_entries(logical_entries)
+        search_entry_sort_in_place(logical_entries, sort="time-asc")
+
+        started_at = logical_entries[0]["timestamp"] if logical_entries else None
+        ended_at = logical_entries[-1]["timestamp"] if logical_entries else None
+        duration_seconds = elapsed_seconds(started_at, ended_at)
+        evidence_start = (
+            search_entry_payload(logical_entries[0], include_noise=(search_column == "raw_text"), thread_map=thread_map)
+            if logical_entries
+            else None
+        )
+        evidence_end = (
+            search_entry_payload(logical_entries[-1], include_noise=(search_column == "raw_text"), thread_map=thread_map)
+            if logical_entries
+            else None
+        )
+
+        return {
+            "ok": True,
+            "thread": thread,
+            "warnings": warnings,
+            "index": index_meta,
+            "scope": scope_payload(scope_info),
+            "episode": episode_payload_data,
+            "thread_source": thread_source_payload,
+            "patterns": patterns,
+            "raw_matches": raw_matches,
+            "matched_entries": len(logical_entries),
+            "collapsed_mirror_matches": collapsed_count,
+            "started_at": started_at,
+            "ended_at": ended_at,
+            "duration_seconds": duration_seconds,
+            "duration_human": format_duration_human(duration_seconds),
+            "evidence_start": evidence_start,
+            "evidence_end": evidence_end,
+        }
+    except IndexBusyError as exc:
+        return failure(
+            "index_busy",
+            str(exc),
+            warnings=warnings,
+            thread=thread,
+            cache={"path": str(cache_db_path(home)), "lock_state": exc.lock_state},
+            thread_source=thread_source_payload,
         )
     finally:
         conn.close()
