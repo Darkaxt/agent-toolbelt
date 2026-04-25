@@ -31,7 +31,7 @@ For "latest conversation with X":
 
 1. Run `auth-status`.
 2. If authenticated but stale or empty, run `sync-once`.
-3. Run `find-chat --query "<name-or-phone>"`; it searches chats first, then contact metadata/profile names. Check `resolved_jid` and `resolution_source` because WhatsApp may store chat history under a LID JID even when the contact resolves by phone-number JID.
+3. Run `find-chat --query "<name-or-phone>"`; it searches chats first, then contact metadata/profile names. Check `chat_jid`, `resolved_jid`, and `resolution_source`, but let the adapter choose the actual history JID. The adapter now uses a fallback chain instead of blindly preferring the mapped LID.
 4. Run `latest --chat "<name-or-jid>" --limit <n>` and allow bounded auto-backfill unless the user asks for current synced data only.
 5. Answer only from structured JSON and state the observed sync scope when relevant. If `backfill_seed_missing` is returned, report that the local store lacks the anchor needed for targeted history backfill instead of implying there are no messages.
 
@@ -72,4 +72,4 @@ python scripts/invoke_whatsapp_wacli.py presence --chat "<jid-or-query>" --state
 - This uses an unofficial WhatsApp Web multi-device backend. Treat it as a local personal automation tradeoff.
 - Do not expose raw `wacli` commands through the skill.
 - Do not assume full chat history is present unless sync/backfill scope proves it.
-- One-to-one chats may use phone-number JIDs for contact lookup and LID JIDs for stored history. Prefer the adapter's `resolved_jid` for history commands.
+- One-to-one chats may use phone-number JIDs for contact lookup and LID JIDs for stored history. Do not hard-code either one in the skill. Let the adapter fall back across `chat_jid`, `resolved_jid`, and `contact_jid`, and pay attention to `used_jid`, `attempted_jids`, and `messages_null_normalized` when reads look suspicious.

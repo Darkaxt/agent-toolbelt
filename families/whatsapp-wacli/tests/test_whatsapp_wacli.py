@@ -173,6 +173,8 @@ class WhatsAppWacliBridgeTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("resolved_jid", skill)
+        self.assertIn("chat_jid", skill)
+        self.assertIn("fallback chain", skill)
         self.assertIn("backfill_seed_missing", skill)
         self.assertIn("--confirm", skill)
         self.assertIn("WhatsApp-visible", skill)

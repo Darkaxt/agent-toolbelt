@@ -251,7 +251,7 @@ class WhatsAppWacliAgentTests(unittest.TestCase):
 
         self.assertEqual(resolved, "900001234567@lid")
 
-    def test_latest_uses_lid_mapping_for_contact_resolved_chat(self):
+    def test_latest_prefers_chat_jid_when_message_store_is_keyed_by_phone_jid(self):
         runner = FakeRunner(
             [
                 {"stdout": {"success": True, "data": []}},
@@ -273,16 +273,70 @@ class WhatsAppWacliAgentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             cfg = self.make_config(temp_dir)
             self.write_lid_mapping(cfg.store_dir, lid="900001234567", pn="15551234567")
+            self.write_message_counts(
+                cfg.store_dir,
+                {
+                    "15551234567@s.whatsapp.net": 5,
+                    "900001234567@lid": 0,
+                },
+            )
 
             result = agent.latest("Profile Alias", limit=1, runner=runner, config=cfg)
 
         self.assertTrue(result["ok"])
-        self.assertEqual(runner.commands[2][-4:], ["--chat", "900001234567@lid", "--limit", "1"])
+        self.assertEqual(runner.commands[2][-4:], ["--chat", "15551234567@s.whatsapp.net", "--limit", "1"])
         self.assertEqual(result["result"]["resolution"]["contact_jid"], "15551234567@s.whatsapp.net")
         self.assertEqual(result["result"]["resolution"]["resolved_jid"], "900001234567@lid")
         self.assertEqual(result["result"]["resolution"]["resolution_source"], "pn_lid_map")
 
-    def test_backfill_runs_against_lid_mapping_for_contact_resolved_chat(self):
+    def test_invoke_history_read_retries_alternate_jid_when_messages_are_null(self):
+        runner = FakeRunner(
+            [
+                {"stdout": {"success": True, "data": {"messages": None}}},
+                {"stdout": {"success": True, "data": {"messages": [{"MsgID": "m1"}]}}},
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            response, used_jid, attempted_jids = agent.invoke_history_read(
+                operation="latest",
+                jids=["900001234567@lid", "15551234567@s.whatsapp.net"],
+                command_builder=lambda jid: ["messages", "list", "--chat", jid, "--limit", "1"],
+                runner=runner,
+                config=cfg,
+                timeout_sec=agent.DEFAULT_TIMEOUT_SEC,
+            )
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(used_jid, "15551234567@s.whatsapp.net")
+        self.assertEqual(attempted_jids, ["900001234567@lid", "15551234567@s.whatsapp.net"])
+        self.assertEqual(runner.commands[0][-4:], ["--chat", "900001234567@lid", "--limit", "1"])
+        self.assertEqual(runner.commands[1][-4:], ["--chat", "15551234567@s.whatsapp.net", "--limit", "1"])
+        self.assertEqual(len(response["result"]["payload"]["data"]["messages"]), 1)
+        self.assertIn("jid_fallback_used", response["warnings"])
+
+    def test_latest_normalizes_null_messages_when_no_alternate_jid_exists(self):
+        runner = FakeRunner(
+            [
+                {"stdout": {"success": True, "data": {"messages": None}}},
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+
+            result = agent.latest(
+                "15551234567@s.whatsapp.net",
+                limit=1,
+                runner=runner,
+                config=cfg,
+                auto_backfill=False,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["result"]["payload"]["data"]["messages"], [])
+        self.assertIn("messages_null_normalized", result["warnings"])
+
+    def test_backfill_prefers_chat_jid_when_message_store_is_keyed_by_phone_jid(self):
         runner = FakeRunner(
             [
                 {"stdout": {"success": True, "data": []}},
@@ -304,14 +358,56 @@ class WhatsAppWacliAgentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             cfg = self.make_config(temp_dir)
             self.write_lid_mapping(cfg.store_dir, lid="900001234567", pn="15551234567")
-            self.write_message_counts(cfg.store_dir, {"900001234567@lid": 1})
+            self.write_message_counts(
+                cfg.store_dir,
+                {
+                    "15551234567@s.whatsapp.net": 1,
+                    "900001234567@lid": 0,
+                },
+            )
 
             result = agent.backfill("Profile Alias", count=20, requests=1, wait_sec=5, runner=runner, config=cfg)
 
         self.assertTrue(result["ok"])
-        self.assertIn("900001234567@lid", runner.commands[2])
+        self.assertIn("15551234567@s.whatsapp.net", runner.commands[2])
         self.assertEqual(result["result"]["chat"]["contact_jid"], "15551234567@s.whatsapp.net")
         self.assertEqual(result["result"]["chat"]["resolved_jid"], "900001234567@lid")
+
+    def test_search_prefers_chat_jid_when_message_store_is_keyed_by_phone_jid(self):
+        runner = FakeRunner(
+            [
+                {"stdout": {"success": True, "data": []}},
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": [
+                            {
+                                "JID": "15551234567@s.whatsapp.net",
+                                "Phone": "15551234567",
+                                "Name": "Profile Alias",
+                            }
+                        ],
+                    }
+                },
+                {"stdout": {"success": True, "data": {"messages": [{"MsgID": "m1"}]}}},
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            self.write_lid_mapping(cfg.store_dir, lid="900001234567", pn="15551234567")
+            self.write_message_counts(
+                cfg.store_dir,
+                {
+                    "15551234567@s.whatsapp.net": 5,
+                    "900001234567@lid": 0,
+                },
+            )
+
+            result = agent.search_messages("invoice", chat="Profile Alias", limit=5, runner=runner, config=cfg)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(runner.commands[2][-4:], ["--limit", "5", "--chat", "15551234567@s.whatsapp.net"])
+        self.assertEqual(result["result"]["resolution"]["used_jid"], "15551234567@s.whatsapp.net")
 
     def test_latest_reports_seed_missing_when_backfill_has_no_anchor(self):
         runner = FakeRunner(
@@ -401,9 +497,17 @@ class WhatsAppWacliAgentTests(unittest.TestCase):
                 },
             ]
         )
-        counts = [1, 101]
+        counts_by_jid = {
+            "15557654321@s.whatsapp.net": [1, 101, 101],
+            "900001234567@lid": [0],
+        }
         original_counter = agent.message_count_for_chat
-        agent.message_count_for_chat = lambda config, jid: counts.pop(0)
+        def fake_message_count(config, jid):
+            values = counts_by_jid.setdefault(jid, [0])
+            if len(values) > 1:
+                return values.pop(0)
+            return values[0]
+        agent.message_count_for_chat = fake_message_count
         try:
             result = agent.backfill("Demo Contact", count=100, requests=3, wait_sec=60, runner=runner)
         finally:
@@ -444,9 +548,14 @@ class WhatsAppWacliAgentTests(unittest.TestCase):
                 {"stdout": {"success": True, "data": {"messages": [{"MsgID": "m2"}, {"MsgID": "m1"}]}}},
             ]
         )
-        counts = [1, 2]
+        counts_by_jid = {"123@s.whatsapp.net": [1, 1, 2, 2, 2]}
         original_counter = agent.message_count_for_chat
-        agent.message_count_for_chat = lambda config, jid: counts.pop(0)
+        def fake_message_count(config, jid):
+            values = counts_by_jid.setdefault(jid, [0])
+            if len(values) > 1:
+                return values.pop(0)
+            return values[0]
+        agent.message_count_for_chat = fake_message_count
         try:
             result = agent.latest("123@s.whatsapp.net", limit=2, runner=runner)
         finally:
