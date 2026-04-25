@@ -1,6 +1,10 @@
 ---
 name: observable-reputation
 description: Classify URL, domain, and IP observables with passive reputation providers. Use when Codex needs safe OSINT enrichment, provider status checks, or reusable reputation evidence for mail, logs, security triage, or other sources without submitting URLs, files, phishing reports, or fresh scans.
+license: MIT
+compatibility: Passive OSINT only. Does not perform active scans, URL submissions, file uploads, or phishing reports.
+metadata:
+  version: "0.1.0"
 ---
 
 # Observable Reputation

@@ -1,6 +1,10 @@
 ---
 name: mail-domain-quarantine
 description: Dry-run or apply local Outlook Classic quarantine decisions based on RDAP young-domain checks, cached DNS blocklists, and passive domain-structure evidence. Use when Codex needs mailbox domain-risk reports or explicitly confirmed quarantine moves.
+license: MIT
+compatibility: Windows Outlook Classic workflow. Dry-run by default; mailbox moves require explicit user confirmation.
+metadata:
+  version: "0.1.0"
 ---
 
 # Mail Domain Quarantine

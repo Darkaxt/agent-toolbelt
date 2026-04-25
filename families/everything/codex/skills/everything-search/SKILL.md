@@ -1,6 +1,10 @@
 ---
 name: everything-search
 description: Use Everything CLI through `es.exe` for global filename and path discovery on Windows, with safe fallbacks when Everything is unavailable.
+license: MIT
+compatibility: Windows only. Best with Everything and es.exe installed; documented fallback behavior applies when Everything is unavailable.
+metadata:
+  version: "0.1.0"
 ---
 
 # Everything Search

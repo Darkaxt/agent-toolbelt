@@ -18,6 +18,32 @@ Start by choosing the one family you actually need:
 | UVRun | standalone local Python script routing through `uvrun.ps1` | `families/uvrun` | `agent-toolbelt-uvrun` |
 | WhatsApp wacli | experimental local WhatsApp access through a curated `wacli` adapter | `families/whatsapp-wacli` | `agent-toolbelt-whatsapp-wacli` |
 
+## Install skills
+
+The canonical skills.sh package is this repository:
+
+```powershell
+npx skills add Darkaxt/agent-toolbelt --list
+npx skills add Darkaxt/agent-toolbelt --skill codex-thread-recall
+npx skills add Darkaxt/agent-toolbelt --all
+```
+
+Public skill names:
+
+- `amazon-cli`
+- `codex-thread-recall`
+- `everything-search`
+- `gemini-cli`
+- `linkedin-cv`
+- `mail-domain-quarantine`
+- `yt-dlp-ffmpeg`
+- `observable-reputation`
+- `outlook-classic-mail`
+- `uvrun-python`
+- `whatsapp-wacli`
+
+Read [Publishing and installing from skills.sh](docs/skills-sh.md) before installing account-backed or local-machine skills. Several skills require Windows desktop apps, local CLIs, or explicit user confirmation before visible actions.
+
 ## Repo layout
 
 - `families/`: independent tool families with their own package, tests, and agent integrations where stable; some families are intentionally Codex-only
@@ -35,3 +61,4 @@ Start by choosing the one family you actually need:
 
 - [Codex install guide](docs/codex-install.md)
 - [Claude install guide](docs/claude-install.md)
+- [skills.sh guide](docs/skills-sh.md)

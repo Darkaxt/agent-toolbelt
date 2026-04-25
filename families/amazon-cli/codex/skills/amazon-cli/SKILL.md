@@ -1,6 +1,10 @@
 ---
 name: amazon-cli
 description: Use the local Amazon CLI for Amazon product search, exact model lookup, product specs, comparisons, review/comment extraction, cross-market offers, and managed retail or business sessions. Trigger when Codex needs Amazon marketplace data, same-ASIN price comparisons, deep Amazon reviews, or Amazon session login support.
+license: MIT
+compatibility: Windows/local CLI oriented. Requires the agent-toolbelt Python package install; authenticated Amazon workflows require user-managed session setup.
+metadata:
+  version: "0.1.0"
 ---
 
 # Amazon CLI

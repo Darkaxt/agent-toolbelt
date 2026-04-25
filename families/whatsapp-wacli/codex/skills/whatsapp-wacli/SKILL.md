@@ -1,6 +1,10 @@
 ---
 name: whatsapp-wacli
 description: Use local WhatsApp access through the experimental wacli adapter for chat lookup, latest messages, search, context, reply drafting, and explicitly confirmed WhatsApp-visible actions.
+license: MIT
+compatibility: Experimental local WhatsApp adapter. WhatsApp-visible sends require explicit user confirmation.
+metadata:
+  version: "0.1.0"
 ---
 
 # WhatsApp wacli

@@ -1,6 +1,10 @@
 ---
 name: outlook-classic-mail
 description: Use Outlook Classic on Windows as the default local mail path for inbox triage, mailbox search, thread reads, response lookup, folder moves, follow-up analysis, reply drafting, forwarding, and explicit mailbox actions.
+license: MIT
+compatibility: Windows Outlook Classic COM workflow. Mailbox actions require explicit user confirmation.
+metadata:
+  version: "0.1.0"
 ---
 
 # Outlook Classic Mail

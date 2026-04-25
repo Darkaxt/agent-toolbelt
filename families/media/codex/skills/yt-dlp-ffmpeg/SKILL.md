@@ -1,6 +1,10 @@
 ---
 name: yt-dlp-ffmpeg
 description: Use `yt-dlp`, `ffprobe`, and `ffmpeg` for public media download and local file-level media operations.
+license: MIT
+compatibility: Requires yt-dlp, ffmpeg, and ffprobe. Intended for public media and local file operations only.
+metadata:
+  version: "0.1.0"
 ---
 
 # YT-DLP + FFmpeg

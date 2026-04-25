@@ -1,6 +1,10 @@
 ---
 name: linkedin-cv
 description: Use `scripts/invoke_linkedin_cv.py` for local, read-only LinkedIn own-profile snapshots, one explicit accessible profile capture at a time, and CV improvement comparisons.
+license: MIT
+compatibility: Local browser/profile snapshot workflow. Read-only by default and requires explicit accessible-profile capture.
+metadata:
+  version: "0.1.0"
 ---
 
 # LinkedIn CV
