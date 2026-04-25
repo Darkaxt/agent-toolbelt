@@ -14,14 +14,18 @@ Use `scripts/invoke_codex_thread_recall.py` when long-running or resumed work ri
 3. If the question is about prior shipped or merged work, run `timeline --kind shipped --group entity` first.
 4. Run `recall --profile general|shipping|debug` to get a bounded brief with decisions, known facts, touched paths, commands, blockers, open questions, and evidence pointers into the rollout JSONL.
 5. If one detail is still missing, run `grep --pattern <term>` with structured filters against this same thread before looking elsewhere.
-6. Only do broad repo or web exploration after current-thread recall fails to answer it.
+6. If the question is “when did we work on X?” or “what was the first/last span for X?”, use `worklog --pattern <term>` instead of hand-assembling a grep span.
+7. If you need broader operational context from the same workspace, opt into `--thread-source workspace --max-threads <n>`; this only includes threads whose normalized `cwd` exactly matches the current one.
+8. Only do broad repo or web exploration after current-thread recall fails to answer it.
 
 Default scope behavior:
 
 - `recall` defaults to `--scope current`
 - `timeline` defaults to `--scope current`
 - `grep` stays `--scope thread` by default for backward compatibility
+- `worklog` defaults to `--scope thread`
 - use `--scope episode --episode-id episode-N` when you need a specific historical slice
+- workspace mode is opt-in and thread-scoped only; `--thread-source workspace` coerces `--scope current` to `thread` and rejects `episode`
 
 Noise behavior:
 
@@ -30,6 +34,7 @@ Noise behavior:
 - use `timeline --include-meta` when you intentionally want meta-only events back in the grouped output
 - grouped entity timelines prefer concrete artifact anchors over helper/runtime identifiers when both appear in the same episode
 - `status` now tells you why the current episode was selected and how many substantive rows it contains
+- `grep`, `timeline`, and `worklog` collapse mirrored rollout envelopes so audit counts reflect logical events instead of duplicated wrappers
 
 The helper keeps an append-aware cache under `CODEX_HOME/cache/codex-thread-recall/`.
 The first run may build or rebuild the index; later runs should be warm and only
@@ -51,6 +56,7 @@ python scripts/invoke_codex_thread_recall.py status
 python scripts/invoke_codex_thread_recall.py recall --profile general --scope current
 python scripts/invoke_codex_thread_recall.py timeline --kind shipped --group entity --scope current
 python scripts/invoke_codex_thread_recall.py grep --pattern "CODEX_THREAD_ID" --scope thread
+python scripts/invoke_codex_thread_recall.py worklog --pattern "codex-thread-recall" --scope thread
 ```
 
 Optional overrides:
@@ -60,7 +66,9 @@ python scripts/invoke_codex_thread_recall.py status --thread-id <thread-id>
 python scripts/invoke_codex_thread_recall.py recall --codex-home C:\temp\codex-home
 python scripts/invoke_codex_thread_recall.py recall --profile shipping --scope episode --episode-id episode-3
 python scripts/invoke_codex_thread_recall.py timeline --kind installed --group entity --scope thread --include-meta
-python scripts/invoke_codex_thread_recall.py grep --pattern "PR" --role assistant --after 2026-04-25T00:00:00Z --scope current
+python scripts/invoke_codex_thread_recall.py timeline --kind shipped --group none --all --sort time-desc --scope thread
+python scripts/invoke_codex_thread_recall.py grep --pattern "PR" --role assistant --after 2026-04-25T00:00:00Z --scope current --sort time-desc
+python scripts/invoke_codex_thread_recall.py worklog --pattern "codex-thread-recall" --thread-source workspace --max-threads 5
 ```
 
 Refresh the private local runtime after repo updates:
@@ -83,12 +91,13 @@ python scripts/install_codex_thread_recall_runtime.py
 
 ## Rules
 
-- Current thread only. Do not search other threads in v1.
+- Current thread first. Only use `--thread-source workspace` when broader same-`cwd` context is explicitly useful.
 - Fail closed if `CODEX_THREAD_ID`, the thread row, or the rollout file cannot be resolved exactly.
 - Treat `thread_unavailable` or `rollout_missing` as recall unavailable; do not guess from cwd or title.
 - Use the evidence pointers for recall, not raw transcript dumping.
 - Check `index.built`, `index.stale`, and `index.appended_entries` when you need to
   understand whether a call rebuilt, reused, or incrementally extended the cache.
+- Check `returned_matches`, `total_matches`, `truncated`, and `collapsed_mirror_matches` on `grep`, `timeline`, and `worklog` before assuming you saw the full audit trail.
 - Use `status` when you need runtime and cache diagnostics such as
   `runtime.mode`, `runtime.release_root`, `cache.last_rebuild_reason`,
   `cache.lock_state`, `episodes.total`, `episodes.current.selection_reason`, or

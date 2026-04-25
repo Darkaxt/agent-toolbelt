@@ -131,6 +131,35 @@ def make_codex_home(
     return codex_home, rollout_path
 
 
+def add_thread_to_codex_home(
+    codex_home: Path,
+    *,
+    thread_id: str,
+    rollout_entries: list[dict] | None = None,
+    cwd: str = r"\\?\D:\Workspace\Projects\recall-sandbox",
+    title: str = "Thread Recall Test",
+    missing_rollout: bool = False,
+    created_at: int = 1777077600,
+    updated_at: int = 1777077900,
+) -> Path:
+    rollout_path = codex_home / "sessions" / "2026" / "04" / "25" / f"rollout-{thread_id}.jsonl"
+    rollout_path.parent.mkdir(parents=True, exist_ok=True)
+    if not missing_rollout:
+        lines = [json.dumps(entry, ensure_ascii=False) for entry in (rollout_entries or [])]
+        rollout_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+    conn = sqlite3.connect(codex_home / "state_5.sqlite")
+    try:
+        conn.execute(
+            "insert into threads (id, title, cwd, rollout_path, created_at, updated_at) values (?, ?, ?, ?, ?, ?)",
+            (thread_id, title, cwd, str(rollout_path), created_at, updated_at),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return rollout_path
+
+
 class ThreadRecallTests(unittest.TestCase):
     def with_env(self, codex_home: Path, *, thread_id: str = THREAD_ID):
         class _Env:
@@ -909,9 +938,11 @@ class ThreadRecallTests(unittest.TestCase):
             original_wait = thread_recall.INDEX_LOCK_WAIT_SECONDS
             original_poll = thread_recall.INDEX_LOCK_POLL_SECONDS
             original_sleep = thread_recall.time.sleep
+            original_pid_is_running = thread_recall.pid_is_running
             try:
                 thread_recall.INDEX_LOCK_WAIT_SECONDS = 1.0
                 thread_recall.INDEX_LOCK_POLL_SECONDS = 0.05
+                thread_recall.pid_is_running = lambda _pid: True
                 cleared = {"done": False}
 
                 def fake_sleep(_seconds: float) -> None:
@@ -926,6 +957,7 @@ class ThreadRecallTests(unittest.TestCase):
                 thread_recall.INDEX_LOCK_WAIT_SECONDS = original_wait
                 thread_recall.INDEX_LOCK_POLL_SECONDS = original_poll
                 thread_recall.time.sleep = original_sleep
+                thread_recall.pid_is_running = original_pid_is_running
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["index"]["lock_state"]["state"], "waited")
@@ -947,8 +979,13 @@ class ThreadRecallTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            with self.with_env(codex_home):
-                payload = thread_recall.recall()
+            original_pid_is_running = thread_recall.pid_is_running
+            try:
+                thread_recall.pid_is_running = lambda _pid: False
+                with self.with_env(codex_home):
+                    payload = thread_recall.recall()
+            finally:
+                thread_recall.pid_is_running = original_pid_is_running
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["index"]["lock_state"]["state"], "reclaimed-stale")
@@ -974,9 +1011,11 @@ class ThreadRecallTests(unittest.TestCase):
             original_poll = thread_recall.INDEX_LOCK_POLL_SECONDS
             original_sleep = thread_recall.time.sleep
             original_monotonic = thread_recall.time.monotonic
+            original_pid_is_running = thread_recall.pid_is_running
             try:
                 thread_recall.INDEX_LOCK_WAIT_SECONDS = 0.15
                 thread_recall.INDEX_LOCK_POLL_SECONDS = 0.05
+                thread_recall.pid_is_running = lambda _pid: True
                 ticks = iter([0.0, 0.1, 0.2, 0.3])
                 thread_recall.time.monotonic = lambda: next(ticks)
                 thread_recall.time.sleep = lambda _seconds: None
@@ -987,6 +1026,7 @@ class ThreadRecallTests(unittest.TestCase):
                 thread_recall.INDEX_LOCK_POLL_SECONDS = original_poll
                 thread_recall.time.sleep = original_sleep
                 thread_recall.time.monotonic = original_monotonic
+                thread_recall.pid_is_running = original_pid_is_running
 
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["error"], "index_busy")
@@ -1369,6 +1409,49 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertIn("CODEX_THREAD_ID", payload["results"][0]["excerpt"])
         self.assertIn("artifact-epsilon", payload["results"][0]["matched_facets"]["entities"])
 
+    def test_grep_reports_total_matches_truncation_and_supports_time_sort(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-epsilon`."}),
+            make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Merged PR `#11` for `artifact-epsilon`."}),
+            make_entry("2026-04-25T08:02:00Z", "event_msg", {"type": "agent_message", "text": "Installed `artifact-epsilon`."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.grep_rollout(pattern="artifact-epsilon", role="assistant", limit=2, sort="time-desc")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["total_matches"], 3)
+        self.assertEqual(payload["returned_matches"], 2)
+        self.assertTrue(payload["truncated"])
+        self.assertEqual([item["timestamp"] for item in payload["results"]], ["2026-04-25T08:02:00Z", "2026-04-25T08:01:00Z"])
+
+    def test_grep_all_returns_all_logical_matches_and_collapses_mirrors(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-epsilon`."}),
+            make_entry(
+                "2026-04-25T08:00:00Z",
+                "response_item",
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Published `artifact-epsilon`."}],
+                },
+            ),
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "task_complete", "summary": "Published `artifact-epsilon`."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.grep_rollout(pattern="artifact-epsilon", all_matches=True, sort="time-asc")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["total_matches"], 1)
+        self.assertEqual(payload["returned_matches"], 1)
+        self.assertFalse(payload["truncated"])
+        self.assertEqual(payload["collapsed_mirror_matches"], 2)
+        self.assertEqual(payload["results"][0]["payload_type"], "agent_message")
+
     def test_grep_scope_current_restricts_results_but_thread_default_stays_global(self):
         entries = [
             make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Ship `artifact-alpha` with CODEX_THREAD_ID notes."}),
@@ -1414,6 +1497,140 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertEqual(filtered["results"][0]["entry_type"], "event_msg")
         self.assertEqual(len(no_noise["results"]), 0)
         self.assertGreater(len(with_noise["results"]), 0)
+
+    def test_timeline_none_reports_total_matches_sort_and_collapses_mirrors(self):
+        entries = [
+            make_entry("2026-04-25T08:10:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-theta`."}),
+            make_entry(
+                "2026-04-25T08:10:00Z",
+                "response_item",
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Published `artifact-theta`."}],
+                },
+            ),
+            make_entry("2026-04-25T08:10:00Z", "event_msg", {"type": "task_complete", "summary": "Published `artifact-theta`."}),
+            make_entry("2026-04-25T08:15:00Z", "event_msg", {"type": "agent_message", "text": "Merged PR `#14` for `artifact-theta`."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.timeline(kind="all", group="none", limit=10, sort="time-desc", scope="thread")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["total_matches"], 2)
+        self.assertEqual(payload["returned_matches"], 2)
+        self.assertEqual(payload["collapsed_mirror_matches"], 2)
+        self.assertEqual([event["kind"] for event in payload["timeline"]], ["merged", "published"])
+
+    def test_worklog_returns_span_and_excludes_incidental_by_default(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Please implement `artifact-iota`."}),
+            make_entry("2026-04-25T08:05:00Z", "event_msg", {"type": "agent_message", "text": "Decision: use `artifact-iota`."}),
+            make_entry("2026-04-25T08:10:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-iota`."}),
+            make_entry(
+                "2026-04-25T08:20:00Z",
+                "response_item",
+                {"type": "function_call_output", "output": json.dumps({"stdout": "M families/artifact-iota/README.md", "stderr": ""})},
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.worklog(patterns=["artifact-iota"])
+                incidental = thread_recall.worklog(patterns=["artifact-iota"], include_incidental=True)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["started_at"], "2026-04-25T08:00:00Z")
+        self.assertEqual(payload["ended_at"], "2026-04-25T08:10:00Z")
+        self.assertEqual(payload["matched_entries"], 3)
+        self.assertEqual(payload["raw_matches"], 3)
+        self.assertEqual(incidental["ended_at"], "2026-04-25T08:20:00Z")
+        self.assertEqual(incidental["raw_matches"], 4)
+
+    def test_worklog_supports_or_patterns(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Plan `artifact-kappa`."}),
+            make_entry("2026-04-25T08:05:00Z", "event_msg", {"type": "agent_message", "text": "Decision: build `artifact-kappa`."}),
+            make_entry("2026-04-25T08:30:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-lambda`."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.worklog(patterns=["artifact-kappa", "artifact-lambda"])
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["started_at"], "2026-04-25T08:00:00Z")
+        self.assertEqual(payload["ended_at"], "2026-04-25T08:30:00Z")
+        self.assertEqual(payload["matched_entries"], 3)
+
+    def test_workspace_thread_source_includes_same_cwd_threads_and_coerces_current_scope(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-main`."}),
+        ]
+        other_entries = [
+            make_entry("2026-04-25T09:00:00Z", "event_msg", {"type": "agent_message", "text": "Merged PR `#15` for `artifact-main`."}),
+        ]
+        different_cwd_entries = [
+            make_entry("2026-04-25T10:00:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-foreign`."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            add_thread_to_codex_home(codex_home, thread_id="019-thread-other", rollout_entries=other_entries, updated_at=1777078800)
+            add_thread_to_codex_home(
+                codex_home,
+                thread_id="019-thread-foreign",
+                rollout_entries=different_cwd_entries,
+                cwd=r"\\?\D:\Workspace\Projects\other-sandbox",
+                updated_at=1777079400,
+            )
+            with self.with_env(codex_home):
+                payload = thread_recall.grep_rollout(
+                    pattern="artifact-main",
+                    all_matches=True,
+                    scope="current",
+                    thread_source="workspace",
+                    sort="time-asc",
+                )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["scope"]["applied"], "thread")
+        self.assertEqual(payload["thread_source"]["applied"], "workspace")
+        self.assertEqual(len(payload["thread_source"]["included_threads"]), 2)
+        self.assertEqual({item["thread_id"] for item in payload["results"]}, {THREAD_ID, "019-thread-other"})
+        self.assertTrue(all("thread_cwd" in item for item in payload["results"]))
+
+    def test_workspace_episode_scope_fails_closed(self):
+        entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-main`."})]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            add_thread_to_codex_home(codex_home, thread_id="019-thread-other", rollout_entries=entries, updated_at=1777078800)
+            with self.with_env(codex_home):
+                payload = thread_recall.grep_rollout(
+                    pattern="artifact-main",
+                    scope="episode",
+                    episode_id="episode-1",
+                    thread_source="workspace",
+                )
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"], "scope_unavailable")
+
+    def test_workspace_recall_merges_shipping_context_and_source_thread_evidence(self):
+        entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-alpha` in `example/toolbelt`."})]
+        other_entries = [make_entry("2026-04-25T09:00:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-beta` in `example/toolbelt`."})]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            add_thread_to_codex_home(codex_home, thread_id="019-thread-other", rollout_entries=other_entries, updated_at=1777078800)
+            with self.with_env(codex_home):
+                payload = thread_recall.recall(profile="shipping", scope="thread", thread_source="workspace")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["thread_source"]["applied"], "workspace")
+        self.assertIn("artifact-alpha", payload["recall"]["shipped_entities"])
+        self.assertIn("artifact-beta", payload["recall"]["shipped_entities"])
+        self.assertTrue(any(item.get("thread_id") == "019-thread-other" for item in payload["recall"]["evidence"]))
 
     def test_recall_skips_malformed_jsonl_with_warning(self):
         entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "hello"})]
