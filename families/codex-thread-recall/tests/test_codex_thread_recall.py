@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -58,6 +59,28 @@ def make_runtime_python(codex_home: Path) -> Path:
     runtime_python.parent.mkdir(parents=True, exist_ok=True)
     runtime_python.write_text("", encoding="utf-8")
     return runtime_python
+
+
+def make_active_runtime(codex_home: Path, *, release_name: str = "20260425-000000Z") -> tuple[Path, Path, Path]:
+    release_root = codex_home / "tools" / "codex-thread-recall" / "releases" / release_name
+    runtime_python = release_root / ".venv" / "Scripts" / "python.exe"
+    runtime_python.parent.mkdir(parents=True, exist_ok=True)
+    runtime_python.write_text("", encoding="utf-8")
+    active_manifest = codex_home / "tools" / "codex-thread-recall" / "active.json"
+    active_manifest.parent.mkdir(parents=True, exist_ok=True)
+    active_manifest.write_text(
+        json.dumps(
+            {
+                "family": "codex-thread-recall",
+                "release_root": str(release_root),
+                "python": str(runtime_python),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return release_root, runtime_python, active_manifest
 
 
 def make_codex_home(
@@ -368,6 +391,164 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertEqual(second["index"]["entry_count"], 1)
         self.assertEqual(second["index"]["appended_entries"], 0)
         self.assertIn("artifact-beta", second["recall"]["known_facts"][0])
+
+    def test_inconsistent_thread_cache_rebuilds_cleanly(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Start thread recall."}),
+            make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-alpha`."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                first = thread_recall.recall(profile="shipping")
+                cache_db = codex_home / "cache" / "codex-thread-recall" / "index.sqlite"
+                conn = sqlite3.connect(cache_db)
+                try:
+                    conn.execute("delete from rollout_indexes where thread_id = ?", (THREAD_ID,))
+                    conn.commit()
+                finally:
+                    conn.close()
+                second = thread_recall.recall(profile="shipping")
+
+        self.assertTrue(first["ok"])
+        self.assertTrue(second["ok"])
+        self.assertTrue(second["index"]["built"])
+        self.assertTrue(second["index"]["stale"])
+        self.assertEqual(second["index"]["last_rebuild_reason"], "orphaned-thread-cache")
+
+    def test_mtime_only_drift_does_not_trigger_rebuild(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Start thread recall."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, rollout_path = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                first = thread_recall.recall()
+                stat = rollout_path.stat()
+                os.utime(rollout_path, ns=(stat.st_atime_ns + 10_000, stat.st_mtime_ns + 10_000))
+                second = thread_recall.recall()
+
+        self.assertTrue(first["index"]["built"])
+        self.assertFalse(second["index"]["built"])
+        self.assertFalse(second["index"]["stale"])
+        self.assertEqual(second["index"]["entry_count"], first["index"]["entry_count"])
+
+    def test_status_includes_runtime_and_cache_diagnostics(self):
+        entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "hello"})]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.status()
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["runtime"]["mode"], "direct")
+        self.assertEqual(payload["cache"]["schema_version"], thread_recall.CACHE_SCHEMA_VERSION)
+        self.assertIn("index.sqlite", payload["cache"]["path"])
+        self.assertIn(payload["cache"]["lock_state"]["state"], {"unlocked", "not-needed", "acquired"})
+
+    def test_live_index_lock_waits_briefly_then_succeeds(self):
+        entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "hello"})]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            lock_path = thread_recall.thread_lock_path(codex_home, THREAD_ID)
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            lock_path.write_text(
+                json.dumps(
+                    {
+                        "thread_id": THREAD_ID,
+                        "rollout_path": "rollout.jsonl",
+                        "pid": os.getpid(),
+                        "started_at": datetime.now(tz=thread_recall.UTC).isoformat(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            original_wait = thread_recall.INDEX_LOCK_WAIT_SECONDS
+            original_poll = thread_recall.INDEX_LOCK_POLL_SECONDS
+            original_sleep = thread_recall.time.sleep
+            try:
+                thread_recall.INDEX_LOCK_WAIT_SECONDS = 1.0
+                thread_recall.INDEX_LOCK_POLL_SECONDS = 0.05
+                cleared = {"done": False}
+
+                def fake_sleep(_seconds: float) -> None:
+                    if not cleared["done"]:
+                        cleared["done"] = True
+                        lock_path.unlink(missing_ok=True)
+
+                thread_recall.time.sleep = fake_sleep
+                with self.with_env(codex_home):
+                    payload = thread_recall.recall()
+            finally:
+                thread_recall.INDEX_LOCK_WAIT_SECONDS = original_wait
+                thread_recall.INDEX_LOCK_POLL_SECONDS = original_poll
+                thread_recall.time.sleep = original_sleep
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["index"]["lock_state"]["state"], "waited")
+
+    def test_stale_index_lock_is_reclaimed(self):
+        entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "hello"})]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            lock_path = thread_recall.thread_lock_path(codex_home, THREAD_ID)
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            lock_path.write_text(
+                json.dumps(
+                    {
+                        "thread_id": THREAD_ID,
+                        "rollout_path": "rollout.jsonl",
+                        "pid": 999999,
+                        "started_at": "2026-04-24T00:00:00Z",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.with_env(codex_home):
+                payload = thread_recall.recall()
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["index"]["lock_state"]["state"], "reclaimed-stale")
+
+    def test_live_index_lock_times_out_with_structured_busy_failure(self):
+        entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "hello"})]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            lock_path = thread_recall.thread_lock_path(codex_home, THREAD_ID)
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            lock_path.write_text(
+                json.dumps(
+                    {
+                        "thread_id": THREAD_ID,
+                        "rollout_path": "rollout.jsonl",
+                        "pid": os.getpid(),
+                        "started_at": datetime.now(tz=thread_recall.UTC).isoformat(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            original_wait = thread_recall.INDEX_LOCK_WAIT_SECONDS
+            original_poll = thread_recall.INDEX_LOCK_POLL_SECONDS
+            original_sleep = thread_recall.time.sleep
+            original_monotonic = thread_recall.time.monotonic
+            try:
+                thread_recall.INDEX_LOCK_WAIT_SECONDS = 0.15
+                thread_recall.INDEX_LOCK_POLL_SECONDS = 0.05
+                ticks = iter([0.0, 0.1, 0.2, 0.3])
+                thread_recall.time.monotonic = lambda: next(ticks)
+                thread_recall.time.sleep = lambda _seconds: None
+                with self.with_env(codex_home):
+                    payload = thread_recall.recall()
+            finally:
+                thread_recall.INDEX_LOCK_WAIT_SECONDS = original_wait
+                thread_recall.INDEX_LOCK_POLL_SECONDS = original_poll
+                thread_recall.time.sleep = original_sleep
+                thread_recall.time.monotonic = original_monotonic
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"], "index_busy")
+        self.assertEqual(payload["cache"]["lock_state"]["state"], "busy")
 
     def test_timeline_groups_ship_events_by_entity_and_tracks_revisits_without_repo_specific_heuristics(self):
         entries = [
@@ -703,14 +884,14 @@ class ThreadRecallCliTests(unittest.TestCase):
 
 
 class ThreadRecallRuntimeTests(unittest.TestCase):
-    def test_runtime_bootstrap_prefers_agent_toolbelt_home_override_over_local_runtime(self):
+    def test_runtime_bootstrap_prefers_agent_toolbelt_home_override_over_installed_runtime(self):
         module = load_skill_script_module("runtime_bootstrap.py")
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
             repo_root = temp_root / "dev-repo"
             script_path = make_repo_bundle(repo_root)
             codex_home = temp_root / "codex-home"
-            runtime_python = make_runtime_python(codex_home)
+            make_active_runtime(codex_home)
 
             target = module.resolve_execution_target(
                 script_path=script_path,
@@ -722,7 +903,6 @@ class ThreadRecallRuntimeTests(unittest.TestCase):
 
         self.assertEqual(target["mode"], "repo")
         self.assertEqual(Path(target["repo_root"]), repo_root.resolve())
-        self.assertEqual(Path(target["runtime_python"]), runtime_python.resolve())
 
     def test_runtime_bootstrap_uses_repo_relative_bundle_when_present(self):
         module = load_skill_script_module("runtime_bootstrap.py")
@@ -735,7 +915,27 @@ class ThreadRecallRuntimeTests(unittest.TestCase):
         self.assertEqual(target["mode"], "repo")
         self.assertEqual(Path(target["repo_root"]), repo_root.resolve())
 
-    def test_runtime_bootstrap_uses_local_runtime_when_no_repo_override_exists(self):
+    def test_runtime_bootstrap_uses_active_release_by_default(self):
+        module = load_skill_script_module("runtime_bootstrap.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            codex_home = temp_root / "codex-home"
+            release_root, runtime_python, active_manifest = make_active_runtime(codex_home)
+            script_path = temp_root / "installed-skill" / "scripts" / "invoke_codex_thread_recall.py"
+            script_path.parent.mkdir(parents=True, exist_ok=True)
+            script_path.write_text("", encoding="utf-8")
+
+            target = module.resolve_execution_target(
+                script_path=script_path,
+                env={"CODEX_HOME": str(codex_home)},
+            )
+
+        self.assertEqual(target["mode"], "runtime")
+        self.assertEqual(Path(target["runtime_python"]), runtime_python.resolve())
+        self.assertEqual(Path(target["release_root"]), release_root.resolve())
+        self.assertEqual(Path(target["active_manifest"]), active_manifest.resolve())
+
+    def test_runtime_bootstrap_falls_back_to_legacy_runtime_when_active_manifest_is_absent(self):
         module = load_skill_script_module("runtime_bootstrap.py")
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -752,6 +952,7 @@ class ThreadRecallRuntimeTests(unittest.TestCase):
 
         self.assertEqual(target["mode"], "runtime")
         self.assertEqual(Path(target["runtime_python"]), runtime_python.resolve())
+        self.assertTrue(target["legacy_runtime"])
 
     def test_runtime_bootstrap_fails_closed_when_no_runtime_or_repo_exists(self):
         module = load_skill_script_module("runtime_bootstrap.py")
@@ -769,18 +970,18 @@ class ThreadRecallRuntimeTests(unittest.TestCase):
                 )
 
         self.assertIn("AGENT_TOOLBELT_HOME", str(ctx.exception))
-        self.assertIn("tools", str(ctx.exception))
+        self.assertIn("releases", str(ctx.exception))
 
-    def test_runtime_installer_plans_venv_and_package_install_commands(self):
+    def test_runtime_installer_plans_staged_release_commands(self):
         module = load_skill_script_module("install_codex_thread_recall_runtime.py")
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
             repo_root = temp_root / "repo"
             make_repo_bundle(repo_root)
-            codex_home = temp_root / "codex-home"
+            release_root = temp_root / "codex-home" / "tools" / "codex-thread-recall" / "releases" / "release-1"
             commands = module.build_install_commands(
                 repo_root=repo_root,
-                codex_home=codex_home,
+                release_root=release_root,
                 python_executable=Path("C:/Python312/python.exe"),
             )
 
@@ -789,7 +990,42 @@ class ThreadRecallRuntimeTests(unittest.TestCase):
         self.assertTrue(any("agent-toolbelt-core" in command for command in flattened))
         self.assertTrue(any("agent-toolbelt-codex-thread-recall" in command for command in flattened))
         self.assertTrue(any("--no-cache-dir" in command for command in flattened))
-        self.assertTrue(any(str(codex_home / "tools" / "codex-thread-recall" / ".venv") in command for command in flattened))
+        self.assertTrue(any(str(release_root / ".venv") in command for command in flattened))
+
+    def test_runtime_installer_only_flips_active_manifest_after_validation(self):
+        module = load_skill_script_module("install_codex_thread_recall_runtime.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            repo_root = temp_root / "repo"
+            make_repo_bundle(repo_root)
+            codex_home = temp_root / "codex-home"
+            observed: dict[str, Any] = {"commands": []}
+
+            def runner(command, env=None):
+                observed["commands"].append((list(command), env))
+                return None
+
+            def validator(*, release_root, runner):
+                active_manifest = codex_home / "tools" / "codex-thread-recall" / "active.json"
+                self.assertFalse(active_manifest.exists())
+                self.assertTrue((release_root / "release.json").is_file())
+                return None
+
+            manifest_path = module.install_runtime(
+                repo_root=repo_root,
+                codex_home=codex_home,
+                python_executable=Path("C:/Python312/python.exe"),
+                runner=runner,
+                validator=validator,
+                release_stamp="release-1",
+            )
+            self.assertEqual(manifest_path, codex_home / "tools" / "codex-thread-recall" / "active.json")
+            active_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                Path(active_payload["release_root"]),
+                codex_home / "tools" / "codex-thread-recall" / "releases" / "release-1",
+            )
+            self.assertEqual(len(observed["commands"]), 3)
 
     def test_runtime_installer_accepts_agent_toolbelt_home_env_override(self):
         module = load_skill_script_module("install_codex_thread_recall_runtime.py")

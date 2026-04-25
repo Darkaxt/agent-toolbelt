@@ -17,11 +17,16 @@ Use `scripts/invoke_codex_thread_recall.py` when long-running or resumed work ri
 
 The helper keeps an append-aware cache under `CODEX_HOME/cache/codex-thread-recall/`.
 The first run may build or rebuild the index; later runs should be warm and only
-index newly appended committed JSONL lines.
-The installed skill uses a private local runtime under
-`CODEX_HOME/tools/codex-thread-recall/.venv` by default. Only use
-`AGENT_TOOLBELT_HOME` when you explicitly want to run against a development
-checkout instead of the local runtime.
+index newly appended committed JSONL lines. Cache mutation is protected by a
+per-thread lock file in that same cache directory, so concurrent callers wait
+briefly, reclaim stale locks, and fail closed with `index_busy` instead of
+hanging indefinitely.
+The installed skill now prefers a staged private local runtime selected by
+`CODEX_HOME/tools/codex-thread-recall/active.json`. The old direct `.venv`
+under `CODEX_HOME/tools/codex-thread-recall/.venv` is only a legacy fallback
+when no active staged release exists. Only use `AGENT_TOOLBELT_HOME` when you
+explicitly want to run against a development checkout instead of the local
+runtime.
 
 ## Commands
 
@@ -46,6 +51,11 @@ Refresh the private local runtime after repo updates:
 python scripts/install_codex_thread_recall_runtime.py
 ```
 
+That helper stages a fresh release under
+`CODEX_HOME/tools/codex-thread-recall/releases/<stamp>/`, validates it by
+running `status` against a synthetic local Codex home, and only then flips
+`active.json` to the new release.
+
 From an installed skill, point the refresh helper at a development checkout:
 
 ```powershell
@@ -61,6 +71,9 @@ python scripts/install_codex_thread_recall_runtime.py
 - Use the evidence pointers for recall, not raw transcript dumping.
 - Check `index.built`, `index.stale`, and `index.appended_entries` when you need to
   understand whether a call rebuilt, reused, or incrementally extended the cache.
+- Use `status` when you need runtime and cache diagnostics such as
+  `runtime.mode`, `runtime.release_root`, `cache.last_rebuild_reason`, or
+  `cache.lock_state`.
 - Treat timeline/entity extraction as generic helper logic based on explicit identifiers, paths, repos, PRs, commits, and event verbs. Do not assume local repo layouts or marketplace names.
 - If the wrapper cannot find either the private runtime or an explicit development checkout, stop and repair the runtime instead of guessing at another repo path.
 - This family is Codex-only in v1; there is no Claude/plugin parity.
