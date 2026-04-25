@@ -18,6 +18,10 @@ Use `scripts/invoke_codex_thread_recall.py` when long-running or resumed work ri
 The helper keeps an append-aware cache under `CODEX_HOME/cache/codex-thread-recall/`.
 The first run may build or rebuild the index; later runs should be warm and only
 index newly appended committed JSONL lines.
+The installed skill uses a private local runtime under
+`CODEX_HOME/tools/codex-thread-recall/.venv` by default. Only use
+`AGENT_TOOLBELT_HOME` when you explicitly want to run against a development
+checkout instead of the local runtime.
 
 ## Commands
 
@@ -36,6 +40,19 @@ python scripts/invoke_codex_thread_recall.py recall --codex-home C:\temp\codex-h
 python scripts/invoke_codex_thread_recall.py grep --pattern "PR" --role assistant --after 2026-04-25T00:00:00Z
 ```
 
+Refresh the private local runtime after repo updates:
+
+```powershell
+python scripts/install_codex_thread_recall_runtime.py
+```
+
+From an installed skill, point the refresh helper at a development checkout:
+
+```powershell
+$env:AGENT_TOOLBELT_HOME='D:\path\to\agent-toolbelt'
+python scripts/install_codex_thread_recall_runtime.py
+```
+
 ## Rules
 
 - Current thread only. Do not search other threads in v1.
@@ -45,4 +62,5 @@ python scripts/invoke_codex_thread_recall.py grep --pattern "PR" --role assistan
 - Check `index.built`, `index.stale`, and `index.appended_entries` when you need to
   understand whether a call rebuilt, reused, or incrementally extended the cache.
 - Treat timeline/entity extraction as generic helper logic based on explicit identifiers, paths, repos, PRs, commits, and event verbs. Do not assume local repo layouts or marketplace names.
+- If the wrapper cannot find either the private runtime or an explicit development checkout, stop and repair the runtime instead of guessing at another repo path.
 - This family is Codex-only in v1; there is no Claude/plugin parity.
