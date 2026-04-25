@@ -1,3 +1,3 @@
-from .thread_recall import grep_rollout, recall, status
+from .thread_recall import grep_rollout, recall, status, timeline
 
-__all__ = ["status", "recall", "grep_rollout"]
+__all__ = ["status", "recall", "grep_rollout", "timeline"]
