@@ -46,7 +46,7 @@ npx skills update
 
 ## Package shape
 
-The canonical skills.sh install target is `Darkaxt/agent-toolbelt`. The `skills` CLI discovers the public Codex skill folders inside each family. Claude plugin copies remain repo artifacts for Claude marketplace packaging, but they are not the documented skills.sh target. `families/uvrun` remains an internal package helper; use the official Astral `uv` skill for general uv guidance.
+The canonical skills.sh install target is `Darkaxt/agent-toolbelt`. The `skills` CLI discovers the public Codex skill folders inside each family. Claude plugin copies remain repo artifacts for Claude marketplace packaging, but they are not the documented skills.sh target.
 
 ## Maintainer validation
 

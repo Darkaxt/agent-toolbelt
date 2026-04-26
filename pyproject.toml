@@ -3,7 +3,6 @@ members = [
   "packages/core",
   "families/gemini",
   "families/everything",
-  "families/uvrun",
   "families/media",
   "families/outlook-classic-mail",
   "families/observable-reputation",

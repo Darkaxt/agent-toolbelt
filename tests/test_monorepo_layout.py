@@ -16,13 +16,6 @@ EXPECTED_FAMILIES = {
         "script_name": "agent-toolbelt-everything",
         "package_dir": "agent_toolbelt_everything",
     },
-    "uvrun": {
-        "project_name": "agent-toolbelt-uvrun",
-        "script_name": "agent-toolbelt-uvrun",
-        "package_dir": "agent_toolbelt_uvrun",
-        "has_codex": False,
-        "has_claude": False,
-    },
     "media": {
         "project_name": "agent-toolbelt-media",
         "script_name": "agent-toolbelt-media",
@@ -86,7 +79,6 @@ class MonorepoLayoutTests(unittest.TestCase):
                 "packages/core",
                 "families/gemini",
                 "families/everything",
-                "families/uvrun",
                 "families/media",
                 "families/outlook-classic-mail",
                 "families/observable-reputation",

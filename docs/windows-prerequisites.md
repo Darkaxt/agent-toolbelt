@@ -4,7 +4,6 @@
 
 - `families/gemini`: Node.js plus authenticated access for `@google/gemini-cli`
 - `families/everything`: `es.exe` available on `PATH`
-- `families/uvrun`: `uv` available on `PATH`, plus `uvrun.ps1` or deprecated `uvrun.bat`
 - `families/media`: `yt-dlp`, `ffmpeg`, and `ffprobe` available on `PATH`
 - `families/outlook-classic-mail`: Outlook Classic installed and configured locally, `uv` available on `PATH`, and a local Outlook COM client project
 - `families/amazon-cli`: `uv` available on `PATH`; the Amazon CLI client source is bundled, while browser/session runtime state remains under local app data
