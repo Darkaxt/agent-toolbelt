@@ -1,7 +1,7 @@
 {
   "name": "linkedin-cv",
   "version": "0.1.1",
-  "description": "Captures and compares explicit LinkedIn CV/profile snapshots through a local managed browser.",
+  "description": "Captures explicit LinkedIn profile evidence locally and compares it with a CV without scraping or automation.",
   "author": {
     "name": "Darkaxt",
     "email": "opensource@users.noreply.github.com"

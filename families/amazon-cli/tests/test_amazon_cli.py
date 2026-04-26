@@ -244,6 +244,110 @@ class AmazonCLIBridgeTests(unittest.TestCase):
         self.assertEqual(result["result"]["error"], "Run amazon-cli session login --marketplace de --portal retail")
         self.assertEqual(result["exit_code"], 2)
 
+    def test_invoke_client_warns_when_offer_trust_signals_are_uncertain(self):
+        original_run = amazon_cli.run_process
+        original_uv = amazon_cli.resolve_uv_executable
+        original_home = amazon_cli.resolve_client_home
+        amazon_cli.resolve_uv_executable = lambda: "uv.exe"
+        amazon_cli.resolve_client_home = lambda explicit_home=None: Path(r"C:\Tools\amazon-intent-cli")
+        amazon_cli.run_process = lambda command, **kwargs: amazon_cli.subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "command": "offers",
+                    "trusted_best_offer": None,
+                    "raw_best_offer": {"marketplace": "fr", "total_price": 15.0},
+                    "current_offer": {"marketplace": "de", "total_price": 19.0},
+                    "address_consistency": {"status": "mismatch"},
+                    "offers": [{"marketplace": "fr", "status": "ok"}],
+                }
+            ),
+            stderr="",
+        )
+        try:
+            result = amazon_cli.invoke_client(operation_args=["offers", "B0TEST0001"])
+        finally:
+            amazon_cli.run_process = original_run
+            amazon_cli.resolve_uv_executable = original_uv
+            amazon_cli.resolve_client_home = original_home
+
+        self.assertTrue(result["ok"])
+        self.assertIn("trusted_best_offer is missing; verify address_consistency before recommending a cheapest offer.", result["warnings"])
+        self.assertIn("address_consistency status is mismatch; cross-market prices may not share the same destination.", result["warnings"])
+
+    def test_invoke_client_warns_when_search_has_variant_or_partial_results(self):
+        original_run = amazon_cli.run_process
+        original_uv = amazon_cli.resolve_uv_executable
+        original_home = amazon_cli.resolve_client_home
+        amazon_cli.resolve_uv_executable = lambda: "uv.exe"
+        amazon_cli.resolve_client_home = lambda explicit_home=None: Path(r"C:\Tools\amazon-intent-cli")
+        amazon_cli.run_process = lambda command, **kwargs: amazon_cli.subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "command": "search",
+                    "pagination": {"partial": True, "stopped_reason": "page_2: blocked"},
+                    "results": [
+                        {
+                            "asin": "B0TEST0001",
+                            "model_match": "variant",
+                            "model_disclosure": "Requested OLED65C5ELB; resolved listing model OLED65C54LA (variant).",
+                        }
+                    ],
+                }
+            ),
+            stderr="",
+        )
+        try:
+            result = amazon_cli.invoke_client(operation_args=["search", "tv"])
+        finally:
+            amazon_cli.run_process = original_run
+            amazon_cli.resolve_uv_executable = original_uv
+            amazon_cli.resolve_client_home = original_home
+
+        self.assertTrue(result["ok"])
+        self.assertIn("Search pagination is partial: page_2: blocked", result["warnings"])
+        self.assertIn(
+            "Search result B0TEST0001 has model_match=variant: Requested OLED65C5ELB; resolved listing model OLED65C54LA (variant).",
+            result["warnings"],
+        )
+
+    def test_invoke_client_warns_when_reviews_use_fallback_or_partial_results(self):
+        original_run = amazon_cli.run_process
+        original_uv = amazon_cli.resolve_uv_executable
+        original_home = amazon_cli.resolve_client_home
+        amazon_cli.resolve_uv_executable = lambda: "uv.exe"
+        amazon_cli.resolve_client_home = lambda explicit_home=None: Path(r"C:\Tools\amazon-intent-cli")
+        amazon_cli.run_process = lambda command, **kwargs: amazon_cli.subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "command": "reviews",
+                    "deep_reviews_available": False,
+                    "session_status": "missing",
+                    "fallback_reason": "Run amazon-cli session login --marketplace de --portal retail",
+                    "pagination": {"partial": True, "stopped_reason": "page_2: ajax endpoint changed"},
+                }
+            ),
+            stderr="",
+        )
+        try:
+            result = amazon_cli.invoke_client(operation_args=["reviews", "B0TEST0001"])
+        finally:
+            amazon_cli.run_process = original_run
+            amazon_cli.resolve_uv_executable = original_uv
+            amazon_cli.resolve_client_home = original_home
+
+        self.assertTrue(result["ok"])
+        self.assertIn(
+            "Deep review collection is unavailable; reviews are from fallback evidence (session_status=missing).",
+            result["warnings"],
+        )
+        self.assertIn("Review pagination is partial: page_2: ajax endpoint changed", result["warnings"])
+
     def test_invoke_client_reports_missing_uv_cleanly(self):
         original_uv = amazon_cli.resolve_uv_executable
         original_home = amazon_cli.resolve_client_home
@@ -321,6 +425,7 @@ class AmazonCLIBridgeTests(unittest.TestCase):
 
         self.assertIn("offers", skill_text)
         self.assertIn("reviews", skill_text)
+        self.assertIn("inspect-identifier", skill_text)
         self.assertIn("session login", skill_text)
         self.assertIn("managed sessions", skill_text)
         self.assertIn("read-only", skill_text)
@@ -381,6 +486,7 @@ class AmazonCLIBridgeTests(unittest.TestCase):
         skill_text = skill_path.read_text(encoding="utf-8")
 
         self.assertIn("cart add", skill_text)
+        self.assertIn("inspect-identifier", skill_text)
         self.assertIn("--confirm-cart-add", skill_text)
         self.assertIn("cart remove", skill_text)
         self.assertIn("--confirm-cart-remove", skill_text)

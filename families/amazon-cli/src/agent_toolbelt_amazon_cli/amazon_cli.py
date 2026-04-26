@@ -116,6 +116,115 @@ def parse_payload(stdout: str) -> dict[str, Any] | None:
     return {"value": parsed}
 
 
+def _unique_warnings(warnings: list[str]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for warning in warnings:
+        if warning in seen:
+            continue
+        seen.add(warning)
+        unique.append(warning)
+    return unique
+
+
+def _offer_key(offer: Any) -> tuple[Any, ...] | None:
+    if not isinstance(offer, dict):
+        return None
+    return (
+        offer.get("marketplace"),
+        offer.get("total_price"),
+        offer.get("effective_price"),
+        offer.get("price"),
+        offer.get("shipping_price"),
+        offer.get("currency"),
+    )
+
+
+def _collect_offer_warnings(payload: dict[str, Any]) -> list[str]:
+    warnings: list[str] = []
+    trusted_offer = payload.get("trusted_best_offer")
+    raw_offer = payload.get("raw_best_offer")
+    current_offer = payload.get("current_offer")
+    offers = payload.get("offers")
+    has_offer_evidence = bool(raw_offer or current_offer or offers)
+
+    if has_offer_evidence and trusted_offer is None:
+        warnings.append("trusted_best_offer is missing; verify address_consistency before recommending a cheapest offer.")
+
+    trusted_key = _offer_key(trusted_offer)
+    raw_key = _offer_key(raw_offer)
+    current_key = _offer_key(current_offer)
+    if trusted_key is not None and raw_key is not None and trusted_key != raw_key:
+        warnings.append("raw_best_offer differs from trusted_best_offer; raw cheapest may be address-mismatched or non-deliverable.")
+    if trusted_key is not None and current_key is not None and trusted_key != current_key:
+        warnings.append("trusted_best_offer differs from current_offer; verify marketplace before recommending.")
+
+    address_consistency = payload.get("address_consistency")
+    if isinstance(address_consistency, dict):
+        status = str(address_consistency.get("status") or "").strip().lower()
+        if status and status not in {"match", "consistent"}:
+            warnings.append(
+                f"address_consistency status is {status}; cross-market prices may not share the same destination."
+            )
+    return warnings
+
+
+def _collect_search_warnings(payload: dict[str, Any]) -> list[str]:
+    warnings: list[str] = []
+    pagination = payload.get("pagination")
+    if isinstance(pagination, dict) and pagination.get("partial"):
+        reason = pagination.get("stopped_reason") or "unknown"
+        warnings.append(f"Search pagination is partial: {reason}")
+
+    results = payload.get("results")
+    if isinstance(results, list):
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            model_match = str(result.get("model_match") or "").strip().lower()
+            if model_match not in {"variant", "different"}:
+                continue
+            asin = result.get("asin") or "unknown ASIN"
+            disclosure = result.get("model_disclosure") or "inspect title/model details before treating this as an exact match."
+            warnings.append(f"Search result {asin} has model_match={model_match}: {disclosure}")
+    return warnings
+
+
+def _collect_reviews_warnings(payload: dict[str, Any]) -> list[str]:
+    warnings: list[str] = []
+    if payload.get("deep_reviews_available") is False or payload.get("reviews_source") == "product_detail_fallback":
+        session_status = payload.get("session_status") or "unknown"
+        warnings.append(
+            f"Deep review collection is unavailable; reviews are from fallback evidence (session_status={session_status})."
+        )
+
+    pagination = payload.get("pagination")
+    if isinstance(pagination, dict) and pagination.get("partial"):
+        reason = pagination.get("stopped_reason") or "unknown"
+        warnings.append(f"Review pagination is partial: {reason}")
+    return warnings
+
+
+def collect_payload_warnings(payload: dict[str, Any] | None, operation: str) -> list[str]:
+    if payload is None:
+        return []
+
+    warnings: list[str] = []
+    payload_warnings = payload.get("warnings")
+    if isinstance(payload_warnings, list):
+        warnings.extend(warning for warning in payload_warnings if isinstance(warning, str))
+
+    command = str(payload.get("command") or operation).strip()
+    if command == "offers":
+        warnings.extend(_collect_offer_warnings(payload))
+    elif command == "search":
+        warnings.extend(_collect_search_warnings(payload))
+    elif command == "reviews":
+        warnings.extend(_collect_reviews_warnings(payload))
+
+    return _unique_warnings(warnings)
+
+
 def normalize_payload(
     *,
     payload: dict[str, Any] | None,
@@ -133,7 +242,7 @@ def normalize_payload(
         ok=exit_code == 0,
         operation=operation,
         result=result,
-        warnings=[],
+        warnings=collect_payload_warnings(payload, operation),
         stderr=stderr,
         exit_code=exit_code,
     )

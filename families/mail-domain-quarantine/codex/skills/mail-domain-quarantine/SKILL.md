@@ -19,6 +19,8 @@ Use `scripts/invoke_mail_domain_quarantine.py` to scan configured Outlook Classi
 python scripts/invoke_mail_domain_quarantine.py scan --dry-run
 python scripts/invoke_mail_domain_quarantine.py scan --dry-run --with-blocklists --blocklist-profile threat --days 7 --limit 20
 python scripts/invoke_mail_domain_quarantine.py scan --dry-run --with-blocklists --blocklist-profile threat --days 90 --limit 1000 --outlook-timeout-seconds 1200
+python scripts/invoke_mail_domain_quarantine.py scan --dry-run --with-reputation --reputation-profile light
+python scripts/invoke_mail_domain_quarantine.py scan --dry-run --with-reputation --reputation-profile full
 python scripts/invoke_mail_domain_quarantine.py scan --apply --with-blocklists --blocklist-profile threat
 ```
 
@@ -27,7 +29,10 @@ python scripts/invoke_mail_domain_quarantine.py scan --apply --with-blocklists -
 - Prefer `--dry-run`; use `--apply` only after explicit user confirmation.
 - Do not pass `--with-reputation` unless the user asks for external passive reputation enrichment.
 - Normal runs use RDAP and local cached blocklists only.
+- `--reputation-profile light` checks only young-domain quarantine candidate domains.
+- `--reputation-profile full` also checks typed domain, IP, and exact URL observables from those same candidate messages only.
 - Report-only evidence includes domain structure and rotating-domain clusters.
+- Reputation v2 fields such as normalized values, provider summaries, explanations, diagnostics, and rejected observables are evidence only.
 - Apply mode moves only messages selected by young-domain or non-suppressed `threat` blocklist policy.
 - Never delete, report spam, unsubscribe, mark read/unread, or open message links.
 

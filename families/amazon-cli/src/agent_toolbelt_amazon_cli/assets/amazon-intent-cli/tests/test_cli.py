@@ -338,6 +338,58 @@ def test_compare_outputs_json(monkeypatch, capsys) -> None:
     assert [item["asin"] for item in payload["items"]] == ["B0AAA", "B0BBB"]
 
 
+def test_inspect_identifier_accepts_asin_without_building_service(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "build_service", lambda: (_ for _ in ()).throw(AssertionError("service should not be built")))
+
+    cli.main(["inspect-identifier", "b0test0001", "--marketplace", "fr"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload == {
+        "command": "inspect-identifier",
+        "input": "b0test0001",
+        "identifier_type": "asin",
+        "asin": "B0TEST0001",
+        "requested_marketplace": "fr",
+        "detected_marketplace": None,
+        "marketplace": "fr",
+        "marketplace_domain": "www.amazon.fr",
+        "normalized_url": "https://www.amazon.fr/dp/B0TEST0001",
+        "supported": True,
+        "warnings": [],
+    }
+
+
+def test_inspect_identifier_detects_amazon_url_marketplace(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "build_service", lambda: (_ for _ in ()).throw(AssertionError("service should not be built")))
+
+    cli.main(["inspect-identifier", "https://www.amazon.de/-/en/dp/b0test0001/ref=abc", "--marketplace", "fr"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["identifier_type"] == "amazon_url"
+    assert payload["asin"] == "B0TEST0001"
+    assert payload["requested_marketplace"] == "fr"
+    assert payload["detected_marketplace"] == "de"
+    assert payload["marketplace"] == "de"
+    assert payload["marketplace_domain"] == "www.amazon.de"
+    assert payload["normalized_url"] == "https://www.amazon.de/dp/B0TEST0001"
+    assert payload["supported"] is True
+    assert payload["warnings"] == []
+
+
+def test_inspect_identifier_reports_unsupported_non_amazon_url(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "build_service", lambda: (_ for _ in ()).throw(AssertionError("service should not be built")))
+
+    cli.main(["inspect-identifier", "https://example.com/dp/B0TEST0001"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["identifier_type"] == "url"
+    assert payload["asin"] is None
+    assert payload["marketplace"] == "de"
+    assert payload["normalized_url"] is None
+    assert payload["supported"] is False
+    assert payload["warnings"] == ["Unsupported product URL domain: example.com"]
+
+
 def test_offers_outputs_json_with_default_marketplaces(monkeypatch, capsys) -> None:
     service = FakeService()
     monkeypatch.setattr(cli, "build_service", lambda: service)

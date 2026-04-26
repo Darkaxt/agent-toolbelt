@@ -694,6 +694,287 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(observables[0]["value"], "fresh.biz")
         self.assertEqual(observables[0]["context"]["message_entry_id"], "entry-1")
 
+    def test_v2_reputation_results_are_aggregated_by_message(self):
+        reputation_report = {
+            "observables": [
+                {
+                    "type": "domain",
+                    "value": "fresh.biz",
+                    "raw_value": "Fresh.Biz",
+                    "normalized_value": "fresh.biz",
+                    "domain": "fresh.biz",
+                    "source": "young-domain",
+                    "context": {"message_entry_id": "entry-1"},
+                    "normalization": {"warnings": []},
+                    "verdict": "suspicious",
+                    "score": 50,
+                    "provider_summary": {
+                        "provider_count": 2,
+                        "skipped_count": 1,
+                        "error_count": 0,
+                        "evidence_count": 1,
+                        "verdicts": {"suspicious": 1, "skipped": 1},
+                    },
+                    "explanation": "suspicious verdict from 2 passive provider result(s).",
+                    "evidence": [{"provider": "unit", "match": "feed"}],
+                    "errors": [],
+                },
+                {
+                    "type": "url",
+                    "value": "https://fresh.biz/a",
+                    "raw_value": "https://Fresh.Biz/a#section",
+                    "normalized_value": "https://fresh.biz/a",
+                    "domain": "fresh.biz",
+                    "source": "body-url",
+                    "context": {"message_entry_id": "entry-1"},
+                    "normalization": {"warnings": ["fragment_removed"]},
+                    "verdict": "malicious",
+                    "score": 100,
+                    "provider_summary": {
+                        "provider_count": 1,
+                        "skipped_count": 0,
+                        "error_count": 1,
+                        "evidence_count": 2,
+                        "verdicts": {"malicious": 1},
+                    },
+                    "explanation": "malicious verdict from 1 passive provider result(s).",
+                    "evidence": [{"provider": "unit", "match": "url"}, {"provider": "unit", "match": "host"}],
+                    "errors": ["unit: rate limited"],
+                },
+            ]
+        }
+
+        grouped = scanner.reputation_by_message(reputation_report)
+
+        reputation = grouped["entry-1"]
+        self.assertEqual(reputation["verdict"], "malicious")
+        self.assertEqual(reputation["score"], 100)
+        self.assertEqual(reputation["provider_summary"]["provider_count"], 3)
+        self.assertEqual(reputation["provider_summary"]["evidence_count"], 3)
+        self.assertEqual(reputation["provider_summary"]["error_count"], 1)
+        self.assertEqual(reputation["provider_summary"]["skipped_count"], 1)
+        self.assertEqual(len(reputation["explanations"]), 2)
+        self.assertEqual(reputation["normalized_observables"][1]["normalized_value"], "https://fresh.biz/a")
+        self.assertEqual(reputation["normalized_observables"][1]["normalization"]["warnings"], ["fragment_removed"])
+
+    def test_reputation_profile_scopes_full_observables_to_candidate_messages(self):
+        scan_payload = {
+            "account": "demo@example.com",
+            "folder": {"path": "\\\\demo@example.com\\Inbox"},
+            "messages": [
+                {
+                    "message": {"entry_id": "entry-1", "subject": "Fresh", "sender_email": "bad@fresh.biz"},
+                    "domain_references": [
+                        {
+                            "registrable_domain": "tracker.example",
+                            "source": "html-url",
+                            "raw_value": "https://click.tracker.example/path?id=1",
+                        }
+                    ],
+                    "ip_references": [{"ip": "203.0.113.7", "source": "received", "raw_value": "203.0.113.7"}],
+                },
+                {
+                    "message": {"entry_id": "entry-2", "subject": "Allowed", "sender_email": "sender@example.com"},
+                    "domain_references": [
+                        {
+                            "registrable_domain": "allowed.example",
+                            "source": "body-url",
+                            "raw_value": "https://allowed.example/a",
+                        }
+                    ],
+                },
+            ],
+        }
+        folder_result = {
+            "candidates": [
+                {
+                    "message": {"entry_id": "entry-1", "subject": "Fresh", "sender_email": "bad@fresh.biz"},
+                    "young_domains": ["fresh.biz"],
+                }
+            ],
+            "allowed": [
+                {
+                    "message": {"entry_id": "entry-2", "subject": "Allowed", "sender_email": "sender@example.com"},
+                    "young_domains": [],
+                }
+            ],
+        }
+
+        light = scanner.build_reputation_observables_for_profile(
+            scan_payload,
+            folder_result,
+            reputation_profile="light",
+        )
+        full = scanner.build_reputation_observables_for_profile(
+            scan_payload,
+            folder_result,
+            reputation_profile="full",
+        )
+
+        self.assertEqual([(item["type"], item["value"]) for item in light], [("domain", "fresh.biz")])
+        self.assertEqual(
+            [(item["type"], item["value"]) for item in full],
+            [
+                ("domain", "fresh.biz"),
+                ("domain", "tracker.example"),
+                ("url", "https://click.tracker.example/path?id=1"),
+                ("ip", "203.0.113.7"),
+            ],
+        )
+        self.assertNotIn("allowed.example", [item["value"] for item in full])
+
+    def test_run_scan_attaches_reputation_v2_diagnostics_and_rejections(self):
+        original_accounts = scanner.ACCOUNTS
+        original_scan_folder = scanner.scan_folder
+        original_run_reputation = scanner.run_observable_reputation
+        original_write_reports = scanner.write_reports
+        original_load_trusted = scanner.state.load_trusted_domains
+        original_load_suppressions = scanner.state.load_blocklist_suppressions
+        scanner.ACCOUNTS = (
+            scanner.AccountConfig(
+                account="demo@example.com",
+                quarantine_folder="custom:Inbox/Quarantine",
+                source_folders=("inbox",),
+            ),
+        )
+        scanner.scan_folder = lambda **kwargs: {
+            "ok": True,
+            "result": {
+                "account": "demo@example.com",
+                "folder": {"path": "\\\\demo@example.com\\Inbox"},
+                "messages": [
+                    {
+                        "message": {
+                            "entry_id": "entry-1",
+                            "subject": "Fresh",
+                            "sender_email": "bad@fresh.biz",
+                        },
+                        "domain_ages": [{"domain": "fresh.biz", "is_young": True}],
+                    }
+                ],
+            },
+        }
+        scanner.run_observable_reputation = lambda observables: {
+            "ok": True,
+            "observables": [
+                {
+                    "type": "domain",
+                    "value": "fresh.biz",
+                    "raw_value": "fresh.biz",
+                    "normalized_value": "fresh.biz",
+                    "source": "young-domain",
+                    "context": {"message_entry_id": "entry-1"},
+                    "normalization": {"warnings": []},
+                    "verdict": "malicious",
+                    "score": 100,
+                    "provider_summary": {
+                        "provider_count": 1,
+                        "skipped_count": 0,
+                        "error_count": 0,
+                        "evidence_count": 1,
+                        "verdicts": {"malicious": 1},
+                    },
+                    "explanation": "malicious verdict from 1 passive provider result(s).",
+                    "evidence": [{"provider": "unit", "match": "feed"}],
+                    "errors": [],
+                }
+            ],
+            "diagnostics": {
+                "observable_count": 1,
+                "rejected_observable_count": 1,
+                "cache": {"hit_count": 0, "miss_count": 1},
+                "providers": {
+                    "result_count": 1,
+                    "skipped_count": 0,
+                    "error_count": 0,
+                    "verdicts": {"malicious": 1},
+                },
+            },
+            "rejected_observables": [{"index": 9, "raw_value": "bad", "error": "invalid"}],
+        }
+        scanner.write_reports = lambda report, **kwargs: None
+        scanner.state.load_trusted_domains = lambda: set()
+        scanner.state.load_blocklist_suppressions = lambda: {}
+        try:
+            report = scanner.run_scan(
+                apply=False,
+                days=7,
+                limit=10,
+                young_days=365,
+                with_reputation=True,
+                reputation_profile="light",
+            )
+        finally:
+            scanner.ACCOUNTS = original_accounts
+            scanner.scan_folder = original_scan_folder
+            scanner.run_observable_reputation = original_run_reputation
+            scanner.write_reports = original_write_reports
+            scanner.state.load_trusted_domains = original_load_trusted
+            scanner.state.load_blocklist_suppressions = original_load_suppressions
+
+        folder = report["accounts"][0]["folders"][0]
+        reputation = folder["candidates"][0]["reputation"]
+        self.assertEqual(reputation["explanations"], ["malicious verdict from 1 passive provider result(s)."])
+        self.assertEqual(folder["reputation_diagnostics"]["observable_count"], 1)
+        self.assertEqual(folder["rejected_reputation_observables"][0]["raw_value"], "bad")
+        self.assertEqual(report["reputation_diagnostics"]["observable_count"], 1)
+        self.assertEqual(report["reputation_diagnostics"]["rejected_observable_count"], 1)
+
+    def test_markdown_includes_reputation_explanations_and_diagnostics(self):
+        markdown = scanner.render_markdown_report(
+            {
+                "mode": "dry-run",
+                "generated_at": "2026-04-22T00:00:00",
+                "days": 7,
+                "young_days": 365,
+                "with_blocklists": False,
+                "blocklist_profile": None,
+                "with_reputation": True,
+                "reputation_profile": "light",
+                "accounts": [
+                    {
+                        "account": "demo@example.com",
+                        "folders": [
+                            {
+                                "folder_selector": "inbox",
+                                "ok": True,
+                                "candidates": [
+                                    {
+                                        "message": {
+                                            "entry_id": "entry-1",
+                                            "subject": "Fresh",
+                                            "sender_email": "bad@fresh.biz",
+                                        },
+                                        "young_domains": ["fresh.biz"],
+                                        "blocklisted_domains": [],
+                                        "reputation": {
+                                            "verdict": "malicious",
+                                            "score": 100,
+                                            "evidence": [{"provider": "unit"}],
+                                            "errors": ["unit: rate limited"],
+                                            "explanations": ["malicious verdict from 1 passive provider result(s)."],
+                                            "provider_summary": {"evidence_count": 1, "error_count": 1},
+                                        },
+                                    }
+                                ],
+                                "allowed": [],
+                                "reputation_diagnostics": {
+                                    "observable_count": 1,
+                                    "rejected_observable_count": 1,
+                                    "cache": {"hit_count": 0, "miss_count": 1},
+                                    "providers": {"result_count": 1, "skipped_count": 0, "error_count": 1},
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+
+        self.assertIn("Reputation: malicious score=100 evidence=1 errors=1", markdown)
+        self.assertIn("malicious verdict from 1 passive provider result(s).", markdown)
+        self.assertIn("Reputation diagnostics: observables=1 rejected=1 cache=0/1 providers=1 skipped=0 errors=1", markdown)
+
 
 if __name__ == "__main__":
     unittest.main()

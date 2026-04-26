@@ -36,7 +36,7 @@ npx skills update
 | `codex-thread-recall` | Codex only | `CODEX_THREAD_ID`, local Codex `state_5.sqlite`, readable rollout JSONL files | Current-thread first; workspace expansion is explicit. |
 | `everything-search` | Windows only | Everything and `es.exe` for best results | Falls back safely when Everything is unavailable. |
 | `gemini-cli` | Public URL inspection | Node.js/npm and `npx @google/gemini-cli` | Do not use for local files, private URLs, or private-network targets without explicit approval. |
-| `linkedin-cv` | Local browser/profile snapshot workflow | Local package install and an accessible LinkedIn profile capture | Read-only by default; capture one explicit accessible profile at a time. |
+| `linkedin-cv` | Local LinkedIn profile evidence capture and CV/profile comparison | Local package install and one explicit accessible LinkedIn profile capture | Read-only by default; no search traversal, scraping, content generation, or engagement automation. |
 | `mail-domain-quarantine` | Windows Outlook Classic | Outlook Classic, mailbox access, RDAP/DNS reputation dependencies | Dry-run by default; mailbox moves require explicit confirmation. |
 | `yt-dlp-ffmpeg` | Public media and local file operations | `yt-dlp`, `ffmpeg`, and `ffprobe` | Do not use to bypass access controls or private media restrictions. |
 | `observable-reputation` | Passive OSINT only | Provider access as configured by the family | No active scans, URL submissions, file uploads, or phishing reports. |

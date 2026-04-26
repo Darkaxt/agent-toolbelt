@@ -29,9 +29,17 @@ without making external OSINT API calls.
 evidence is report-only in this phase and does not create additional move
 decisions.
 
-External reputation lookups are constrained to young-domain quarantine
-candidates. Allowed messages, non-young blocklist-only findings, and generic
-tracking URLs are not sent to external reputation providers.
+External reputation lookups are constrained to quarantine candidate messages.
+The default `--reputation-profile light` checks only young-domain candidate
+domains. `--reputation-profile full` also checks typed domain, IP, and exact URL
+observables from those same candidate messages. Allowed messages, non-young
+blocklist-only findings, and unrelated tracking URLs are not sent to external
+reputation providers.
+
+When the installed `observable-reputation` supports v2 reports, quarantine
+reports consume normalized values, provider summaries, explanations,
+diagnostics, and rejected-observable details. These fields are evidence only;
+they do not change apply-mode selection.
 
 Set `MAIL_DOMAIN_QUARANTINE_HOME` to redirect state and report output during
 tests or disposable scans. Apply mode moves mail and should only be used after a

@@ -13,6 +13,8 @@ Use `scripts/invoke_mail_domain_quarantine.py` to scan configured Outlook Classi
 ```bash
 python scripts/invoke_mail_domain_quarantine.py scan --dry-run
 python scripts/invoke_mail_domain_quarantine.py scan --dry-run --with-blocklists --blocklist-profile threat --days 7 --limit 20
+python scripts/invoke_mail_domain_quarantine.py scan --dry-run --with-reputation --reputation-profile light
+python scripts/invoke_mail_domain_quarantine.py scan --dry-run --with-reputation --reputation-profile full
 python scripts/invoke_mail_domain_quarantine.py scan --apply --with-blocklists --blocklist-profile threat
 ```
 
@@ -20,5 +22,8 @@ python scripts/invoke_mail_domain_quarantine.py scan --apply --with-blocklists -
 
 - Use `--apply` only after explicit user confirmation.
 - Do not pass `--with-reputation` unless external passive reputation enrichment is explicitly requested.
+- `--reputation-profile light` checks only young-domain quarantine candidate domains.
+- `--reputation-profile full` also checks typed domain, IP, and exact URL observables from those same candidate messages only.
+- Reputation v2 normalized values, provider summaries, explanations, diagnostics, and rejected observables are report-only evidence.
 - Do not delete, report spam, unsubscribe, mark read/unread, or open message links.
 - Reports rotate by default; `MAIL_DOMAIN_QUARANTINE_HOME` can redirect state and reports.
