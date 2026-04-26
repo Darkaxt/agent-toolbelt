@@ -15,7 +15,7 @@ Start by choosing the one family you actually need:
 | Observable Reputation | passive reputation checks for URL, domain, and IP observables | `families/observable-reputation` | `agent-toolbelt-observable-reputation` |
 | Outlook Classic Mail | local mail access through Outlook Classic COM with multi-account support | `families/outlook-classic-mail` | `agent-toolbelt-outlook-classic-mail` |
 | Mail Domain Quarantine | Outlook mail domain-risk reports and confirmed quarantine moves | `families/mail-domain-quarantine` | `agent-toolbelt-mail-domain-quarantine` |
-| UVRun | standalone local Python script routing through `uvrun.ps1` | `families/uvrun` | `agent-toolbelt-uvrun` |
+| UVRun | internal standalone local Python script routing through `uvrun.ps1` | `families/uvrun` | `agent-toolbelt-uvrun` |
 | WhatsApp wacli | experimental local WhatsApp access through a curated `wacli` adapter | `families/whatsapp-wacli` | `agent-toolbelt-whatsapp-wacli` |
 
 ## Install skills
@@ -39,7 +39,6 @@ Public skill names:
 - `yt-dlp-ffmpeg`
 - `observable-reputation`
 - `outlook-classic-mail`
-- `uvrun-python`
 - `whatsapp-wacli`
 
 Read [Publishing and installing from skills.sh](docs/skills-sh.md) before installing account-backed or local-machine skills. Several skills require Windows desktop apps, local CLIs, or explicit user confirmation before visible actions.

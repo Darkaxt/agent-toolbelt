@@ -6,7 +6,6 @@ Each family ships its own self-contained local marketplace with one plugin.
 
 - Gemini: `families/gemini/claude/marketplaces/agent-toolbelt-local`
 - Everything: `families/everything/claude/marketplaces/agent-toolbelt-local`
-- UVRun: `families/uvrun/claude/marketplaces/agent-toolbelt-local`
 - Media: `families/media/claude/marketplaces/agent-toolbelt-local`
 - Outlook Classic Mail: `families/outlook-classic-mail/claude/marketplaces/agent-toolbelt-local`
 - Observable Reputation: `families/observable-reputation/claude/marketplaces/agent-toolbelt-local`

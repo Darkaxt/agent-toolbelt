@@ -11,7 +11,6 @@ $ExpectedSkills = @(
   @{ Name = "yt-dlp-ffmpeg"; Path = "families/media/codex/skills/yt-dlp-ffmpeg/SKILL.md" },
   @{ Name = "observable-reputation"; Path = "families/observable-reputation/codex/skills/observable-reputation/SKILL.md" },
   @{ Name = "outlook-classic-mail"; Path = "families/outlook-classic-mail/codex/skills/outlook-classic-mail/SKILL.md" },
-  @{ Name = "uvrun-python"; Path = "families/uvrun/codex/skills/uvrun-python/SKILL.md" },
   @{ Name = "whatsapp-wacli"; Path = "families/whatsapp-wacli/codex/skills/whatsapp-wacli/SKILL.md" }
 )
 
@@ -39,8 +38,9 @@ function Assert-SkillCliOutput($Label, $Output) {
       Fail "$Label did not list skill $($Skill.Name)"
     }
   }
-  if ($Output -notmatch 'Found\D+11\D+skills') {
-    Fail "$Label did not report exactly 11 discovered skills"
+  $ExpectedCount = $ExpectedSkills.Count
+  if ($Output -notmatch "Found\D+$ExpectedCount\D+skills") {
+    Fail "$Label did not report exactly $ExpectedCount discovered skills"
   }
 }
 
@@ -99,11 +99,16 @@ try {
   }
 
   $env:DISABLE_TELEMETRY = "1"
-  $RemoteOutput = & npx skills add Darkaxt/agent-toolbelt --list 2>&1 | Out-String
-  if ($LASTEXITCODE -ne 0) {
-    Fail "remote skills CLI discovery failed"
+  $CurrentBranch = (& git branch --show-current 2>$null | Out-String).Trim()
+  if ($CurrentBranch -eq "main") {
+    $RemoteOutput = & npx skills add Darkaxt/agent-toolbelt --list 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) {
+      Fail "remote skills CLI discovery failed"
+    }
+    Assert-SkillCliOutput "remote skills CLI discovery" $RemoteOutput
+  } else {
+    Write-Host "Skipping default-branch remote skills CLI discovery on feature branch $CurrentBranch."
   }
-  Assert-SkillCliOutput "remote skills CLI discovery" $RemoteOutput
 
   $LocalOutput = & npx skills add . --list 2>&1 | Out-String
   if ($LASTEXITCODE -ne 0) {
@@ -111,7 +116,7 @@ try {
   }
   Assert-SkillCliOutput "local skills CLI discovery" $LocalOutput
 
-  Write-Host "skills.sh validation passed for 11 skills."
+  Write-Host "skills.sh validation passed for $($ExpectedSkills.Count) skills."
 } finally {
   Pop-Location
 }

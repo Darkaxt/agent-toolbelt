@@ -41,12 +41,11 @@ npx skills update
 | `yt-dlp-ffmpeg` | Public media and local file operations | `yt-dlp`, `ffmpeg`, and `ffprobe` | Do not use to bypass access controls or private media restrictions. |
 | `observable-reputation` | Passive OSINT only | Provider access as configured by the family | No active scans, URL submissions, file uploads, or phishing reports. |
 | `outlook-classic-mail` | Windows Outlook Classic COM | Outlook Classic desktop profile and mailbox access | Reply, forward, move, and other mailbox actions require explicit confirmation. |
-| `uvrun-python` | Windows/local Python helper | `uv` and the package-backed `uvrun` wrapper | Use only for standalone local Python scripts, not repo-managed commands. |
 | `whatsapp-wacli` | Experimental local WhatsApp adapter | Local `wacli` setup and active WhatsApp session | WhatsApp-visible sends require explicit confirmation. |
 
 ## Package shape
 
-The canonical skills.sh install target is `Darkaxt/agent-toolbelt`. The `skills` CLI discovers the public Codex skill folders inside each family. Claude plugin copies remain repo artifacts for Claude marketplace packaging, but they are not the documented skills.sh target.
+The canonical skills.sh install target is `Darkaxt/agent-toolbelt`. The `skills` CLI discovers the public Codex skill folders inside each family. Claude plugin copies remain repo artifacts for Claude marketplace packaging, but they are not the documented skills.sh target. `families/uvrun` remains an internal package helper; use the official Astral `uv` skill for general uv guidance.
 
 ## Maintainer validation
 

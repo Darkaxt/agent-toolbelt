@@ -20,6 +20,8 @@ EXPECTED_FAMILIES = {
         "project_name": "agent-toolbelt-uvrun",
         "script_name": "agent-toolbelt-uvrun",
         "package_dir": "agent_toolbelt_uvrun",
+        "has_codex": False,
+        "has_claude": False,
     },
     "media": {
         "project_name": "agent-toolbelt-media",
@@ -104,11 +106,14 @@ class MonorepoLayoutTests(unittest.TestCase):
                 self.assertTrue((family_root / "pyproject.toml").is_file())
                 self.assertTrue((family_root / "src").is_dir())
                 self.assertTrue((family_root / "tests").is_dir())
-                self.assertTrue((family_root / "codex").is_dir())
+                if metadata.get("has_codex", True):
+                    self.assertTrue((family_root / "codex").is_dir())
+                else:
+                    self.assertFalse((family_root / "codex" / "skills").exists())
                 if metadata.get("has_claude", True):
                     self.assertTrue((family_root / "claude").is_dir())
                 else:
-                    self.assertFalse((family_root / "claude").exists())
+                    self.assertFalse((family_root / "claude" / "marketplaces").exists())
 
                 pyproject = tomllib.loads((family_root / "pyproject.toml").read_text(encoding="utf-8"))
                 self.assertEqual(pyproject["project"]["name"], metadata["project_name"])
@@ -166,18 +171,6 @@ class MonorepoLayoutTests(unittest.TestCase):
 
     def test_claude_package_backed_wrappers_use_explicit_workspace_bootstrap(self):
         wrapper_specs = {
-            "uvrun-python": REPO_ROOT
-            / "families"
-            / "uvrun"
-            / "claude"
-            / "marketplaces"
-            / "agent-toolbelt-local"
-            / "plugins"
-            / "uvrun-python"
-            / "skills"
-            / "uvrun-python"
-            / "scripts"
-            / "invoke_uvrun.py",
             "yt-dlp-ffmpeg": REPO_ROOT
             / "families"
             / "media"
@@ -201,19 +194,6 @@ class MonorepoLayoutTests(unittest.TestCase):
                 self.assertNotIn("bootstrap_core_src", text)
 
     def test_claude_plugin_skills_keep_critical_runtime_guidance(self):
-        uvrun_skill = (
-            REPO_ROOT
-            / "families"
-            / "uvrun"
-            / "claude"
-            / "marketplaces"
-            / "agent-toolbelt-local"
-            / "plugins"
-            / "uvrun-python"
-            / "skills"
-            / "uvrun-python"
-            / "SKILL.md"
-        ).read_text(encoding="utf-8")
         media_skill = (
             REPO_ROOT
             / "families"
@@ -240,10 +220,6 @@ class MonorepoLayoutTests(unittest.TestCase):
             / "outlook-classic-mail"
             / "SKILL.md"
         ).read_text(encoding="utf-8")
-
-        self.assertIn("AGENT_TOOLBELT_HOME", uvrun_skill)
-        self.assertIn("uvrun.ps1", uvrun_skill)
-        self.assertIn("scripts/invoke_uvrun.py", uvrun_skill)
 
         self.assertIn("AGENT_TOOLBELT_HOME", media_skill)
         self.assertIn("scripts/invoke_media_tool.py", media_skill)
