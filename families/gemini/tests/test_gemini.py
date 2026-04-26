@@ -448,6 +448,52 @@ class GeminiTests(unittest.TestCase):
         self.assertEqual(result["normalized_question"], "recommend me a colony sim")
         self.assertIn("RimWorld", result["response"])
 
+    def test_codex_skill_routes_api_app_development_to_official_google_skills(self):
+        skill_text = (
+            REPO_ROOT
+            / "families"
+            / "gemini"
+            / "codex"
+            / "skills"
+            / "gemini-cli"
+            / "SKILL.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("official Google Gemini skills", skill_text)
+        self.assertIn("API/app development", skill_text)
+        self.assertIn("Gemini SDK", skill_text)
+        self.assertIn("live interactions", skill_text)
+
+    def test_gemini_docs_describe_url_to_markdown_fallback_for_public_non_youtube_pages(self):
+        codex_skill = (
+            REPO_ROOT
+            / "families"
+            / "gemini"
+            / "codex"
+            / "skills"
+            / "gemini-cli"
+            / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        claude_skill = (
+            REPO_ROOT
+            / "families"
+            / "gemini"
+            / "claude"
+            / "marketplaces"
+            / "agent-toolbelt-local"
+            / "plugins"
+            / "gemini-public-inspector"
+            / "skills"
+            / "gemini-public-inspector"
+            / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        readme = (REPO_ROOT / "families" / "gemini" / "README.md").read_text(encoding="utf-8")
+
+        for text in (codex_skill, claude_skill, readme):
+            self.assertIn("URL-to-Markdown", text)
+            self.assertIn("non-YouTube", text)
+            self.assertIn("verify", text.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

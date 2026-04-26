@@ -33,6 +33,32 @@ def make_result(
     }
 
 
+def add_diagnostics(
+    result: dict[str, Any],
+    *,
+    requested_mode: str,
+    root: str | None,
+    max_results: int,
+    match_path: bool,
+    fallback_used: bool = False,
+    fallback_reason: str | None = None,
+    es_path: str | None = None,
+) -> dict[str, Any]:
+    payload = dict(result)
+    payload["diagnostics"] = {
+        "requested_mode": requested_mode,
+        "selected_backend": payload.get("backend"),
+        "fallback_used": fallback_used,
+        "fallback_reason": fallback_reason,
+        "searched_root": str(Path(root or os.getcwd()).resolve()) if requested_mode != "path-resolve" else None,
+        "es_available": es_path is not None if requested_mode == "global" else None,
+        "es_path": es_path,
+        "match_path": match_path,
+        "max_results": max_results,
+    }
+    return payload
+
+
 def has_glob_pattern(query: str) -> bool:
     return any(char in query for char in "*?[]")
 
@@ -316,12 +342,24 @@ def lookup(
     es_path: str | None = None,
 ) -> dict[str, Any]:
     if mode == "path-resolve":
-        return search_with_where(query=query, max_results=max_results)
+        return add_diagnostics(
+            search_with_where(query=query, max_results=max_results),
+            requested_mode=mode,
+            root=None,
+            max_results=max_results,
+            match_path=match_path,
+        )
 
     if mode == "repo-local":
         search_root = root or os.getcwd()
-        return search_with_rg(
-            query=query,
+        return add_diagnostics(
+            search_with_rg(
+                query=query,
+                root=search_root,
+                max_results=max_results,
+                match_path=match_path,
+            ),
+            requested_mode=mode,
             root=search_root,
             max_results=max_results,
             match_path=match_path,
@@ -329,12 +367,18 @@ def lookup(
 
     if mode == "dir-scope":
         search_root = root or os.getcwd()
-        return search_with_powershell(
-            query=query,
+        return add_diagnostics(
+            search_with_powershell(
+                query=query,
+                root=search_root,
+                max_results=max_results,
+                match_path=match_path,
+                stderr_prefix="Scoped directory search requested.",
+            ),
+            requested_mode=mode,
             root=search_root,
             max_results=max_results,
             match_path=match_path,
-            stderr_prefix="Scoped directory search requested.",
         )
 
     if mode != "global":
@@ -343,12 +387,21 @@ def lookup(
     search_root = root or os.getcwd()
     resolved_es = resolve_es_executable(explicit_path=es_path)
     if resolved_es is None:
-        return search_with_powershell(
-            query=query,
+        return add_diagnostics(
+            search_with_powershell(
+                query=query,
+                root=search_root,
+                max_results=max_results,
+                match_path=match_path,
+                stderr_prefix="Everything CLI not available; searched only within the provided root.",
+            ),
+            requested_mode=mode,
             root=search_root,
             max_results=max_results,
             match_path=match_path,
-            stderr_prefix="Everything CLI not available; searched only within the provided root.",
+            fallback_used=True,
+            fallback_reason="Everything CLI not available.",
+            es_path=None,
         )
 
     everything_result = search_with_everything(
@@ -358,17 +411,33 @@ def lookup(
         es_path=resolved_es,
     )
     if everything_result["ok"]:
-        return everything_result
+        return add_diagnostics(
+            everything_result,
+            requested_mode=mode,
+            root=search_root,
+            max_results=max_results,
+            match_path=match_path,
+            es_path=resolved_es,
+        )
 
-    return search_with_powershell(
-        query=query,
+    return add_diagnostics(
+        search_with_powershell(
+            query=query,
+            root=search_root,
+            max_results=max_results,
+            match_path=match_path,
+            stderr_prefix=merge_messages(
+                everything_result["stderr"],
+                "Everything CLI failed. Fell back to scoped PowerShell search.",
+            ),
+        ),
+        requested_mode=mode,
         root=search_root,
         max_results=max_results,
         match_path=match_path,
-        stderr_prefix=merge_messages(
-            everything_result["stderr"],
-            "Everything CLI failed. Fell back to scoped PowerShell search.",
-        ),
+        fallback_used=True,
+        fallback_reason=everything_result["stderr"] or "Everything CLI failed.",
+        es_path=resolved_es,
     )
 
 

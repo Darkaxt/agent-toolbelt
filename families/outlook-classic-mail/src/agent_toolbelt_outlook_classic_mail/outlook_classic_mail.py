@@ -24,10 +24,11 @@ def make_result(
     store: str | None = None,
     result: dict[str, Any] | None = None,
     warnings: list[str] | None = None,
+    wrapper_diagnostics: dict[str, Any] | None = None,
     stderr: str = "",
     exit_code: int = 0,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "ok": ok,
         "operation": operation,
         "account": account,
@@ -37,6 +38,9 @@ def make_result(
         "stderr": stderr,
         "exit_code": exit_code,
     }
+    if wrapper_diagnostics is not None:
+        payload["wrapper_diagnostics"] = wrapper_diagnostics
+    return payload
 
 
 def resolve_client_home(explicit_home: str | None = None) -> Path | None:
@@ -65,6 +69,42 @@ def resolve_uv_executable() -> str | None:
     return shutil.which("uv.exe") or shutil.which("uv")
 
 
+def client_home_source(*, explicit_home: str | None, resolved_home: Path | None) -> str:
+    if resolved_home is None:
+        return "unavailable"
+    resolved = resolved_home.resolve()
+    if explicit_home and Path(explicit_home).expanduser().resolve() == resolved:
+        return "explicit"
+    env_value = os.getenv(CLIENT_HOME_ENV)
+    if env_value and Path(env_value).expanduser().resolve() == resolved:
+        return "environment"
+    tools_dir = windows_local_tools_dir()
+    if tools_dir is not None and (tools_dir / CLIENT_FOLDER_NAME).resolve() == resolved:
+        return "local_tools"
+    return "resolved"
+
+
+def build_wrapper_diagnostics(
+    *,
+    client_home: str | None,
+    resolved_home: Path | None,
+    queue_timeout_sec: int,
+    command_timeout_sec: int,
+    failure_kind: str | None = None,
+) -> dict[str, Any]:
+    diagnostics: dict[str, Any] = {
+        "access_model": "local_outlook_classic_com",
+        "cloud_connector_used": False,
+        "client_home_source": client_home_source(explicit_home=client_home, resolved_home=resolved_home),
+        "client_home_resolved": str(resolved_home) if resolved_home is not None else None,
+        "queue_timeout_sec": queue_timeout_sec,
+        "command_timeout_sec": command_timeout_sec,
+    }
+    if failure_kind:
+        diagnostics["failure_kind"] = failure_kind
+    return diagnostics
+
+
 def build_client_command(
     *,
     client_home: Path,
@@ -90,6 +130,7 @@ def normalize_payload(
     operation: str,
     stderr: str,
     exit_code: int,
+    wrapper_diagnostics: dict[str, Any],
 ) -> dict[str, Any]:
     if payload is None:
         return make_result(
@@ -97,6 +138,7 @@ def normalize_payload(
             operation=operation,
             stderr=stderr,
             exit_code=exit_code,
+            wrapper_diagnostics=wrapper_diagnostics,
         )
 
     payload.setdefault("operation", operation)
@@ -107,6 +149,7 @@ def normalize_payload(
     payload.setdefault("account", None)
     payload.setdefault("store", None)
     payload.setdefault("ok", exit_code == 0)
+    payload.setdefault("wrapper_diagnostics", wrapper_diagnostics)
     return payload
 
 
@@ -126,6 +169,12 @@ def invoke_client(
 ) -> dict[str, Any]:
     operation = operation_args[0] if operation_args else "unknown"
     resolved_home = resolve_client_home(explicit_home=client_home)
+    diagnostics = build_wrapper_diagnostics(
+        client_home=client_home,
+        resolved_home=resolved_home,
+        queue_timeout_sec=queue_timeout_sec,
+        command_timeout_sec=timeout_sec,
+    )
     if resolved_home is None:
         return make_result(
             ok=False,
@@ -137,6 +186,10 @@ def invoke_client(
                 "compatibility fallback."
             ),
             exit_code=127,
+            wrapper_diagnostics={
+                **diagnostics,
+                "failure_kind": "client_unavailable",
+            },
         )
 
     uv_executable = resolve_uv_executable()
@@ -146,6 +199,10 @@ def invoke_client(
             operation=operation,
             stderr="uv is not available on PATH.",
             exit_code=127,
+            wrapper_diagnostics={
+                **diagnostics,
+                "failure_kind": "uv_unavailable",
+            },
         )
 
     command = build_client_command(
@@ -162,6 +219,10 @@ def invoke_client(
             operation=operation,
             stderr=str(exc),
             exit_code=127,
+            wrapper_diagnostics={
+                **diagnostics,
+                "failure_kind": "process_start_failed",
+            },
         )
     except subprocess.TimeoutExpired as exc:
         return make_result(
@@ -169,18 +230,28 @@ def invoke_client(
             operation=operation,
             stderr=merge_messages(exc.stderr or "", "Outlook Classic mail client timed out."),
             exit_code=124,
+            wrapper_diagnostics={
+                **diagnostics,
+                "failure_kind": "wrapper_timeout",
+            },
         )
 
+    json_decode_failed = False
     try:
         payload = parse_payload(completed.stdout)
     except json.JSONDecodeError:
         payload = None
+        json_decode_failed = True
 
     return normalize_payload(
         payload=payload,
         operation=operation,
         stderr=merge_messages(completed.stderr),
         exit_code=completed.returncode,
+        wrapper_diagnostics={
+            **diagnostics,
+            **({"failure_kind": "invalid_json"} if json_decode_failed else {}),
+        },
     )
 
 

@@ -12,57 +12,11 @@ automatic replacement criteria. Local-first behavior, fail-closed safety,
 explicit confirmation gates, and exact platform fit count as first-class
 features for this repo.
 
-## P1 - Active next improvements
+## Active next improvements
 
-### `skill-creator` and `skills-sh-scout`
-
-- Current verdict: `skills-sh-scout` now exists as the repo-backed public discovery helper.
-- Public inspirations: skills.sh search workflows, marketplace comparison tables, and public-source inspection before new skill design.
-- Improvement requests: update the local/system `skill-creator` instructions so new skill creation and major skill expansion start with `skills-sh-scout` when the workflow may already exist publicly.
-- Avoid: bloating `skill-creator` with marketplace logic or letting `skills-sh-scout` install, remove, or mutate skills.
-- Recommended next action: integrate. Keep `skills-sh-scout` as the separate discovery gate and make `skill-creator` call it before design work.
-
-### `whatsapp-wacli`
-
-- Current verdict: strong direct competitors exist.
-- Public candidates: `steipete/clawdis/wacli`, `gokapso` WhatsApp Business/API skills, WhatsApp Cloud/API and `whatsapp-web.js` skills.
-- Improvement requests: explicitly document why the curated adapter remains useful compared with raw `wacli`: structured JSON, PN-vs-LID resolution, bounded backfill, seed-missing diagnostics, and explicit confirmation gates for visible actions.
-- Avoid: raw passthrough that bypasses safety gates, WhatsApp Business API scope creep, session packaging, or visible sends without exact confirmation.
-- Recommended next action: improve positioning and usage guidance. Keep the helper if the structured layer materially improves reliability over raw CLI calls.
-
-### `linkedin-cv`
-
-- Current verdict: partial alternatives exist.
-- Public inspirations: LinkedIn profile optimizer, resume tailor, personal branding, and recruiter-visibility skills.
-- Improvement requests: add clearer analysis templates for profile-section scoring, recruiter-visibility checks, evidence inventory, CV/profile delta reporting, and truthful rewrite prompts grounded in captured snapshots.
-- Avoid: LinkedIn automation, engagement actions, scraping at scale, lead generation, generic profile advice detached from evidence, or pretending public optimizer skills replace local profile evidence capture.
-- Recommended next action: improve positioning and analysis templates, not automation.
-
-## P2 - Useful but larger or lower urgency
-
-### `outlook-classic-mail`
-
-- Current verdict: partial alternatives exist.
-- Public candidates: `membranedev/application-skills/microsoft-outlook`, Rube/Composio Outlook automation skills, M365/Graph mail skills, IMAP/SMTP mail skills.
-- Improvement requests: consider an optional Graph/M365 fallback only if local Outlook Classic is unavailable; improve diagnostics that distinguish local COM queue issues from connector-style mail access.
-- Avoid: silently switching trust models from local Outlook Classic COM to cloud mailbox APIs, or performing draft/send/move/delete actions without confirmation.
-- Recommended next action: keep as local-first. Treat cloud connector parity as a separate design, not an incremental patch.
-
-### `gemini-cli`
-
-- Current verdict: partial alternatives exist.
-- Public candidates: official Google Gemini API/dev/interactions/live skills, `steipete/clawdis/gemini`, URL-to-Markdown and YouTube summarizer skills.
-- Improvement requests: keep public URL/Gemini CLI inspection narrow; add clearer routing to official Google skills for API/app development; consider a URL-to-Markdown fallback when Gemini cannot inspect a public page.
-- Avoid: reverse-engineered Gemini Web API flows, private/local URL submission, or broad Gemini app-development guidance.
-- Recommended next action: keep and clarify routing.
-
-### `everything-search`
-
-- Current verdict: no meaningful direct alternative found.
-- Public candidates: generic `fd`/`rg` file-search skills, RAG/file-ingest skills, desktop-search-adjacent skills.
-- Improvement requests: document the difference between global Windows filename/path discovery and repo-local content search; add clearer fallback diagnostics if Everything or `es.exe` is missing.
-- Avoid: turning this into a content grep, RAG indexer, or cross-platform promise.
-- Recommended next action: keep. No urgent feature work.
+No repo-local P1/P2 implementation items are currently selected. Keep using
+this file as the parking lot for future work that survives a `skills-sh-scout`
+or skills.sh alternative review.
 
 ## Watch list
 
@@ -73,6 +27,14 @@ features for this repo.
 - Improvement requests: continue evaluating broad-history UX ideas such as transcript-reader ergonomics, optional importers, query-language polish, and search-result explainability.
 - Avoid: losing exact current-thread fail-closed semantics, making imported memory a default recall source, or becoming a cloud memory system.
 - Recommended next action: keep. Improve only where public recall tools expose clear audit/search UX gaps.
+
+### `outlook-classic-mail`
+
+- Current verdict: partial alternatives exist.
+- Public candidates: `membranedev/application-skills/microsoft-outlook`, Rube/Composio Outlook automation skills, M365/Graph mail skills, IMAP/SMTP mail skills.
+- Future requests: consider an optional Graph/M365 fallback only if local Outlook Classic is unavailable.
+- Avoid: silently switching trust models from local Outlook Classic COM to cloud mailbox APIs, or performing draft/send/move/delete actions without confirmation.
+- Recommended next action: keep as local-first. Treat cloud connector parity as a separate design, not an incremental patch.
 
 ### `xsoar-development`
 
@@ -118,6 +80,42 @@ features for this repo.
 - Decision: implemented as a public package-backed helper skill.
 - Completed work: skills.sh API discovery, candidate dedupe, public GitHub inspection, recommendation categories, Codex/Claude skill bundles, docs, and validation wiring.
 - Follow-up: keep it advisory only; route `skill-creator` through it rather than merging marketplace discovery into `skill-creator`.
+
+### `skill-creator`
+
+- Decision: improved locally as a system skill.
+- Completed work: added a public-alternative preflight that routes new skill creation and major skill expansion through `skills-sh-scout` when appropriate.
+- Follow-up: keep marketplace discovery out of core creation logic; `skill-creator` should call the scout rather than reimplementing it.
+
+### `whatsapp-wacli`
+
+- Decision: improved in this repo.
+- Completed work: documented the curated helper value over raw `wacli`, including structured JSON, PN-vs-LID resolution, bounded backfill, seed-missing diagnostics, and explicit confirmation gates.
+- Follow-up: keep the helper local-first and avoid WhatsApp Business/API scope creep unless explicitly redesigned.
+
+### `linkedin-cv`
+
+- Decision: improved in this repo.
+- Completed work: added evidence-first analysis templates for profile-section scoring, recruiter visibility, CV/profile deltas, and truthful rewrite prompts.
+- Follow-up: improve analysis templates only; avoid LinkedIn automation, scraping, search traversal, messaging, or engagement actions.
+
+### `outlook-classic-mail`
+
+- Decision: improved in this repo.
+- Completed work: added wrapper diagnostics that distinguish local Outlook Classic COM/client failures from cloud connector availability while keeping the skill local-first.
+- Follow-up: optional Graph/M365 fallback remains a separate design if needed.
+
+### `gemini-cli`
+
+- Decision: improved in this repo.
+- Completed work: clarified routing to official Google Gemini skills for API/app development and documented URL-to-Markdown/browser fallback for inaccessible public non-YouTube pages.
+- Follow-up: keep this skill focused on public URL inspection and public-web research cross-checks.
+
+### `everything-search`
+
+- Decision: improved in this repo.
+- Completed work: documented filename/path scope and added diagnostics for backend selection, `es.exe` availability, and scoped fallback behavior.
+- Follow-up: keep it out of content grep, symbol search, RAG indexing, and cross-platform promises.
 
 ## Validation checklist
 

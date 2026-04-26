@@ -112,6 +112,12 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertEqual(result["queue"]["timeout_seconds"], 900)
         self.assertEqual(captured["timeout_sec"], 1095)
         self.assertIn("--queue-timeout-sec", captured["command"])
+        self.assertEqual(result["wrapper_diagnostics"]["access_model"], "local_outlook_classic_com")
+        self.assertFalse(result["wrapper_diagnostics"]["cloud_connector_used"])
+        self.assertEqual(result["wrapper_diagnostics"]["client_home_source"], "resolved")
+        self.assertEqual(result["wrapper_diagnostics"]["client_home_resolved"], r"C:\Tools\outlook-classic-mail")
+        self.assertEqual(result["wrapper_diagnostics"]["queue_timeout_sec"], 900)
+        self.assertEqual(result["wrapper_diagnostics"]["command_timeout_sec"], 180)
 
     def test_invoke_client_reports_missing_uv_cleanly(self):
         original_uv = outlook_classic_mail.resolve_uv_executable
@@ -127,6 +133,63 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["exit_code"], 127)
         self.assertIn("uv", result["stderr"].lower())
+        self.assertEqual(result["wrapper_diagnostics"]["failure_kind"], "uv_unavailable")
+        self.assertFalse(result["wrapper_diagnostics"]["cloud_connector_used"])
+
+    def test_invoke_client_reports_missing_client_home_diagnostics(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            original_local_appdata = os.environ.get("LOCALAPPDATA")
+            original_tool_home = os.environ.get("OUTLOOK_CLASSIC_MAIL_HOME")
+            os.environ["LOCALAPPDATA"] = temp_dir
+            os.environ.pop("OUTLOOK_CLASSIC_MAIL_HOME", None)
+            try:
+                result = outlook_classic_mail.invoke_client(operation_args=["accounts"], client_home=str(Path(temp_dir) / "missing-client"))
+            finally:
+                if original_local_appdata is None:
+                    os.environ.pop("LOCALAPPDATA", None)
+                else:
+                    os.environ["LOCALAPPDATA"] = original_local_appdata
+                if original_tool_home is None:
+                    os.environ.pop("OUTLOOK_CLASSIC_MAIL_HOME", None)
+                else:
+                    os.environ["OUTLOOK_CLASSIC_MAIL_HOME"] = original_tool_home
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["exit_code"], 127)
+        diagnostics = result["wrapper_diagnostics"]
+        self.assertEqual(diagnostics["access_model"], "local_outlook_classic_com")
+        self.assertFalse(diagnostics["cloud_connector_used"])
+        self.assertEqual(diagnostics["failure_kind"], "client_unavailable")
+        self.assertIsNone(diagnostics["client_home_resolved"])
+        self.assertEqual(diagnostics["queue_timeout_sec"], outlook_classic_mail.DEFAULT_QUEUE_TIMEOUT_SEC)
+
+    def test_invoke_client_reports_wrapper_timeout_diagnostics(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            original_run = outlook_classic_mail.run_process
+            original_uv = outlook_classic_mail.resolve_uv_executable
+            outlook_classic_mail.resolve_uv_executable = lambda: "uv.exe"
+
+            def fake_run(command, **kwargs):
+                raise outlook_classic_mail.subprocess.TimeoutExpired(command, timeout=kwargs["timeout_sec"], stderr="client busy")
+
+            outlook_classic_mail.run_process = fake_run
+            try:
+                result = outlook_classic_mail.invoke_client(
+                    operation_args=["accounts"],
+                    client_home=temp_dir,
+                    timeout_sec=12,
+                    queue_timeout_sec=34,
+                )
+            finally:
+                outlook_classic_mail.run_process = original_run
+                outlook_classic_mail.resolve_uv_executable = original_uv
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["exit_code"], 124)
+        self.assertIn("client busy", result["stderr"])
+        self.assertEqual(result["wrapper_diagnostics"]["failure_kind"], "wrapper_timeout")
+        self.assertEqual(result["wrapper_diagnostics"]["command_timeout_sec"], 12)
+        self.assertEqual(result["wrapper_diagnostics"]["queue_timeout_sec"], 34)
 
     def test_build_operation_args_routes_find_folders(self):
         parser = outlook_classic_mail.build_parser()
@@ -476,6 +539,9 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("outlook_busy", skill_text)
         self.assertIn("FIFO queue", skill_text)
         self.assertIn("queue_timeout", skill_text)
+        self.assertIn("wrapper_diagnostics", skill_text)
+        self.assertIn("local Outlook Classic COM", skill_text)
+        self.assertIn("cloud connector", skill_text)
 
     def test_claude_plugin_manifest_and_marketplace_exist(self):
         marketplace_root = (
@@ -548,6 +614,8 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("queue_timeout", skill_text)
         self.assertIn("Gmail", skill_text)
         self.assertIn("explicit confirmation", skill_text)
+        self.assertIn("wrapper_diagnostics", skill_text)
+        self.assertIn("cloud connector", skill_text)
 
 
 if __name__ == "__main__":
