@@ -11,16 +11,6 @@ automatic replacement criteria. Local-first behavior, fail-closed safety,
 explicit confirmation gates, and exact platform fit count as first-class
 features for this repo.
 
-## P0 - Replacement or de-emphasis follow-through
-
-### `uvrun-python`
-
-- Current verdict: strong adjacent competitors exist.
-- Public candidates: `astral-sh/claude-code-plugins/uv`, `wshobson/agents/uv-package-manager`, `mindrally/skills/python-uv`, `mitsuhiko/agent-stuff/uv`, `laurigates/claude-plugins/uv-run`.
-- Improvement request: completed replacement/de-emphasis. Keep only the local package wrapper behavior that prevents mistakes on this machine.
-- Avoid: duplicating official `uv` documentation or maintaining a general Python package-management skill when a public/official skill is better.
-- Recommended next action: replaced publicly by `astral-sh/claude-code-plugins/uv`; keep `families/uvrun` as a local wrapper-only package helper and do not advertise it as a public skill.
-
 ## P1 - Highest-value improvements
 
 ### `yt-dlp-ffmpeg`

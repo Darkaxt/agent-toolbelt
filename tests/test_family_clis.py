@@ -18,10 +18,6 @@ FAMILY_IMPORTS = {
         REPO_ROOT / "families" / "everything" / "src",
         "agent_toolbelt_everything.cli",
     ),
-    "uvrun": (
-        REPO_ROOT / "families" / "uvrun" / "src",
-        "agent_toolbelt_uvrun.cli",
-    ),
     "media": (
         REPO_ROOT / "families" / "media" / "src",
         "agent_toolbelt_media.cli",
@@ -130,32 +126,6 @@ class FamilyCLITests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["backend"], "everything")
-
-    def test_uvrun_cli_routes_standalone_script_command(self):
-        cli = import_family_cli("uvrun")
-
-        original_invoke = cli.uvrun.invoke_script
-        cli.uvrun.invoke_script = lambda **kwargs: {
-            "ok": True,
-            "eligible": True,
-            "backend": "uvrun",
-            "script": kwargs["script"],
-            "reason": "test",
-            "command": ["powershell.exe"],
-            "cwd": "D:\\repo",
-            "stdout": "",
-            "stderr": "",
-            "exit_code": 0,
-        }
-        try:
-            with io.StringIO() as buffer, redirect_stdout(buffer):
-                exit_code = cli.main(["demo.py", "--check"])
-                payload = json.loads(buffer.getvalue())
-        finally:
-            cli.uvrun.invoke_script = original_invoke
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(payload["backend"], "uvrun")
 
     def test_media_cli_routes_download_command(self):
         cli = import_family_cli("media")

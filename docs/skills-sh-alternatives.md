@@ -27,7 +27,6 @@ and safety gates count as first-class features for local-first skills.
 | `yt-dlp-ffmpeg` | Strong direct competitors exist | Keep unless we want to depend on multiple public skills. Public skills cover pieces; ours combines download/probe/clip/remux/transcode with stricter safety. |
 | `observable-reputation` | No meaningful direct alternative found | Keep. Public hits are mostly brand reputation, DNS admin, or general OSINT. |
 | `outlook-classic-mail` | Partial alternatives exist | Keep. Public alternatives target cloud Outlook/M365 connectors; ours targets local Outlook Classic COM. |
-| `uvrun-python` | Strong adjacent competitors exist | Replaced publicly by the official Astral `uv` skill; keep only the package-level local wrapper helper. |
 | `whatsapp-wacli` | Strong direct competitors exist | Re-evaluate carefully. `steipete/clawdis/wacli` is a direct public local-wacli competitor. |
 | `xsoar-development` | Partial alternatives exist | Keep. Public alternatives target live SOAR actions; ours targets content-development correctness. |
 
@@ -342,39 +341,7 @@ Relevant candidates:
 | 56 | [`probichaux/clawdskills/m365-mail`](https://skills.sh/probichaux/clawdskills/m365-mail) | Microsoft Graph mail CLI; partial. |
 | 49 | [`pietz/skills/m365`](https://skills.sh/pietz/skills/m365) | M365 workflow; adjacent. |
 
-## 10. `uvrun-python`
-
-Queries: `uvrun`, `uv run`, `python runtime`, `python script runner`,
-`standalone python`
-
-API coverage: 99 unique hits. No capped query. `uvrun` returned zero hits.
-
-Verdict: strong adjacent competitors exist.
-
-Feature comparison: public `uv` skills are better for general uv package
-management and Python project workflows. Our skill is narrower: a local wrapper
-that decides whether a standalone `.py` script should go through `uvrun.ps1` or
-fall back to direct Python, while avoiding project-managed commands.
-
-Recommendation: replace the public skill with the official Astral `uv` skill.
-Keep `families/uvrun` only as an internal package helper for the narrower local
-`uvrun.ps1` routing behavior.
-
-Relevant candidates:
-
-| Installs | Candidate | Fit |
-| ---: | --- | --- |
-| 7113 | [`wshobson/agents/uv-package-manager`](https://skills.sh/wshobson/agents/uv-package-manager) | Broad uv package manager skill; strong adjacent. |
-| 2767 | [`trailofbits/skills/modern-python`](https://skills.sh/trailofbits/skills/modern-python) | Modern Python guidance; adjacent. |
-| 365 | [`mindrally/skills/python-uv`](https://skills.sh/mindrally/skills/python-uv) | uv package management; strong adjacent. |
-| 363 | [`astral-sh/claude-code-plugins/uv`](https://skills.sh/astral-sh/claude-code-plugins/uv) | Official uv guidance; strongest public replacement candidate. |
-| 263 | [`mindrally/skills/python`](https://skills.sh/mindrally/skills/python) | General Python; adjacent. |
-| 89 | [`jorgealves/agent_skills/python-venv-manager`](https://skills.sh/jorgealves/agent_skills/python-venv-manager) | Virtualenv manager; adjacent. |
-| 78 | [`mitsuhiko/agent-stuff/uv`](https://skills.sh/mitsuhiko/agent-stuff/uv) | Concise uv command reference; partial direct. |
-| 74 | [`laurigates/claude-plugins/uv-run`](https://skills.sh/laurigates/claude-plugins/uv-run) | Direct `uv run` competitor. |
-| 59 | [`89jobrien/steve/python-scripting`](https://skills.sh/89jobrien/steve/python-scripting) | Python scripting; adjacent. |
-
-## 11. `whatsapp-wacli`
+## 10. `whatsapp-wacli`
 
 Queries: `whatsapp`, `whatsapp automation`, `whatsapp business`,
 `whatsapp local`, `whatsapp chat`
@@ -411,7 +378,7 @@ Relevant candidates:
 | 68 | [`goncy/skills/whatsapp-web-js`](https://skills.sh/goncy/skills/whatsapp-web-js) | `whatsapp-web.js` guidance; local/web automation alternative. |
 | 18 | [`smithery.ai/wacli`](https://skills.sh/smithery.ai/wacli) | Low-install wacli mirror/variant. |
 
-## 12. `xsoar-development`
+## 11. `xsoar-development`
 
 Queries: `xsoar`, `cortex xsoar`, `demisto`, `soar`, `xsoar content`
 
@@ -446,12 +413,10 @@ skills, not Cortex XSOAR content packs.
 1. `whatsapp-wacli`: compare directly with `steipete/clawdis/wacli`. This is
    the clearest possible deprecation candidate if the public skill covers our
    adapter's structured local behavior.
-2. `uvrun-python`: replaced publicly by `astral-sh/claude-code-plugins/uv`;
-   keep only the local wrapper package if its routing behavior remains useful.
-3. `codex-thread-recall`: do not deprecate, but consider integrating public
+2. `codex-thread-recall`: do not deprecate, but consider integrating public
    recall search strengths: BM25, phrase/boolean/prefix syntax, CJK/trigram
    support, and transcript reader ergonomics.
-4. `yt-dlp-ffmpeg`: keep, but consider adding list-formats, URL detection, and
+3. `yt-dlp-ffmpeg`: keep, but consider adding list-formats, URL detection, and
    metadata-only flows from public yt-dlp skills.
-5. `amazon-cli`: keep, but study BrowserAct product/review API skills for more
+4. `amazon-cli`: keep, but study BrowserAct product/review API skills for more
    stable structured extraction patterns.

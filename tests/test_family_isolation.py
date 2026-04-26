@@ -8,7 +8,6 @@ CHECKED_SUFFIXES = {".md", ".py", ".json", ".toml", ".yaml", ".yml"}
 FAMILY_NAMES = (
     "gemini",
     "everything",
-    "uvrun",
     "media",
     "outlook-classic-mail",
     "amazon-cli",
