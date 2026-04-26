@@ -45,6 +45,12 @@ class EverythingTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["backend"], "everything")
         self.assertIn("Everything.exe", result["results"][0])
+        self.assertEqual(result["diagnostics"]["requested_mode"], "global")
+        self.assertEqual(result["diagnostics"]["selected_backend"], "everything")
+        self.assertFalse(result["diagnostics"]["fallback_used"])
+        self.assertTrue(result["diagnostics"]["es_available"])
+        self.assertEqual(result["diagnostics"]["es_path"], "C:/Tools/es.exe")
+        self.assertEqual(result["diagnostics"]["max_results"], 5)
 
     def test_path_resolve_uses_where_backend(self):
         original_where = everything.search_with_where
@@ -64,6 +70,9 @@ class EverythingTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["backend"], "fallback-where")
         self.assertIn("claude.exe", result["results"][0])
+        self.assertEqual(result["diagnostics"]["requested_mode"], "path-resolve")
+        self.assertEqual(result["diagnostics"]["selected_backend"], "fallback-where")
+        self.assertFalse(result["diagnostics"]["fallback_used"])
 
     def test_repo_local_uses_rg_backend(self):
         original_rg = everything.search_with_rg
@@ -82,6 +91,10 @@ class EverythingTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["backend"], "fallback-rg")
+        self.assertEqual(result["diagnostics"]["requested_mode"], "repo-local")
+        self.assertEqual(result["diagnostics"]["selected_backend"], "fallback-rg")
+        self.assertEqual(result["diagnostics"]["searched_root"], str(Path("D:\\repo").resolve()))
+        self.assertFalse(result["diagnostics"]["fallback_used"])
 
     def test_missing_es_falls_back_cleanly(self):
         original_resolver = everything.resolve_es_executable
@@ -109,6 +122,14 @@ class EverythingTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["backend"], "fallback-powershell")
         self.assertIn("Everything CLI not available", result["stderr"])
+        diagnostics = result["diagnostics"]
+        self.assertEqual(diagnostics["requested_mode"], "global")
+        self.assertEqual(diagnostics["selected_backend"], "fallback-powershell")
+        self.assertTrue(diagnostics["fallback_used"])
+        self.assertEqual(diagnostics["fallback_reason"], "Everything CLI not available.")
+        self.assertFalse(diagnostics["es_available"])
+        self.assertIsNone(diagnostics["es_path"])
+        self.assertEqual(diagnostics["searched_root"], str(Path("D:\\repo").resolve()))
 
     def test_non_zero_es_exit_falls_back_cleanly(self):
         original_resolver = everything.resolve_es_executable
@@ -146,6 +167,75 @@ class EverythingTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["backend"], "fallback-powershell")
         self.assertIn("notes.md", result["results"][0])
+        diagnostics = result["diagnostics"]
+        self.assertTrue(diagnostics["fallback_used"])
+        self.assertEqual(diagnostics["fallback_reason"], "Everything CLI failed.")
+        self.assertTrue(diagnostics["es_available"])
+        self.assertEqual(diagnostics["es_path"], "C:/Tools/es.exe")
+
+    def test_dir_scope_reports_scoped_backend_without_global_everything_claim(self):
+        original_ps = everything.search_with_powershell
+        everything.search_with_powershell = lambda **kwargs: {
+            "ok": True,
+            "backend": "fallback-powershell",
+            "query": kwargs["query"],
+            "results": ["D:\\repo\\notes.md"],
+            "stderr": "",
+            "exit_code": 0,
+        }
+        try:
+            result = everything.lookup(
+                query="notes.md",
+                mode="dir-scope",
+                root="D:\\repo",
+                max_results=5,
+                match_path=True,
+            )
+        finally:
+            everything.search_with_powershell = original_ps
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["backend"], "fallback-powershell")
+        self.assertEqual(result["diagnostics"]["requested_mode"], "dir-scope")
+        self.assertEqual(result["diagnostics"]["selected_backend"], "fallback-powershell")
+        self.assertTrue(result["diagnostics"]["match_path"])
+        self.assertFalse(result["diagnostics"]["fallback_used"])
+
+    def test_codex_skill_documents_filename_scope_and_diagnostics(self):
+        skill_text = (
+            REPO_ROOT
+            / "families"
+            / "everything"
+            / "codex"
+            / "skills"
+            / "everything-search"
+            / "SKILL.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("filename/path discovery", skill_text)
+        self.assertIn("diagnostics", skill_text)
+        self.assertIn("fallback_used", skill_text)
+        self.assertIn("not a content grep", skill_text)
+
+    def test_claude_skill_documents_filename_scope_and_diagnostics(self):
+        skill_text = (
+            REPO_ROOT
+            / "families"
+            / "everything"
+            / "claude"
+            / "marketplaces"
+            / "agent-toolbelt-local"
+            / "plugins"
+            / "everything-search"
+            / "skills"
+            / "everything-search"
+            / "SKILL.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("filename/path discovery", skill_text)
+        self.assertIn("diagnostics", skill_text)
+        self.assertIn("fallback_used", skill_text)
+        self.assertIn("not a content grep", skill_text)
 
 
 if __name__ == "__main__":

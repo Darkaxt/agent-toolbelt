@@ -8,6 +8,14 @@ Use this family if you want:
 - trusted-by-default YouTube handling
 - Codex-side second-pass research cross-checks
 
+Do not use this family for Gemini API/app development, Gemini SDK
+implementation, live interactions, model integration, or product architecture.
+Use official Google Gemini skills for those workflows instead.
+
+If Gemini cannot inspect an accessible public non-YouTube page, use a
+URL-to-Markdown or browser fetch fallback outside this family, then verify
+important claims directly before relying on them.
+
 External requirements:
 
 - `npx`

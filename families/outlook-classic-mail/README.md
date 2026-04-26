@@ -61,6 +61,14 @@ For repeated contact or subject searches, use the metadata cache as a locator. `
 
 COM-backed commands enter a local FIFO queue before they touch Outlook. Do not launch many heavy Outlook queries in parallel expecting linear timeout inflation; queueing is the concurrency control layer. Use `--queue-timeout-sec` to control how long a call waits for its turn. Result payloads report `queue.used`, `queue.waited_seconds`, `queue.position_at_enqueue`, `queue.depth_at_enqueue`, and `queue.timeout_seconds`.
 
+Wrapper responses also include `wrapper_diagnostics` so callers can distinguish
+local Outlook Classic COM/client failures from cloud connector availability. The
+diagnostics report `access_model: local_outlook_classic_com`,
+`cloud_connector_used: false`, the client-home source/path, timeout budgets, and
+wrapper-level `failure_kind` values such as `client_unavailable`,
+`uv_unavailable`, `wrapper_timeout`, `invalid_json`, or
+`process_start_failed`.
+
 For very recent sent or received mail, run `sync-mail` first. It triggers Outlook Send/Receive through SyncObjects when available and falls back to `SendAndReceive(False)`.
 
 If a command returns `queue_timeout`, it never reached execution before the queue budget expired. If it returns `outlook_busy`, queue admission succeeded but the underlying COM execution lock still failed unexpectedly.

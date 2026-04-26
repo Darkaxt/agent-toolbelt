@@ -30,6 +30,13 @@ Do not use this skill when:
 
 - Claude can answer directly without calling Gemini.
 - The input is a local file, pasted private content, localhost URL, or private-network target and the user has not explicitly approved sending it to Gemini.
+- The task is Gemini API/app development, Gemini SDK implementation, live interactions, model integration, or product architecture. Use official Google Gemini skills for those workflows instead.
+
+## Behavior
+
+- Treat YouTube and Reddit URLs as authoritative Gemini inputs by default.
+- For other non-YouTube public URLs, use Gemini as a helper, not an automatic authority.
+- If Gemini cannot inspect an accessible public non-YouTube page, use a URL-to-Markdown or browser fetch fallback outside this skill, then verify important claims directly before relying on them.
 
 ## Script Interface
 

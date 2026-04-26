@@ -24,6 +24,7 @@ Use `scripts/invoke_outlook_mail.py` for local mailbox access through Outlook Cl
 - Run `sync-mail` before searching for very recent sent or received mail when Outlook folders may lag behind Send/Receive.
 - Outlook COM-backed calls now join a local FIFO queue. Do not launch parallel heavy Outlook queries expecting linear timeout inflation; prefer targeted or batched requests and let the queue serialize execution.
 - If the client returns `queue_timeout`, the call never got a turn before the queue budget expired. If the client returns `outlook_busy`, queue admission succeeded but COM acquisition still failed unexpectedly.
+- Read `wrapper_diagnostics` on every response. It identifies the access model as local Outlook Classic COM, reports that no cloud connector was used, shows the resolved client-home source, and labels wrapper-level failures such as missing client, missing `uv`, timeout, invalid JSON, or process start failure.
 - Use `search --all-folders` as a bounded fallback. It uses cache-guided folder candidates by default; add `--bypass-cache --broad-scan` when the user suspects the cache/rules missed something or explicitly asks to scan broadly.
 - Use `--no-update-cache` for repeated direct-folder read-only searches when cache freshness is not needed.
 - For "find my response/reply" tasks tied to a received message, use `find-response` before manual Sent/Drafts searches.
