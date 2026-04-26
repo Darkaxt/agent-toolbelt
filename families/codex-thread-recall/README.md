@@ -51,6 +51,12 @@ Phase 8 makes audit-style queries less manual:
 - `worklog` answers first/last active-work span questions directly and collapses mirrored rollout envelopes by default.
 - `recall`, `grep`, `timeline`, and `worklog` can opt into `--thread-source workspace` with exact-`cwd` thread expansion and `--max-threads <n>`.
 
+Phase 9 improves audit search quality:
+
+- `grep` and `worklog` keep literal substring search by default and add opt-in `--query-mode fts` for SQLite FTS5/BM25 phrase, boolean, and prefix queries.
+- `grep` results include match snippets and stable `entry_ref` values, and `--context <n>` returns bounded neighboring evidence around each result.
+- `status` reports FTS availability, FTS row health, supported query modes, and cache health so corrupted search indexes rebuild instead of silently degrading.
+
 ## Commands
 
 ```powershell
@@ -94,8 +100,10 @@ Optional filters and overrides:
 - `grep --scope current|thread|episode --episode-id episode-N`
 - `grep --role ... --entry-type ... --payload-type ... --after ... --before ... --include-noise`
 - `grep --all --sort relevance|time-asc|time-desc`
+- `grep --query-mode literal|fts --context 0..5`
 - `grep --thread-source current|workspace --max-threads <n>`
 - `worklog --pattern <term> [--pattern <term> ...]`
+- `worklog --query-mode literal|fts`
 - `worklog --scope current|thread|episode --episode-id episode-N`
 - `worklog --include-incidental [--include-noise]`
 - `worklog --thread-source current|workspace --max-threads <n>`
@@ -108,9 +116,12 @@ Optional filters and overrides:
 - `timeline` returns grouped or flat event history with timestamps, excerpts,
   entities, repos, PRs, commits, and elapsed timing.
 - `grep` searches the indexed current-thread history and returns bounded evidence
-  instead of raw transcript dumps.
+  instead of raw transcript dumps. Search results include `entry_ref` and `match`
+  metadata with query mode, highlighted snippets, matched patterns, and FTS rank
+  when FTS is used.
 - `worklog` returns first/last logical work evidence, collapsed mirror counts,
-  and a human-readable duration for one or more literal patterns.
+  and a human-readable duration for one or more patterns. Literal matching stays
+  the default; FTS mode is opt-in.
 
 Successful scoped responses also include additive scope metadata:
 
@@ -164,6 +175,12 @@ Successful indexed responses also include cache metadata:
 - `cache.built_at`
 - `cache.last_rebuild_reason`
 - `cache.lock_state`
+- `cache.health`
+- `search.fts_available`
+- `search.fts_indexed_entry_count`
+- `search.fts_missing_entry_count`
+- `search.query_modes`
+- `search.context_max`
 - `episodes.total`
 - `episodes.current`
 - `episodes.last_boundary_reason`
