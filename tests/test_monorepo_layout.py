@@ -66,6 +66,12 @@ EXPECTED_FAMILIES = {
         "package_dir": "agent_toolbelt_whatsapp_wacli",
         "has_claude": True,
     },
+    "skills-sh-scout": {
+        "project_name": "agent-toolbelt-skills-sh-scout",
+        "script_name": "agent-toolbelt-skills-sh-scout",
+        "package_dir": "agent_toolbelt_skills_sh_scout",
+        "has_claude": True,
+    },
 }
 
 
@@ -89,6 +95,7 @@ class MonorepoLayoutTests(unittest.TestCase):
                 "families/linkedin-cv",
                 "families/codex-thread-recall",
                 "families/whatsapp-wacli",
+                "families/skills-sh-scout",
             ],
         )
 

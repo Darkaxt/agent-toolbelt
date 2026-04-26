@@ -15,6 +15,7 @@ FAMILY_NAMES = (
     "linkedin-cv",
     "codex-thread-recall",
     "whatsapp-wacli",
+    "skills-sh-scout",
 )
 
 

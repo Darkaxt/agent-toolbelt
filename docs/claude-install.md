@@ -11,6 +11,7 @@ Each family ships its own self-contained local marketplace with one plugin.
 - Observable Reputation: `families/observable-reputation/claude/marketplaces/agent-toolbelt-local`
 - Mail Domain Quarantine: `families/mail-domain-quarantine/claude/marketplaces/agent-toolbelt-local`
 - LinkedIn CV: `families/linkedin-cv/claude/marketplaces/agent-toolbelt-local`
+- Skills.sh Scout: `families/skills-sh-scout/claude/marketplaces/agent-toolbelt-local`
 
 ## Install flow
 

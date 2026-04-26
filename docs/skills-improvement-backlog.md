@@ -115,7 +115,7 @@ features for this repo.
 - Avoid: losing exact current-thread fail-closed semantics, making imported memory a default recall source, or becoming a cloud memory system.
 - Recommended next action: keep. Improve only where public recall tools expose clear audit/search UX gaps.
 
-## Planned helper skill: `skills-sh-scout`
+## Helper skill: `skills-sh-scout`
 
 Purpose: run a public skills.sh discovery gate before creating a new skill or
 materially expanding an existing one. This should be a separate helper skill,
@@ -154,10 +154,10 @@ Safety rules:
 - Treat official publisher, install count, and marketplace popularity as supporting evidence only.
 - Prefer public alternatives when they clearly cover the workflow with safer or broader behavior and no local-only advantage exists.
 
-Future implementation notes:
+Implementation notes:
 
-- Implement as a real skill in a later pass after this backlog is reviewed.
-- Keep `SKILL.md` concise and put longer query/evaluation examples in a directly linked reference file if needed.
+- `skills-sh-scout` is implemented as a public package-backed helper skill in this repo.
+- Keep `SKILL.md` concise and put longer query/evaluation examples in directly linked reference files if needed.
 - Update `skill-creator` after `skills-sh-scout` exists so skill creation starts with a public-alternative check when appropriate.
 
 ## Validation checklist

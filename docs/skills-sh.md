@@ -42,6 +42,7 @@ npx skills update
 | `observable-reputation` | Passive OSINT only | Provider access as configured by the family | No active scans, URL submissions, file uploads, or phishing reports. |
 | `outlook-classic-mail` | Windows Outlook Classic COM | Outlook Classic desktop profile and mailbox access | Reply, forward, move, and other mailbox actions require explicit confirmation. |
 | `whatsapp-wacli` | Experimental local WhatsApp adapter | Local `wacli` setup and active WhatsApp session | WhatsApp-visible sends require explicit confirmation. |
+| `skills-sh-scout` | skills.sh discovery helper | Public internet access to skills.sh and GitHub | Advisory only; it does not install, remove, or mutate skills. |
 
 ## Package shape
 
