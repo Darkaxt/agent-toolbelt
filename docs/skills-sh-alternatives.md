@@ -27,7 +27,7 @@ and safety gates count as first-class features for local-first skills.
 | `yt-dlp-ffmpeg` | Strong direct competitors exist | Keep unless we want to depend on multiple public skills. Public skills cover pieces; ours combines download/probe/clip/remux/transcode with stricter safety. |
 | `observable-reputation` | No meaningful direct alternative found | Keep. Public hits are mostly brand reputation, DNS admin, or general OSINT. |
 | `outlook-classic-mail` | Partial alternatives exist | Keep. Public alternatives target cloud Outlook/M365 connectors; ours targets local Outlook Classic COM. |
-| `uvrun-python` | Strong adjacent competitors exist | Keep only if the wrapper decision logic matters. Consider de-emphasizing docs that duplicate official `uv` skills. |
+| `uvrun-python` | Strong adjacent competitors exist | Replaced publicly by the official Astral `uv` skill; keep only the package-level local wrapper helper. |
 | `whatsapp-wacli` | Strong direct competitors exist | Re-evaluate carefully. `steipete/clawdis/wacli` is a direct public local-wacli competitor. |
 | `xsoar-development` | Partial alternatives exist | Keep. Public alternatives target live SOAR actions; ours targets content-development correctness. |
 
@@ -356,10 +356,9 @@ management and Python project workflows. Our skill is narrower: a local wrapper
 that decides whether a standalone `.py` script should go through `uvrun.ps1` or
 fall back to direct Python, while avoiding project-managed commands.
 
-Recommendation: keep only if the wrapper's decision logic continues to prevent
-mistakes on this machine. If we want fewer modules, this is a candidate to
-de-emphasize or replace with the official Astral `uv` skill plus local shell
-habits.
+Recommendation: replace the public skill with the official Astral `uv` skill.
+Keep `families/uvrun` only as an internal package helper for the narrower local
+`uvrun.ps1` routing behavior.
 
 Relevant candidates:
 
@@ -447,8 +446,8 @@ skills, not Cortex XSOAR content packs.
 1. `whatsapp-wacli`: compare directly with `steipete/clawdis/wacli`. This is
    the clearest possible deprecation candidate if the public skill covers our
    adapter's structured local behavior.
-2. `uvrun-python`: compare with `astral-sh/claude-code-plugins/uv`. Consider
-   shrinking ours to a local wrapper-only skill or de-emphasizing it publicly.
+2. `uvrun-python`: replaced publicly by `astral-sh/claude-code-plugins/uv`;
+   keep only the local wrapper package if its routing behavior remains useful.
 3. `codex-thread-recall`: do not deprecate, but consider integrating public
    recall search strengths: BM25, phrase/boolean/prefix syntax, CJK/trigram
    support, and transcript reader ergonomics.

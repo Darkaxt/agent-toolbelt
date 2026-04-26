@@ -17,9 +17,9 @@ features for this repo.
 
 - Current verdict: strong adjacent competitors exist.
 - Public candidates: `astral-sh/claude-code-plugins/uv`, `wshobson/agents/uv-package-manager`, `mindrally/skills/python-uv`, `mitsuhiko/agent-stuff/uv`, `laurigates/claude-plugins/uv-run`.
-- Improvement request: remove or de-emphasize our broad `uv` guidance and keep only any local wrapper behavior that prevents mistakes on this machine.
+- Improvement request: completed replacement/de-emphasis. Keep only the local package wrapper behavior that prevents mistakes on this machine.
 - Avoid: duplicating official `uv` documentation or maintaining a general Python package-management skill when a public/official skill is better.
-- Recommended next action: replace or shrink. If the official/public `uv` skill is installed and covers normal use, keep `uvrun-python` only as a local wrapper-only helper or retire it from the public package.
+- Recommended next action: replaced publicly by `astral-sh/claude-code-plugins/uv`; keep `families/uvrun` as a local wrapper-only package helper and do not advertise it as a public skill.
 
 ## P1 - Highest-value improvements
 

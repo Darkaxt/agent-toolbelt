@@ -1,6 +1,8 @@
 # UVRun Family
 
-Standalone Python execution routing that prefers `uvrun.ps1` for local one-off scripts while keeping project-managed Python workflows out of scope.
+Internal standalone Python execution routing that prefers `uvrun.ps1` for local one-off scripts while keeping project-managed Python workflows out of scope.
+
+This family is kept as a package-level helper only. It is not published as an agent skill; use the official Astral `uv` skill for general Python package management, project workflows, and ordinary `uv run` guidance.
 
 Use this family if you want:
 
@@ -19,10 +21,7 @@ CLI:
 uv run --package agent-toolbelt-uvrun agent-toolbelt-uvrun scratch.py --check
 ```
 
-Codex integration:
+Agent integration:
 
-- `families/uvrun/codex/skills/uvrun-python`
-
-Claude integration:
-
-- `families/uvrun/claude/marketplaces/agent-toolbelt-local`
+- No public Codex or Claude skill is shipped for this family.
+- Use this package directly only when the local `uvrun.ps1` wrapper behavior is specifically needed.
