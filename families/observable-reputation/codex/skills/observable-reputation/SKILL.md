@@ -1,6 +1,10 @@
 ---
 name: observable-reputation
 description: Classify URL, domain, and IP observables with passive reputation providers. Use when Codex needs safe OSINT enrichment, provider status checks, or reusable reputation evidence for mail, logs, security triage, or other sources without submitting URLs, files, phishing reports, or fresh scans.
+license: MIT
+compatibility: Passive OSINT only. Does not perform active scans, URL submissions, file uploads, or phishing reports.
+metadata:
+  version: "0.1.0"
 ---
 
 # Observable Reputation
@@ -13,7 +17,9 @@ Use `scripts/invoke_observable_reputation.py` for passive reputation checks on o
 
 ```powershell
 python scripts/invoke_observable_reputation.py providers --status
+python scripts/invoke_observable_reputation.py normalize --input <observables.json> [--output <normalized.json>]
 python scripts/invoke_observable_reputation.py classify --input <observables.json> --output <report.json> [--quiet]
+python scripts/invoke_observable_reputation.py classify --input <observables.json> --auto-detect --output <report.json> [--csv-output <report.csv>] [--stix-output <bundle.json>]
 ```
 
 Input JSON:
@@ -27,6 +33,20 @@ Input JSON:
   ]
 }
 ```
+
+Use `normalize` first when observables came from messy mail, log, or analyst text.
+It accepts raw strings and typed records, canonicalizes domains/URLs/IPs, extracts
+email domains, strips URL credentials/fragments, and reports malformed entries as
+`rejected_observables` without failing the whole file.
+
+Use `classify --auto-detect` only when raw strings or omitted/`auto` types are
+expected. Without it, typed `domain`, `url`, and `ip` records remain strict and
+backward compatible.
+
+Reports include additive `diagnostics`, per-observable `provider_summary`, and a
+stable `explanation`. CSV export is one row per classified observable. STIX 2.1
+export includes only `malicious` and `suspicious` indicators; clean, unknown,
+skipped, and rejected observables stay in JSON/CSV and are not enforcement policy.
 
 ## Safety Rules
 

@@ -955,3 +955,46 @@ def marketplace_from_identifier(identifier: str, fallback: str, *, strict_url: b
         if strict_url:
             raise ValueError(f"Unsupported Amazon marketplace domain: {host}")
     return fallback
+
+
+def inspect_identifier(identifier: str, marketplace: str) -> dict[str, object]:
+    requested_marketplace = get_marketplace(marketplace)
+    parsed = urlparse(identifier.strip())
+    is_url = parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+    host = parsed.netloc.casefold() if is_url else ""
+    asin = extract_asin(identifier)
+    detected_marketplace: str | None = None
+    warnings: list[str] = []
+
+    if is_url and "amazon." in host:
+        for code in ("de", "es", "fr", "it", "nl", "pl", "se", "be", "ie", "uk"):
+            candidate = get_marketplace(code)
+            if candidate.domain.casefold() == host:
+                detected_marketplace = code
+                break
+        if detected_marketplace is None:
+            warnings.append(f"Unsupported Amazon marketplace domain: {host}")
+    elif is_url:
+        asin = None
+        warnings.append(f"Unsupported product URL domain: {host}")
+
+    resolved_marketplace = get_marketplace(detected_marketplace or requested_marketplace.code)
+    identifier_type = "amazon_url" if is_url and "amazon." in host else "url" if is_url else "asin" if asin else "text"
+    if not asin and not warnings:
+        warnings.append("Could not determine ASIN from identifier.")
+
+    supported = bool(asin and not warnings)
+    normalized_url = f"https://{resolved_marketplace.domain}/dp/{asin}" if supported else None
+    return {
+        "command": "inspect-identifier",
+        "input": identifier,
+        "identifier_type": identifier_type,
+        "asin": asin,
+        "requested_marketplace": requested_marketplace.code,
+        "detected_marketplace": detected_marketplace,
+        "marketplace": resolved_marketplace.code,
+        "marketplace_domain": resolved_marketplace.domain,
+        "normalized_url": normalized_url,
+        "supported": supported,
+        "warnings": warnings,
+    }

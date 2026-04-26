@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from .amazon import AmazonBlockedError
+from .amazon import AmazonBlockedError, inspect_identifier
 from .formatting import render_json, render_text
 from .intent import IntentResolutionError
 from .marketplaces import DEFAULT_MARKETPLACE, get_marketplace
@@ -83,6 +83,10 @@ def _build_parser() -> argparse.ArgumentParser:
     compare_parser = subparsers.add_parser("compare")
     compare_parser.add_argument("identifiers", nargs="+")
     add_common_flags(compare_parser)
+
+    inspect_identifier_parser = subparsers.add_parser("inspect-identifier")
+    inspect_identifier_parser.add_argument("identifier")
+    add_common_flags(inspect_identifier_parser)
 
     address_parser = subparsers.add_parser("address")
     address_subparsers = address_parser.add_subparsers(dest="address_command", required=True)
@@ -200,6 +204,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     get_marketplace(getattr(args, "marketplace", DEFAULT_MARKETPLACE))
+    if args.command == "inspect-identifier":
+        payload = inspect_identifier(args.identifier, args.marketplace)
+        output = render_text(payload) if args.text else render_json(payload)
+        _write_output(output)
+        return 0
     if args.command in {"search", "similar"}:
         _validate_search_args(parser, args)
     if args.command == "reviews":

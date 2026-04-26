@@ -1,11 +1,17 @@
 ---
 name: linkedin-cv
-description: Use `scripts/invoke_linkedin_cv.py` for local, read-only LinkedIn own-profile snapshots, one explicit accessible profile capture at a time, and CV improvement comparisons.
+description: "Use `scripts/invoke_linkedin_cv.py` for safe local LinkedIn evidence capture: read-only own-profile snapshots, one explicitly accessible profile capture at a time, and CV/profile gap comparisons grounded in captured data. Prefer this over generic LinkedIn optimization when recommendations must be based on real profile evidence; do not use it for LinkedIn search, scraping, messaging, posting, or engagement automation."
+license: MIT
+compatibility: Local browser/profile snapshot workflow. Read-only by default and requires explicit accessible-profile capture.
+metadata:
+  version: "0.1.0"
 ---
 
 # LinkedIn CV
 
-Use `scripts/invoke_linkedin_cv.py` for local, read-only LinkedIn profile snapshot and CV improvement workflows. The wrapper bootstraps the LinkedIn family from the local `agent-toolbelt` workspace; if the workspace lives somewhere else, set `AGENT_TOOLBELT_HOME`.
+Use `scripts/invoke_linkedin_cv.py` for local, read-only LinkedIn profile evidence capture and CV/profile comparison workflows. The wrapper bootstraps the LinkedIn family from the local `agent-toolbelt` workspace; if the workspace lives somewhere else, set `AGENT_TOOLBELT_HOME`.
+
+This is not a generic LinkedIn optimizer, content generator, lead-generation tool, or automation skill. Use it when the user wants truthful CV/profile improvement suggestions grounded in a captured LinkedIn profile snapshot.
 
 ## Allowed Workflows
 
@@ -13,6 +19,13 @@ Use `scripts/invoke_linkedin_cv.py` for local, read-only LinkedIn profile snapsh
 - Use `profile capture-own --profile <name>` to capture the user's own LinkedIn profile.
 - Use `profile capture --profile <name> --profile-id <slug> --confirm-accessible-profile-capture` or `--url <profile-url>` only for one explicit profile the logged-in account can already access.
 - Use `profile compare --own <snapshot.json> --target <snapshot.json>` to identify improvement areas, wording patterns, missing sections, seniority signals, and skills gaps.
+
+## Comparison Guidance
+
+- Ground all suggestions in the captured snapshot or user-provided CV. If evidence is missing, say what is missing instead of inventing profile content.
+- Organize recommendations by profile/CV section when useful: headline, About, Experience, Skills, Featured, education, certifications, and measurable achievements.
+- Suggest truthful wording improvements, prioritization, and gap-filling prompts. Do not copy another profile verbatim or imply credentials, metrics, roles, or endorsements that are not supported.
+- Treat public LinkedIn optimization advice as optional framing only; the captured profile evidence is the source of truth.
 
 ## Safety Rules
 

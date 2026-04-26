@@ -1,8 +1,10 @@
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -12,7 +14,7 @@ for path in (CORE_SRC, FAMILY_SRC):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from agent_toolbelt_media import media
+from agent_toolbelt_media import cli, media
 
 
 class MediaTests(unittest.TestCase):
@@ -37,6 +39,114 @@ class MediaTests(unittest.TestCase):
             media.validate_public_url("http://192.168.1.8/demo")
         with self.assertRaisesRegex(ValueError, "`.local` hosts are not allowed"):
             media.validate_public_url("https://printer.local/demo")
+
+    def test_classify_url_returns_structured_safety_metadata(self):
+        accepted = media.invoke_classify_url(url="https://Example.COM/watch?v=1")
+        rejected = media.invoke_classify_url(url="http://127.0.0.1/demo")
+
+        self.assertTrue(accepted["ok"])
+        self.assertEqual(accepted["tool"], "yt-dlp")
+        self.assertEqual(accepted["operation"], "classify-url")
+        self.assertEqual(accepted["metadata"]["scheme"], "https")
+        self.assertEqual(accepted["metadata"]["host"], "example.com")
+        self.assertEqual(accepted["metadata"]["safety_status"], "public")
+        self.assertFalse(rejected["ok"])
+        self.assertEqual(rejected["exit_code"], 2)
+        self.assertEqual(rejected["metadata"]["safety_status"], "rejected")
+        self.assertIn("Localhost URLs are not allowed", rejected["metadata"]["reason"])
+
+    def test_metadata_uses_explicit_playlist_modes_without_artifacts(self):
+        calls = []
+
+        def fake_run_process(command, **kwargs):
+            calls.append(command)
+            return media.subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(
+                    {
+                        "id": "abc123",
+                        "title": "Demo",
+                        "duration": 12.5,
+                        "extractor": "generic",
+                        "webpage_url": "https://example.com/video",
+                    }
+                ),
+                stderr="",
+            )
+
+        original_run = media.run_process
+        original_resolve = media.resolve_binary
+        media.run_process = fake_run_process
+        media.resolve_binary = lambda name, explicit_path=None: f"C:/Tools/{name}.exe"
+        try:
+            single = media.invoke_metadata(url="https://example.com/video", playlist_mode="single", timeout_sec=30)
+            flat = media.invoke_metadata(url="https://example.com/playlist", playlist_mode="flat", timeout_sec=30)
+            full = media.invoke_metadata(url="https://example.com/playlist", playlist_mode="full", timeout_sec=30)
+        finally:
+            media.run_process = original_run
+            media.resolve_binary = original_resolve
+
+        self.assertTrue(single["ok"])
+        self.assertEqual(single["operation"], "metadata")
+        self.assertEqual(single["artifacts"], [])
+        self.assertEqual(single["metadata"]["playlist_mode"], "single")
+        self.assertIn("--no-playlist", calls[0])
+        self.assertIn("--flat-playlist", calls[1])
+        self.assertNotIn("--no-playlist", calls[1])
+        self.assertIn("--yes-playlist", calls[2])
+        self.assertNotIn("--flat-playlist", calls[2])
+
+    def test_formats_normalizes_structured_ytdlp_formats(self):
+        def fake_run_process(command, **kwargs):
+            return media.subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(
+                    {
+                        "id": "abc123",
+                        "title": "Demo",
+                        "formats": [
+                            {
+                                "format_id": "18",
+                                "ext": "mp4",
+                                "resolution": "640x360",
+                                "fps": 30,
+                                "vcodec": "avc1",
+                                "acodec": "mp4a",
+                                "tbr": 420.5,
+                                "filesize": 123456,
+                                "protocol": "https",
+                                "format_note": "360p",
+                            },
+                            {
+                                "format_id": "251",
+                                "ext": "webm",
+                                "vcodec": "none",
+                                "acodec": "opus",
+                            },
+                        ],
+                    }
+                ),
+                stderr="",
+            )
+
+        original_run = media.run_process
+        original_resolve = media.resolve_binary
+        media.run_process = fake_run_process
+        media.resolve_binary = lambda name, explicit_path=None: f"C:/Tools/{name}.exe"
+        try:
+            result = media.invoke_formats(url="https://example.com/video", timeout_sec=30)
+        finally:
+            media.run_process = original_run
+            media.resolve_binary = original_resolve
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["operation"], "formats")
+        self.assertEqual(result["metadata"]["id"], "abc123")
+        self.assertEqual(result["metadata"]["formats"][0]["format_id"], "18")
+        self.assertEqual(result["metadata"]["formats"][0]["filesize"], 123456)
+        self.assertEqual(result["metadata"]["formats"][1]["vcodec"], "none")
 
     def test_download_normalizes_metadata_and_artifacts(self):
         calls = []
@@ -90,6 +200,64 @@ class MediaTests(unittest.TestCase):
         self.assertEqual(result["metadata"]["id"], "abc123")
         self.assertEqual(len(result["artifacts"]), 2)
         self.assertEqual(len(calls), 2)
+        self.assertIn("--no-playlist", calls[0])
+        self.assertIn("--no-playlist", calls[1])
+
+    def test_download_full_playlist_mode_and_items_are_explicit(self):
+        calls = []
+
+        def fake_run_process(command, **kwargs):
+            calls.append(command)
+            if "--dump-single-json" in command:
+                return media.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps({"id": "playlist", "title": "Playlist", "webpage_url": "https://example.com/list"}),
+                    stderr="",
+                )
+            return media.subprocess.CompletedProcess(command, 0, stdout="C:\\temp\\one.mp4\n", stderr="")
+
+        original_run = media.run_process
+        original_resolve = media.resolve_binary
+        media.run_process = fake_run_process
+        media.resolve_binary = lambda name, explicit_path=None: f"C:/Tools/{name}.exe"
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                result = media.invoke_download(
+                    url="https://example.com/list",
+                    output_dir=temp_dir,
+                    audio_only=False,
+                    subs=False,
+                    format_selector=None,
+                    playlist_mode="full",
+                    playlist_items="1-3",
+                    timeout_sec=30,
+                )
+        finally:
+            media.run_process = original_run
+            media.resolve_binary = original_resolve
+
+        self.assertTrue(result["ok"])
+        self.assertIn("--yes-playlist", calls[0])
+        self.assertIn("--yes-playlist", calls[1])
+        self.assertIn("--playlist-items", calls[1])
+        self.assertIn("1-3", calls[1])
+
+    def test_playlist_items_without_full_playlist_mode_fails_closed(self):
+        result = media.invoke_download(
+            url="https://example.com/list",
+            output_dir=None,
+            audio_only=False,
+            subs=False,
+            format_selector=None,
+            playlist_mode="single",
+            playlist_items="1-3",
+            timeout_sec=30,
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["exit_code"], 2)
+        self.assertIn("--playlist-items requires --playlist-mode full", result["stderr"])
 
     def test_probe_normalizes_ffprobe_json(self):
         def fake_run_process(command, **kwargs):
@@ -258,6 +426,32 @@ class MediaTests(unittest.TestCase):
 
         self.assertFalse(result["ok"])
         self.assertIn("YouTube did not expose downloadable media formats", result["stderr"])
+
+    def test_package_cli_returns_json_for_url_validation_errors(self):
+        with patch("sys.stdout") as fake_stdout:
+            exit_code = cli.main(["metadata", "--url", "file:///tmp/demo.mp4"])
+
+        payload = json.loads("".join(call.args[0] for call in fake_stdout.write.call_args_list))
+        self.assertEqual(exit_code, 1)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["operation"], "metadata")
+        self.assertIn("Only public http(s) URLs are allowed", payload["stderr"])
+
+    def test_codex_skill_wrapper_returns_json_for_url_validation_errors(self):
+        script = REPO_ROOT / "families" / "media" / "codex" / "skills" / "yt-dlp-ffmpeg" / "scripts" / "invoke_media_tool.py"
+        completed = subprocess.run(
+            [sys.executable, str(script), "metadata", "--url", "file:///tmp/demo.mp4"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(completed.returncode, 1)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["operation"], "metadata")
+        self.assertIn("Only public http(s) URLs are allowed", payload["stderr"])
 
 
 if __name__ == "__main__":

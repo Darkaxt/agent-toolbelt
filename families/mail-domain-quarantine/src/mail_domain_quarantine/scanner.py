@@ -285,6 +285,33 @@ def build_candidate_reputation_observables(folder_result: dict[str, Any]) -> lis
     return observables
 
 
+def build_reputation_observables_for_profile(
+    scan_payload: dict[str, Any],
+    folder_result: dict[str, Any],
+    *,
+    reputation_profile: str,
+) -> list[dict[str, Any]]:
+    candidate_observables = build_candidate_reputation_observables(folder_result)
+    if reputation_profile != "full":
+        return candidate_observables
+
+    candidate_ids = candidate_message_ids(folder_result)
+    scoped_observables = [
+        observable
+        for observable in build_reputation_observables(scan_payload, include_urls=True)
+        if ((observable.get("context") or {}).get("message_entry_id") or "") in candidate_ids
+    ]
+    return [*candidate_observables, *scoped_observables]
+
+
+def candidate_message_ids(folder_result: dict[str, Any]) -> set[str]:
+    return {
+        message_id
+        for row in folder_result.get("candidates") or []
+        if (message_id := str(((row.get("message") or {}).get("entry_id") or "")))
+    }
+
+
 def reputation_by_message(reputation_report: dict[str, Any]) -> dict[str, dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
     for result in reputation_report.get("observables") or []:
@@ -293,15 +320,59 @@ def reputation_by_message(reputation_report: dict[str, Any]) -> dict[str, dict[s
             continue
         current = grouped.setdefault(
             message_id,
-            {"verdict": "unknown", "score": 0, "observables": [], "evidence": [], "errors": []},
+            {
+                "verdict": "unknown",
+                "score": 0,
+                "observables": [],
+                "evidence": [],
+                "errors": [],
+                "provider_summary": empty_provider_summary(),
+                "explanations": [],
+                "normalized_observables": [],
+            },
         )
         current["observables"].append(result)
         current["evidence"].extend(result.get("evidence") or [])
         current["errors"].extend(result.get("errors") or [])
+        merge_provider_summary(current["provider_summary"], result.get("provider_summary") or {})
+        explanation = str(result.get("explanation") or "")
+        if explanation and explanation not in current["explanations"]:
+            current["explanations"].append(explanation)
+        current["normalized_observables"].append(reputation_observable_summary(result))
         if REPUTATION_ORDER.get(result.get("verdict"), 0) > REPUTATION_ORDER.get(current["verdict"], 0):
             current["verdict"] = result.get("verdict", "unknown")
         current["score"] = max(int(current.get("score") or 0), int(result.get("score") or 0))
     return grouped
+
+
+def empty_provider_summary() -> dict[str, Any]:
+    return {
+        "provider_count": 0,
+        "skipped_count": 0,
+        "error_count": 0,
+        "evidence_count": 0,
+        "verdicts": {},
+    }
+
+
+def merge_provider_summary(target: dict[str, Any], source: dict[str, Any]) -> None:
+    for key in ("provider_count", "skipped_count", "error_count", "evidence_count"):
+        target[key] = int(target.get(key) or 0) + int(source.get(key) or 0)
+    verdicts = target.setdefault("verdicts", {})
+    for verdict, count in (source.get("verdicts") or {}).items():
+        verdicts[verdict] = int(verdicts.get(verdict) or 0) + int(count or 0)
+
+
+def reputation_observable_summary(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": result.get("type"),
+        "value": result.get("value"),
+        "raw_value": result.get("raw_value"),
+        "normalized_value": result.get("normalized_value") or result.get("value"),
+        "domain": result.get("domain"),
+        "source": result.get("source"),
+        "normalization": result.get("normalization") or {},
+    }
 
 
 def evaluate_scan_payload(
@@ -542,12 +613,18 @@ def run_scan(
                 reputation_by_message={},
             )
             if with_reputation:
-                reputation_observables = build_candidate_reputation_observables(folder_result)
+                reputation_observables = build_reputation_observables_for_profile(
+                    payload.get("result") or {},
+                    folder_result,
+                    reputation_profile=reputation_profile,
+                )
                 if reputation_observables:
                     reputation_payload = run_observable_reputation(reputation_observables)
                     if reputation_payload.get("ok"):
                         reputation_map = reputation_by_message(reputation_payload)
                         attach_reputation_to_rows(folder_result, reputation_map)
+                        folder_result["reputation_diagnostics"] = reputation_payload.get("diagnostics") or {}
+                        folder_result["rejected_reputation_observables"] = reputation_payload.get("rejected_observables") or []
                     else:
                         reputation_error = reputation_payload.get("error")
             if reputation_error:
@@ -562,6 +639,9 @@ def run_scan(
             )
         report["accounts"].append(account_report)
 
+    if with_reputation:
+        report["reputation_diagnostics"] = summarize_report_reputation_diagnostics(report)
+
     write_reports(
         report,
         retention_days=report_retention_days,
@@ -569,6 +649,40 @@ def run_scan(
         rotate_report_files=rotate_report_files,
     )
     return report
+
+
+def summarize_report_reputation_diagnostics(report: dict[str, Any]) -> dict[str, Any]:
+    summary = {
+        "folder_count": 0,
+        "observable_count": 0,
+        "rejected_observable_count": 0,
+        "cache": {"hit_count": 0, "miss_count": 0},
+        "providers": {
+            "result_count": 0,
+            "skipped_count": 0,
+            "error_count": 0,
+            "verdicts": {},
+        },
+    }
+    for account in report.get("accounts") or []:
+        for folder in account.get("folders") or []:
+            diagnostics = folder.get("reputation_diagnostics") or {}
+            if not diagnostics:
+                continue
+            summary["folder_count"] += 1
+            summary["observable_count"] += int(diagnostics.get("observable_count") or 0)
+            summary["rejected_observable_count"] += int(diagnostics.get("rejected_observable_count") or 0)
+            cache = diagnostics.get("cache") or {}
+            summary["cache"]["hit_count"] += int(cache.get("hit_count") or 0)
+            summary["cache"]["miss_count"] += int(cache.get("miss_count") or 0)
+            providers = diagnostics.get("providers") or {}
+            summary["providers"]["result_count"] += int(providers.get("result_count") or 0)
+            summary["providers"]["skipped_count"] += int(providers.get("skipped_count") or 0)
+            summary["providers"]["error_count"] += int(providers.get("error_count") or 0)
+            verdicts = summary["providers"]["verdicts"]
+            for verdict, count in (providers.get("verdicts") or {}).items():
+                verdicts[verdict] = int(verdicts.get(verdict) or 0) + int(count or 0)
+    return summary
 
 
 def write_reports(
@@ -714,6 +828,10 @@ def render_markdown_report(report: dict[str, Any]) -> str:
             if not folder["ok"]:
                 lines.append(f"  - Error: {folder['error']}")
                 continue
+            if folder.get("reputation_diagnostics"):
+                lines.append(
+                    f"  - Reputation diagnostics: {summarize_reputation_diagnostics(folder['reputation_diagnostics'])}"
+                )
             for candidate in folder["candidates"]:
                 message = candidate["message"]
                 domains = sorted(set(candidate.get("young_domains") or []) | set(candidate.get("blocklisted_domains") or []))
@@ -724,7 +842,9 @@ def render_markdown_report(report: dict[str, Any]) -> str:
                 )
                 if candidate.get("reputation"):
                     reputation = candidate["reputation"]
-                    lines.append(f"    - Reputation: {reputation.get('verdict')} score={reputation.get('score')}")
+                    lines.append(f"    - Reputation: {summarize_reputation_result(reputation)}")
+                    if reputation.get("explanations"):
+                        lines.append(f"    - Reputation explanation: {reputation['explanations'][0]}")
                 if candidate.get("blocklist_hits"):
                     hit_summary = summarize_blocklist_hits(candidate["blocklist_hits"])
                     lines.append(f"    - Blocklists: {hit_summary}")
@@ -752,7 +872,7 @@ def render_markdown_report(report: dict[str, Any]) -> str:
                 lines.append(
                     "  - Reputation-only: "
                     f"{message.get('sender_email', '')} | {message.get('subject', '')} | "
-                    f"{reputation.get('verdict')} score={reputation.get('score')}"
+                    f"{summarize_reputation_result(reputation)}"
                 )
             if folder.get("reputation_error"):
                 lines.append(f"  - Reputation error: {folder['reputation_error']}")
@@ -784,3 +904,26 @@ def summarize_structure_signals(signals: list[dict[str, Any]]) -> str:
     if len(grouped) > 5:
         parts.append(f"+{len(grouped) - 5} more")
     return ", ".join(parts)
+
+
+def summarize_reputation_result(reputation: dict[str, Any]) -> str:
+    provider_summary = reputation.get("provider_summary") or {}
+    evidence_count = len(reputation.get("evidence") or []) or int(provider_summary.get("evidence_count") or 0)
+    error_count = len(reputation.get("errors") or []) or int(provider_summary.get("error_count") or 0)
+    return (
+        f"{reputation.get('verdict')} score={reputation.get('score')} "
+        f"evidence={evidence_count} errors={error_count}"
+    )
+
+
+def summarize_reputation_diagnostics(diagnostics: dict[str, Any]) -> str:
+    cache = diagnostics.get("cache") or {}
+    providers = diagnostics.get("providers") or {}
+    return (
+        f"observables={int(diagnostics.get('observable_count') or 0)} "
+        f"rejected={int(diagnostics.get('rejected_observable_count') or 0)} "
+        f"cache={int(cache.get('hit_count') or 0)}/{int(cache.get('miss_count') or 0)} "
+        f"providers={int(providers.get('result_count') or 0)} "
+        f"skipped={int(providers.get('skipped_count') or 0)} "
+        f"errors={int(providers.get('error_count') or 0)}"
+    )

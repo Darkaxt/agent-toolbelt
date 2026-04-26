@@ -29,6 +29,42 @@ class ObservableTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             observables.normalize_observable({"type": "email", "value": "user@example.com"})
 
+    def test_auto_detects_and_normalizes_messy_records(self):
+        normalized, rejected = observables.normalize_records(
+            [
+                "HTTPS://User:Pass@Exämple.COM/path?q=1#frag",
+                {"type": "auto", "value": "admin@Mail.Example.COM", "source": "sender"},
+                {"value": " 203.0.113.7 ", "source": "header"},
+                {"type": "auto", "value": "not an observable"},
+            ],
+            auto_detect=True,
+        )
+
+        self.assertEqual([item.type for item in normalized], ["url", "domain", "ip"])
+        self.assertEqual(normalized[0].raw_value, "HTTPS://User:Pass@Exämple.COM/path?q=1#frag")
+        self.assertEqual(normalized[0].value, "https://xn--exmple-cua.com/path?q=1")
+        self.assertEqual(normalized[0].domain, "xn--exmple-cua.com")
+        self.assertIn("userinfo_removed", normalized[0].normalization["warnings"])
+        self.assertIn("fragment_removed", normalized[0].normalization["warnings"])
+        self.assertEqual(normalized[1].value, "mail.example.com")
+        self.assertEqual(normalized[1].normalization["detected_from"], "email-domain")
+        self.assertEqual(normalized[2].value, "203.0.113.7")
+        self.assertEqual(len(rejected), 1)
+        self.assertEqual(rejected[0]["raw_value"], "not an observable")
+
+    def test_strict_records_report_malformed_observables_without_auto_detection(self):
+        normalized, rejected = observables.normalize_records(
+            [
+                {"type": "domain", "value": "Example.COM"},
+                {"value": "example.net"},
+                {"type": "email", "value": "user@example.org"},
+            ]
+        )
+
+        self.assertEqual([item.value for item in normalized], ["example.com"])
+        self.assertEqual(len(rejected), 2)
+        self.assertIn("Unsupported observable type", rejected[0]["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

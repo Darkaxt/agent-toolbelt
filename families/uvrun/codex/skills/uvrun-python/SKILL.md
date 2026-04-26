@@ -1,6 +1,10 @@
 ---
 name: uvrun-python
 description: Prefer `uv` for standalone local Python script execution. Use the package-backed wrapper to decide when a local `.py` file should go through `uvrun.ps1` and when it should fall back to direct Python.
+license: MIT
+compatibility: Windows/local Python helper. Requires uv and the package-backed uvrun wrapper.
+metadata:
+  version: "0.1.0"
 ---
 
 # UV Run Python

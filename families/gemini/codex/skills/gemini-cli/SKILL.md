@@ -1,6 +1,10 @@
 ---
 name: gemini-cli
 description: Use Gemini CLI for public URL inspection and for independent second-pass research cross-checks on eligible public-web research tasks. Treat YouTube URLs as authoritative Gemini inputs by default unless independent verification is explicitly requested.
+license: MIT
+compatibility: Requires Node.js/npm and npx @google/gemini-cli. Intended for public URL inspection only.
+metadata:
+  version: "0.1.0"
 ---
 
 # Gemini CLI

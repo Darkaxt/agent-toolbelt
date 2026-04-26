@@ -67,6 +67,58 @@ def make_result(
     }
 
 
+def classify_public_url(url: str) -> dict[str, Any]:
+    try:
+        validated_url = validate_public_url(url)
+    except ValueError as exc:
+        parsed = urlparse(url)
+        host = parsed.hostname
+        return {
+            "input_url": url,
+            "url": None,
+            "scheme": parsed.scheme or None,
+            "host": normalize_host(host) if host else None,
+            "safety_status": "rejected",
+            "reason": str(exc),
+        }
+
+    parsed = urlparse(validated_url)
+    return {
+        "input_url": url,
+        "url": validated_url,
+        "scheme": parsed.scheme,
+        "host": normalize_host(parsed.hostname),
+        "safety_status": "public",
+        "reason": None,
+    }
+
+
+def invoke_classify_url(*, url: str) -> dict[str, Any]:
+    metadata = classify_public_url(url)
+    return make_result(
+        ok=metadata["safety_status"] == "public",
+        tool="yt-dlp",
+        operation="classify-url",
+        exit_code=0 if metadata["safety_status"] == "public" else 2,
+        stderr="" if metadata["safety_status"] == "public" else metadata["reason"],
+        metadata=metadata,
+    )
+
+
+def validate_url_for_operation(url: str, operation: str) -> tuple[str | None, dict[str, Any] | None]:
+    classification = classify_public_url(url)
+    if classification["safety_status"] != "public":
+        return None, make_result(
+            ok=False,
+            tool="yt-dlp",
+            operation=operation,
+            exit_code=2,
+            stderr=classification["reason"] or "URL is not allowed.",
+            metadata=classification,
+        )
+    return classification["url"], None
+
+
 def resolve_binary(tool: str, explicit_path: str | None = None) -> str | None:
     return resolve_windows_tool(
         explicit_path=explicit_path,
@@ -157,6 +209,16 @@ def parse_json_output(raw_text: str) -> dict[str, Any]:
     return json.loads(raw_text.strip())
 
 
+def playlist_args(playlist_mode: str) -> list[str] | None:
+    if playlist_mode == "single":
+        return ["--no-playlist"]
+    if playlist_mode == "flat":
+        return ["--flat-playlist"]
+    if playlist_mode == "full":
+        return ["--yes-playlist"]
+    return None
+
+
 def normalize_download_metadata(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": payload.get("id"),
@@ -167,6 +229,46 @@ def normalize_download_metadata(payload: dict[str, Any]) -> dict[str, Any]:
         "uploader": payload.get("uploader"),
         "channel": payload.get("channel"),
         "ext": payload.get("ext"),
+    }
+
+
+def normalize_discovery_metadata(payload: dict[str, Any], *, playlist_mode: str) -> dict[str, Any]:
+    metadata = normalize_download_metadata(payload)
+    metadata.update(
+        {
+            "playlist_mode": playlist_mode,
+            "playlist_id": payload.get("playlist_id") or payload.get("playlist"),
+            "playlist_title": payload.get("playlist_title"),
+            "playlist_count": maybe_int(payload.get("playlist_count")) or maybe_int(payload.get("n_entries")),
+        }
+    )
+    entries = payload.get("entries")
+    if isinstance(entries, list):
+        metadata["entries"] = [
+            {
+                "id": entry.get("id"),
+                "title": entry.get("title"),
+                "duration": maybe_float(entry.get("duration")),
+                "url": entry.get("url") or entry.get("webpage_url"),
+            }
+            for entry in entries
+            if isinstance(entry, dict)
+        ]
+    return metadata
+
+
+def normalize_format_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "format_id": entry.get("format_id"),
+        "ext": entry.get("ext"),
+        "resolution": entry.get("resolution"),
+        "fps": maybe_float(entry.get("fps")),
+        "vcodec": entry.get("vcodec"),
+        "acodec": entry.get("acodec"),
+        "tbr": maybe_float(entry.get("tbr")),
+        "filesize": maybe_int(entry.get("filesize")) or maybe_int(entry.get("filesize_approx")),
+        "protocol": entry.get("protocol"),
+        "format_note": entry.get("format_note"),
     }
 
 
@@ -242,10 +344,33 @@ def invoke_download(
     audio_only: bool,
     subs: bool,
     format_selector: str | None,
+    playlist_mode: str = "single",
+    playlist_items: str | None = None,
     timeout_sec: int = DEFAULT_DOWNLOAD_TIMEOUT_SEC,
     binary_path: str | None = None,
 ) -> dict[str, Any]:
-    validated_url = validate_public_url(url)
+    playlist_flags = playlist_args(playlist_mode)
+    if playlist_flags is None:
+        return make_result(
+            ok=False,
+            tool="yt-dlp",
+            operation="download",
+            exit_code=2,
+            stderr=f"Unsupported playlist mode: {playlist_mode}",
+        )
+    if playlist_items and playlist_mode != "full":
+        return make_result(
+            ok=False,
+            tool="yt-dlp",
+            operation="download",
+            exit_code=2,
+            stderr="--playlist-items requires --playlist-mode full.",
+        )
+
+    validated_url, validation_error = validate_url_for_operation(url, "download")
+    if validation_error is not None:
+        return validation_error
+
     ytdlp = resolve_binary("yt-dlp", explicit_path=binary_path)
     if ytdlp is None:
         return missing_binary_result("yt-dlp", "download")
@@ -257,9 +382,11 @@ def invoke_download(
         ytdlp,
         "--dump-single-json",
         "--no-warnings",
-        "--no-playlist",
+        *playlist_flags,
         validated_url,
     ]
+    if playlist_items:
+        metadata_command[-1:-1] = ["--playlist-items", playlist_items]
     metadata_run = run_process(metadata_command, timeout_sec=timeout_sec)
     if metadata_run.returncode != 0:
         return make_result(
@@ -293,6 +420,9 @@ def invoke_download(
         "--print",
         "after_move:filepath",
     ]
+    download_command.extend(playlist_flags)
+    if playlist_items:
+        download_command.extend(["--playlist-items", playlist_items])
     if audio_only:
         download_command.extend(["-f", "bestaudio/best"])
     elif format_selector:
@@ -328,6 +458,115 @@ def invoke_download(
         operation="download",
         exit_code=0,
         artifacts=artifacts,
+        metadata=metadata,
+    )
+
+
+def invoke_metadata(
+    *,
+    url: str,
+    playlist_mode: str = "single",
+    timeout_sec: int = DEFAULT_DOWNLOAD_TIMEOUT_SEC,
+    binary_path: str | None = None,
+) -> dict[str, Any]:
+    playlist_flags = playlist_args(playlist_mode)
+    if playlist_flags is None:
+        return make_result(
+            ok=False,
+            tool="yt-dlp",
+            operation="metadata",
+            exit_code=2,
+            stderr=f"Unsupported playlist mode: {playlist_mode}",
+        )
+    validated_url, validation_error = validate_url_for_operation(url, "metadata")
+    if validation_error is not None:
+        return validation_error
+    ytdlp = resolve_binary("yt-dlp", explicit_path=binary_path)
+    if ytdlp is None:
+        return missing_binary_result("yt-dlp", "metadata")
+
+    command = [
+        ytdlp,
+        "--dump-single-json",
+        "--no-warnings",
+        *playlist_flags,
+        validated_url,
+    ]
+    completed = run_process(command, timeout_sec=timeout_sec)
+    if completed.returncode != 0:
+        return make_result(
+            ok=False,
+            tool="yt-dlp",
+            operation="metadata",
+            exit_code=completed.returncode,
+            stderr=contextualize_download_error(validated_url, completed.stderr),
+        )
+    try:
+        payload = parse_json_output(completed.stdout)
+    except json.JSONDecodeError:
+        return make_result(
+            ok=False,
+            tool="yt-dlp",
+            operation="metadata",
+            exit_code=1,
+            stderr="Failed to parse yt-dlp metadata JSON output.",
+        )
+    return make_result(
+        ok=True,
+        tool="yt-dlp",
+        operation="metadata",
+        exit_code=0,
+        metadata=normalize_discovery_metadata(payload, playlist_mode=playlist_mode),
+    )
+
+
+def invoke_formats(
+    *,
+    url: str,
+    timeout_sec: int = DEFAULT_DOWNLOAD_TIMEOUT_SEC,
+    binary_path: str | None = None,
+) -> dict[str, Any]:
+    validated_url, validation_error = validate_url_for_operation(url, "formats")
+    if validation_error is not None:
+        return validation_error
+    ytdlp = resolve_binary("yt-dlp", explicit_path=binary_path)
+    if ytdlp is None:
+        return missing_binary_result("yt-dlp", "formats")
+
+    command = [
+        ytdlp,
+        "--dump-single-json",
+        "--no-warnings",
+        "--no-playlist",
+        validated_url,
+    ]
+    completed = run_process(command, timeout_sec=timeout_sec)
+    if completed.returncode != 0:
+        return make_result(
+            ok=False,
+            tool="yt-dlp",
+            operation="formats",
+            exit_code=completed.returncode,
+            stderr=contextualize_download_error(validated_url, completed.stderr),
+        )
+    try:
+        payload = parse_json_output(completed.stdout)
+    except json.JSONDecodeError:
+        return make_result(
+            ok=False,
+            tool="yt-dlp",
+            operation="formats",
+            exit_code=1,
+            stderr="Failed to parse yt-dlp metadata JSON output.",
+        )
+    formats = payload.get("formats") if isinstance(payload.get("formats"), list) else []
+    metadata = normalize_download_metadata(payload)
+    metadata["formats"] = [normalize_format_entry(entry) for entry in formats if isinstance(entry, dict)]
+    return make_result(
+        ok=True,
+        tool="yt-dlp",
+        operation="formats",
+        exit_code=0,
         metadata=metadata,
     )
 
@@ -656,12 +895,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="operation", required=True)
 
+    classify_parser = subparsers.add_parser("classify-url", help="Classify whether a URL is safe public media input.")
+    classify_parser.add_argument("--url", required=True)
+
+    metadata_parser = subparsers.add_parser("metadata", help="Inspect public media URL metadata without downloading.")
+    metadata_parser.add_argument("--url", required=True)
+    metadata_parser.add_argument("--playlist-mode", choices=["single", "flat", "full"], default="single")
+    metadata_parser.add_argument("--timeout-sec", type=int, default=DEFAULT_DOWNLOAD_TIMEOUT_SEC)
+
+    formats_parser = subparsers.add_parser("formats", help="List normalized downloadable formats for a public media URL.")
+    formats_parser.add_argument("--url", required=True)
+    formats_parser.add_argument("--timeout-sec", type=int, default=DEFAULT_DOWNLOAD_TIMEOUT_SEC)
+
     download_parser = subparsers.add_parser("download", help="Download media from a public URL.")
     download_parser.add_argument("--url", required=True)
     download_parser.add_argument("--output-dir")
     download_parser.add_argument("--audio-only", action="store_true")
     download_parser.add_argument("--subs", action="store_true")
     download_parser.add_argument("--format", dest="format_selector")
+    download_parser.add_argument("--playlist-mode", choices=["single", "full"], default="single")
+    download_parser.add_argument("--playlist-items")
     download_parser.add_argument("--timeout-sec", type=int, default=DEFAULT_DOWNLOAD_TIMEOUT_SEC)
 
     probe_parser = subparsers.add_parser("probe", help="Inspect a local media file with ffprobe.")

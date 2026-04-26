@@ -1,6 +1,10 @@
 ---
 name: codex-thread-recall
 description: Use `scripts/invoke_codex_thread_recall.py` to inspect the current Codex thread's own raw rollout history before broad repo or web exploration on long-running or resumed work.
+license: MIT
+compatibility: Codex only. Requires CODEX_THREAD_ID, local Codex state_5.sqlite, and readable rollout JSONL files.
+metadata:
+  version: "0.1.0"
 ---
 
 # Codex Thread Recall

@@ -1,6 +1,10 @@
 ---
 name: amazon-cli
 description: Use the local Amazon CLI for Amazon product search, exact model lookup, product specs, comparisons, review/comment extraction, cross-market offers, and managed retail or business sessions. Trigger when Codex needs Amazon marketplace data, same-ASIN price comparisons, deep Amazon reviews, or Amazon session login support.
+license: MIT
+compatibility: Windows/local CLI oriented. Requires the agent-toolbelt Python package install; authenticated Amazon workflows require user-managed session setup.
+metadata:
+  version: "0.1.0"
 ---
 
 # Amazon CLI
@@ -28,7 +32,8 @@ Do not use this skill when:
 
 ## Behavior
 
-- Prefer read-only commands: `search`, `similar`, `get`, `compare`, `reviews`, `address inspect`, and `offers`.
+- Prefer read-only commands: `inspect-identifier`, `search`, `similar`, `get`, `compare`, `reviews`, `address inspect`, and `offers`.
+- Run `inspect-identifier <asin-or-url>` before `get`, `offers`, `reviews`, or cart commands when the input is a URL or ambiguous identifier; require `supported=true` and inspect any warnings before proceeding.
 - Run `session login` only when the user can interact with a headed managed browser. Login completion is auto-detected from Amazon account/header markers; use `--manual-confirm` only as a fallback for unusual flows, and adjust `--login-timeout-sec` if needed.
 - Use `cart add` or `cart remove` only after explicit user approval for one selected ASIN/marketplace, and always include `--confirm-cart-add` or `--confirm-cart-remove`.
 - Browser actions use targeted waits instead of generic `networkidle`; inspect `action_timing_ms`, `wait_strategy`, and `detected_marker` when debugging slow login or cart actions.
@@ -38,6 +43,7 @@ Do not use this skill when:
 - For deep reviews, use managed sessions first: `session login --marketplace <code> --portal retail` or `--portal business`.
 - For Business repurchase comparisons, prefer `offers --portal business --vat-mode auto` so ex-VAT prices are used when Amazon exposes them.
 - For `offers`, check `address_consistency` and use `trusted_best_offer`; do not recommend `raw_best_offer` when it is address-mismatched or non-deliverable unless the user explicitly accepts that risk.
+- Treat top-level `warnings` from `offers`, `search`, and `reviews` as confidence signals. They may indicate a missing trusted offer, address mismatch, model variant, partial pagination, or review fallback evidence.
 - Use `address inspect --portal <retail|business> --marketplaces <csv> --reference-marketplace <code>` when delivery costs depend on all marketplaces using the same destination.
 - Inspect title/model/size signals and any variant mismatch warnings before calling an offer trusted or cheapest.
 - Keep marketplace query language explicit; do not assume the CLI translates product terms.
@@ -57,6 +63,7 @@ When the user wants to repurchase a known product, start with a primary marketpl
 ## Script Interface
 
 ```bash
+python scripts/invoke_amazon_cli.py -- inspect-identifier https://www.amazon.de/dp/B0F2JCZPB4 --marketplace de
 python scripts/invoke_amazon_cli.py -- search "tv" --brand LG --model C4 --marketplace de --max-price 560 --pages 2
 python scripts/invoke_amazon_cli.py -- search "microondas" --marketplace es --max-price 100
 python scripts/invoke_amazon_cli.py -- get https://www.amazon.de/dp/B0F2JCZPB4 --marketplace de
