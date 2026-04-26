@@ -133,10 +133,11 @@ ENTITY_SOURCE_STRENGTH = {
     "qualified_id_prefix": 4,
 }
 CONTENT_CLASSES = {"work", "meta", "command_output", "transcript_dump", "compaction"}
-CACHE_SCHEMA_VERSION = 7
+CACHE_SCHEMA_VERSION = 8
 TEXT_SCAN_LIMIT = 2000
 EVIDENCE_SCAN_LIMIT = 200
 RAW_TEXT_STORE_LIMIT = 16000
+MAX_CONTEXT_ENTRIES = 5
 INDEX_LOCK_POLL_SECONDS = 0.1
 INDEX_LOCK_WAIT_SECONDS = 5.0
 INDEX_LOCK_STALE_SECONDS = 300.0
@@ -172,6 +173,14 @@ class IndexBusyError(RuntimeError):
 
 
 class TailEpisodeRebuildError(RuntimeError):
+    pass
+
+
+class InvalidSearchQueryError(RuntimeError):
+    pass
+
+
+class FtsUnavailableError(RuntimeError):
     pass
 
 
@@ -1274,6 +1283,22 @@ def connect_cache(codex_home: Path) -> sqlite3.Connection:
     return conn
 
 
+def sqlite_fts5_available(conn: sqlite3.Connection) -> bool:
+    try:
+        conn.execute("create virtual table temp.__codex_thread_recall_fts_probe using fts5(value)")
+        conn.execute("drop table temp.__codex_thread_recall_fts_probe")
+        return True
+    except sqlite3.Error:
+        return False
+
+
+def fts_table_exists(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "select name from sqlite_master where type = 'table' and name = 'entries_fts'"
+    ).fetchone()
+    return row is not None
+
+
 def drop_cache_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
@@ -1483,6 +1508,17 @@ def ensure_cache_schema(conn: sqlite3.Connection) -> None:
         conn.execute(f"create index if not exists idx_{table_name}_entry on {table_name}(entry_id)")
         conn.execute(f"create index if not exists idx_{table_name}_value on {table_name}({column_name})")
         conn.execute(f"create index if not exists idx_{table_name}_value_entry on {table_name}({column_name}, entry_id)")
+    if sqlite_fts5_available(conn):
+        conn.execute(
+            """
+            create virtual table if not exists entries_fts using fts5(
+                entry_id unindexed,
+                thread_id unindexed,
+                search_text,
+                raw_text
+            )
+            """
+        )
 
 
 def rollout_signature(rollout_path: Path) -> tuple[int, int]:
@@ -1504,6 +1540,8 @@ def cache_metadata_row(conn: sqlite3.Connection, thread_id: str) -> sqlite3.Row 
 
 
 def clear_thread_cache(conn: sqlite3.Connection, thread_id: str) -> None:
+    if fts_table_exists(conn):
+        conn.execute("delete from entries_fts where thread_id = ?", (thread_id,))
     conn.execute(
         "delete from entry_episode_links where episode_id in (select id from episodes where thread_id = ?)",
         (thread_id,),
@@ -1553,6 +1591,24 @@ def insert_entry_entity_mentions(conn: sqlite3.Connection, entry_id: int, entry:
     )
 
 
+def insert_entry_fts(conn: sqlite3.Connection, *, entry_id: int, thread_id: str, entry: dict[str, Any]) -> None:
+    if not fts_table_exists(conn):
+        return
+    conn.execute(
+        """
+        insert into entries_fts (rowid, entry_id, thread_id, search_text, raw_text)
+        values (?, ?, ?, ?, ?)
+        """,
+        (
+            entry_id,
+            entry_id,
+            thread_id,
+            entry["search_text"] or "",
+            entry["raw_text"] or "",
+        ),
+    )
+
+
 def insert_entries(
     conn: sqlite3.Connection,
     *,
@@ -1586,6 +1642,7 @@ def insert_entries(
         )
         insert_entry_facets(conn, int(cursor.lastrowid), entry)
         insert_entry_entity_mentions(conn, int(cursor.lastrowid), entry)
+        insert_entry_fts(conn, entry_id=int(cursor.lastrowid), thread_id=thread_id, entry=entry)
 
 
 def all_entries_for_thread(conn: sqlite3.Connection, thread_id: str) -> list[dict[str, Any]]:
@@ -2059,6 +2116,65 @@ def thread_entry_stats(conn: sqlite3.Connection, thread_id: str) -> sqlite3.Row:
     ).fetchone()
 
 
+def fts_stats(conn: sqlite3.Connection, *, thread_id: str | None = None) -> dict[str, int | bool]:
+    available = sqlite_fts5_available(conn)
+    if not available or not fts_table_exists(conn):
+        entry_count = 0
+        if thread_id is not None:
+            entry_count = int(
+                conn.execute("select count(*) as count from entries where thread_id = ?", (thread_id,)).fetchone()["count"]
+            )
+        else:
+            entry_count = int(conn.execute("select count(*) as count from entries").fetchone()["count"])
+        return {
+            "available": available,
+            "indexed_entry_count": 0,
+            "missing_entry_count": entry_count if available else 0,
+            "orphaned_entry_count": 0,
+        }
+
+    if thread_id is None:
+        entry_ids = {
+            int(row["id"])
+            for row in conn.execute("select id from entries").fetchall()
+        }
+        fts_entry_ids = {
+            int(row["entry_id"])
+            for row in conn.execute("select entry_id from entries_fts").fetchall()
+        }
+    else:
+        entry_ids = {
+            int(row["id"])
+            for row in conn.execute("select id from entries where thread_id = ?", (thread_id,)).fetchall()
+        }
+        fts_entry_ids = {
+            int(row["entry_id"])
+            for row in conn.execute("select entry_id from entries_fts where thread_id = ?", (thread_id,)).fetchall()
+        }
+    return {
+        "available": True,
+        "indexed_entry_count": len(fts_entry_ids),
+        "missing_entry_count": len(entry_ids - fts_entry_ids),
+        "orphaned_entry_count": len(fts_entry_ids - entry_ids),
+    }
+
+
+def cache_health(conn: sqlite3.Connection, *, thread_id: str | None = None) -> dict[str, Any]:
+    issues: list[str] = []
+    stats = fts_stats(conn, thread_id=thread_id)
+    if stats["available"] and not fts_table_exists(conn):
+        issues.append("fts-table-missing")
+    if int(stats["missing_entry_count"]) > 0:
+        issues.append("fts-missing-rows")
+    if int(stats["orphaned_entry_count"]) > 0:
+        issues.append("fts-orphaned-rows")
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "rebuild_recommended": bool(issues and stats["available"]),
+    }
+
+
 def cache_rebuild_reason(
     *,
     existing: sqlite3.Row | None,
@@ -2165,6 +2281,9 @@ def ensure_index(
         rollout_size=rollout_size,
         rollout_mtime_ns=rollout_mtime_ns,
     )
+    if rebuild_reason is None and cache_health(conn, thread_id=thread["id"])["rebuild_recommended"]:
+        rebuild_reason = "fts-index-mismatch"
+        force_rebuild = True
 
     def _reload_state() -> tuple[sqlite3.Row | None, sqlite3.Row]:
         ensure_cache_schema(conn)
@@ -2191,6 +2310,9 @@ def ensure_index(
                 rollout_size=rollout_size,
                 rollout_mtime_ns=rollout_mtime_ns,
             )
+            if rebuild_reason is None and cache_health(conn, thread_id=thread["id"])["rebuild_recommended"]:
+                rebuild_reason = "fts-index-mismatch"
+                force_rebuild = True
             if rebuild_reason == "metadata-drift" and existing is not None:
                 refresh_rollout_metadata(
                     conn,
@@ -2339,6 +2461,59 @@ def search_order_sql(sort: str) -> str:
     return "facet_score desc, coalesce(e.timestamp, ''), e.entry_index"
 
 
+def fts_search_order_sql(sort: str) -> str:
+    if sort == "time-desc":
+        return "coalesce(e.timestamp, '') desc, e.entry_index desc, fts_rank asc, facet_score desc"
+    if sort == "time-asc":
+        return "coalesce(e.timestamp, ''), e.entry_index, fts_rank asc, facet_score desc"
+    return "fts_rank asc, facet_score desc, coalesce(e.timestamp, ''), e.entry_index"
+
+
+def fts_column(search_column: str) -> str:
+    return "raw_text" if search_column == "raw_text" else "search_text"
+
+
+def fts_snippet_column(search_column: str) -> int:
+    return 3 if search_column == "raw_text" else 2
+
+
+def fts_query_from_patterns(patterns: list[str]) -> str:
+    if len(patterns) == 1:
+        return patterns[0]
+    return " OR ".join(f"({pattern})" for pattern in patterns)
+
+
+def literal_matched_patterns(text: str, patterns: list[str]) -> list[str]:
+    lowered = text.lower()
+    return [pattern for pattern in patterns if pattern.lower() in lowered]
+
+
+def literal_snippet(text: str, patterns: list[str], *, radius: int = 90) -> str:
+    if not text:
+        return ""
+    lowered = text.lower()
+    first_match: tuple[int, str] | None = None
+    for pattern in patterns:
+        index = lowered.find(pattern.lower())
+        if index >= 0 and (first_match is None or index < first_match[0]):
+            first_match = (index, pattern)
+    if first_match is None:
+        return summarize_text(text)
+
+    start_index, pattern = first_match
+    end_index = start_index + len(pattern)
+    window_start = max(0, start_index - radius)
+    window_end = min(len(text), end_index + radius)
+    snippet = text[window_start:window_end]
+    offset = start_index - window_start
+    snippet = f"{snippet[:offset]}[[{snippet[offset:offset + len(pattern)]}]]{snippet[offset + len(pattern):]}"
+    if window_start > 0:
+        snippet = "..." + snippet
+    if window_end < len(text):
+        snippet += "..."
+    return " ".join(snippet.split())
+
+
 def substantive_match_sql(*, alias: str = "e") -> str:
     ship_literals = ", ".join(f"'{value}'" for value in sorted(SHIP_EVENT_KINDS))
     return f"""
@@ -2420,7 +2595,7 @@ def search_candidate_rows(
     before: str | None = None,
     substantive_only: bool = False,
     sort: str = "relevance",
-) -> list[sqlite3.Row]:
+) -> list[dict[str, Any]]:
     where_clauses, params = build_search_where(
         thread_ids=thread_ids,
         search_column=search_column,
@@ -2434,9 +2609,10 @@ def search_candidate_rows(
         substantive_only=substantive_only,
     )
     order_sql = search_order_sql(sort)
-    return conn.execute(
+    rows = conn.execute(
         f"""
         select e.id, e.thread_id, e.entry_index, e.rollout_line, e.timestamp, e.entry_type, e.payload_type, e.role,
+               e.{search_column} as match_text,
                ((select count(*) from entry_entities en where en.entry_id = e.id)
                 + (select count(*) from entry_repos rp where rp.entry_id = e.id)
                 + (select count(*) from entry_pr_numbers pn where pn.entry_id = e.id)
@@ -2449,6 +2625,85 @@ def search_candidate_rows(
         """,
         params,
     ).fetchall()
+    output: list[dict[str, Any]] = []
+    for row in rows:
+        output.append(
+            {
+                **dict(row),
+                "_query_mode": "literal",
+                "_matched_patterns": literal_matched_patterns(row["match_text"] or "", patterns),
+                "_match_snippet": literal_snippet(row["match_text"] or "", patterns),
+                "_fts_rank": None,
+            }
+        )
+    return output
+
+
+def fts_search_candidate_rows(
+    conn: sqlite3.Connection,
+    *,
+    thread_ids: list[str],
+    search_column: str,
+    patterns: list[str],
+    scope_info: dict[str, Any],
+    role: str | None = None,
+    entry_type: str | None = None,
+    payload_type: str | None = None,
+    after: str | None = None,
+    before: str | None = None,
+    substantive_only: bool = False,
+    sort: str = "relevance",
+) -> list[dict[str, Any]]:
+    if not sqlite_fts5_available(conn) or not fts_table_exists(conn):
+        raise FtsUnavailableError("SQLite FTS5 is unavailable for this cache.")
+    where_clauses, params = build_search_where(
+        thread_ids=thread_ids,
+        search_column=search_column,
+        patterns=[],
+        scope_info=scope_info,
+        role=role,
+        entry_type=entry_type,
+        payload_type=payload_type,
+        after=after,
+        before=before,
+        substantive_only=substantive_only,
+    )
+    fts_query = fts_query_from_patterns(patterns)
+    column_name = fts_column(search_column)
+    snippet_column = fts_snippet_column(search_column)
+    order_sql = fts_search_order_sql(sort)
+    try:
+        rows = conn.execute(
+            f"""
+            select e.id, e.thread_id, e.entry_index, e.rollout_line, e.timestamp, e.entry_type, e.payload_type, e.role,
+                   ((select count(*) from entry_entities en where en.entry_id = e.id)
+                    + (select count(*) from entry_repos rp where rp.entry_id = e.id)
+                    + (select count(*) from entry_pr_numbers pn where pn.entry_id = e.id)
+                    + (select count(*) from entry_commit_oids co where co.entry_id = e.id)
+                    + (select count(*) from entry_qualified_ids qi where qi.entry_id = e.id)
+                    + (select count(*) from entry_event_kinds ek where ek.entry_id = e.id)) as facet_score,
+                   bm25(entries_fts) as fts_rank,
+                   snippet(entries_fts, {snippet_column}, '[[', ']]', '...', 18) as match_snippet
+            from entries e
+            join entries_fts on entries_fts.entry_id = e.id
+            where {' and '.join(where_clauses)}
+              and entries_fts.{column_name} match ?
+            order by {order_sql}
+            """,
+            (*params, fts_query),
+        ).fetchall()
+    except sqlite3.OperationalError as exc:
+        raise InvalidSearchQueryError(str(exc)) from exc
+    return [
+        {
+            **dict(row),
+            "_query_mode": "fts",
+            "_matched_patterns": patterns,
+            "_match_snippet": row["match_snippet"] or "",
+            "_fts_rank": float(row["fts_rank"]) if row["fts_rank"] is not None else None,
+        }
+        for row in rows
+    ]
 
 
 def collapse_candidate_rank(entry: dict[str, Any]) -> int | None:
@@ -3121,6 +3376,7 @@ def search_entry_payload(
 ) -> dict[str, Any]:
     haystack = entry["raw_text"] if include_noise else entry["search_text"]
     payload = {
+        "entry_ref": f"{entry['thread_id']}#{entry['entry_index']}",
         "entry_index": entry["entry_index"],
         "rollout_line": entry["rollout_line"],
         "timestamp": entry["timestamp"],
@@ -3130,6 +3386,15 @@ def search_entry_payload(
         "excerpt": summarize_text(haystack),
         "matched_facets": matched_facets(entry),
     }
+    if entry.get("_query_mode"):
+        match_payload: dict[str, Any] = {
+            "query_mode": entry["_query_mode"],
+            "snippet": entry.get("_match_snippet") or summarize_text(haystack),
+            "matched_patterns": entry.get("_matched_patterns") or [],
+        }
+        if entry.get("_fts_rank") is not None:
+            match_payload["fts_rank"] = entry["_fts_rank"]
+        payload["match"] = match_payload
     return apply_thread_context(payload, thread_id=entry["thread_id"], thread_map=thread_map)
 
 
@@ -3148,31 +3413,90 @@ def logical_search_entries(
     before: str | None = None,
     substantive_only: bool = False,
     sort: str = "relevance",
+    query_mode: str = "literal",
 ) -> tuple[list[dict[str, Any]], int]:
-    rows = search_candidate_rows(
-        conn,
-        thread_ids=thread_ids,
-        search_column=search_column,
-        patterns=patterns,
-        scope_info=scope_info,
-        role=role,
-        entry_type=entry_type,
-        payload_type=payload_type,
-        after=after,
-        before=before,
-        substantive_only=substantive_only,
-        sort=sort,
-    )
+    if query_mode == "fts":
+        rows = fts_search_candidate_rows(
+            conn,
+            thread_ids=thread_ids,
+            search_column=search_column,
+            patterns=patterns,
+            scope_info=scope_info,
+            role=role,
+            entry_type=entry_type,
+            payload_type=payload_type,
+            after=after,
+            before=before,
+            substantive_only=substantive_only,
+            sort=sort,
+        )
+    else:
+        rows = search_candidate_rows(
+            conn,
+            thread_ids=thread_ids,
+            search_column=search_column,
+            patterns=patterns,
+            scope_info=scope_info,
+            role=role,
+            entry_type=entry_type,
+            payload_type=payload_type,
+            after=after,
+            before=before,
+            substantive_only=substantive_only,
+            sort=sort,
+        )
     entry_ids = [int(row["id"]) for row in rows]
     entries = {entry["id"]: entry for entry in fetch_entry_rows_by_ids(conn, entry_ids)}
     logical_entries: list[dict[str, Any]] = []
     for row in rows:
         entry = dict(entries[int(row["id"])])
         entry["_facet_score"] = int(row["facet_score"] or 0)
+        entry["_query_mode"] = row.get("_query_mode")
+        entry["_matched_patterns"] = row.get("_matched_patterns") or []
+        entry["_match_snippet"] = row.get("_match_snippet")
+        entry["_fts_rank"] = row.get("_fts_rank")
         logical_entries.append(entry)
     collapsed_entries, collapsed_count = collapse_mirror_entries(logical_entries)
     search_entry_sort_in_place(collapsed_entries, sort=sort)
     return collapsed_entries, collapsed_count
+
+
+def context_entries_for_match(
+    conn: sqlite3.Connection,
+    *,
+    entry: dict[str, Any],
+    limit: int,
+    scope_info: dict[str, Any],
+    include_noise: bool,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if limit <= 0:
+        return [], []
+    scoped_sql, scoped_params = scope_clause(scope_info, alias="e")
+    noise_sql = "" if include_noise else "and e.is_noise = 0 and e.content_class not in ('meta', 'transcript_dump', 'compaction')"
+    base_params: tuple[Any, ...] = (entry["thread_id"], int(entry["entry_index"]), *scoped_params, limit)
+    before_rows = conn.execute(
+        f"""
+        select e.id
+        from entries e
+        where e.thread_id = ? and e.entry_index < ? {scoped_sql} {noise_sql}
+        order by e.entry_index desc
+        limit ?
+        """,
+        base_params,
+    ).fetchall()
+    after_rows = conn.execute(
+        f"""
+        select e.id
+        from entries e
+        where e.thread_id = ? and e.entry_index > ? {scoped_sql} {noise_sql}
+        order by e.entry_index
+        limit ?
+        """,
+        base_params,
+    ).fetchall()
+    before_ids = [int(row["id"]) for row in reversed(before_rows)]
+    after_ids = [int(row["id"]) for row in after_rows]
+    return fetch_entry_rows_by_ids(conn, before_ids), fetch_entry_rows_by_ids(conn, after_ids)
 
 
 def evidence_entry_ids(conn: sqlite3.Connection, *, thread_ids: list[str], profile: str, limit: int, scope_info: dict[str, Any]) -> list[int]:
@@ -3230,6 +3554,7 @@ def build_evidence(
         evidence.append(
             apply_thread_context(
                 {
+                    "entry_ref": f"{entry['thread_id']}#{entry['entry_index']}",
                     "entry_index": entry["entry_index"],
                     "rollout_line": entry["rollout_line"],
                     "timestamp": entry["timestamp"],
@@ -3646,6 +3971,8 @@ def status(thread_id: str | None = None, codex_home: str | Path | None = None) -
         warnings.extend(index_warnings)
         current_episode_row_value, current_selection_reason = current_episode_selection(conn, thread_id=thread["id"])
         current_episode = episode_payload(conn, current_episode_row_value, selection_reason=current_selection_reason)
+        health_payload = cache_health(conn, thread_id=thread["id"])
+        search_stats = fts_stats(conn, thread_id=thread["id"])
         return {
             "ok": True,
             "thread": thread,
@@ -3661,6 +3988,14 @@ def status(thread_id: str | None = None, codex_home: str | Path | None = None) -
                 "built_at": index_meta["built_at"],
                 "last_rebuild_reason": index_meta["last_rebuild_reason"],
                 "lock_state": index_meta["lock_state"],
+                "health": health_payload,
+            },
+            "search": {
+                "fts_available": bool(search_stats["available"]),
+                "fts_indexed_entry_count": int(search_stats["indexed_entry_count"]),
+                "fts_missing_entry_count": int(search_stats["missing_entry_count"]),
+                "query_modes": ["literal", "fts"] if search_stats["available"] else ["literal"],
+                "context_max": MAX_CONTEXT_ENTRIES,
             },
             "episodes": {
                 "total": episode_count(conn, thread_id=thread["id"]),
@@ -3840,6 +4175,8 @@ def grep_rollout(
     limit: int = 10,
     all_matches: bool = False,
     sort: str = "relevance",
+    query_mode: str = "literal",
+    context: int = 0,
     role: str | None = None,
     entry_type: str | None = None,
     payload_type: str | None = None,
@@ -3851,6 +4188,11 @@ def grep_rollout(
     thread_source: str = "current",
     max_threads: int = 10,
 ) -> dict[str, Any]:
+    if context < 0 or context > MAX_CONTEXT_ENTRIES:
+        return failure("invalid_request", f"grep --context must be between 0 and {MAX_CONTEXT_ENTRIES}.")
+    if query_mode not in {"literal", "fts"}:
+        return failure("invalid_request", "grep --query-mode must be literal or fts.")
+
     thread, threads, warnings, error, thread_source_payload = resolve_thread_set(
         thread_id=thread_id,
         codex_home=codex_home,
@@ -3895,18 +4237,38 @@ def grep_rollout(
             before=before,
             substantive_only=False,
             sort=sort,
+            query_mode=query_mode,
         )
         total_matches = len(logical_entries)
         returned_entries = logical_entries if all_matches else logical_entries[:limit]
-        results = [
-            search_entry_payload(entry, include_noise=include_noise, thread_map=thread_map)
-            for entry in returned_entries
-        ]
+        results = []
+        for entry in returned_entries:
+            payload = search_entry_payload(entry, include_noise=include_noise, thread_map=thread_map)
+            if context:
+                before_entries, after_entries = context_entries_for_match(
+                    conn,
+                    entry=entry,
+                    limit=context,
+                    scope_info=scope_info,
+                    include_noise=include_noise,
+                )
+                payload["context"] = {
+                    "before": [
+                        search_entry_payload(item, include_noise=include_noise, thread_map=thread_map)
+                        for item in before_entries
+                    ],
+                    "after": [
+                        search_entry_payload(item, include_noise=include_noise, thread_map=thread_map)
+                        for item in after_entries
+                    ],
+                }
+            results.append(payload)
 
         return {
             "ok": True,
             "thread": thread,
             "pattern": pattern,
+            "query_mode": query_mode,
             "warnings": warnings,
             "index": index_meta,
             "scope": scope_payload(scope_info),
@@ -3925,6 +4287,23 @@ def grep_rollout(
             warnings=warnings,
             thread=thread,
             cache={"path": str(cache_db_path(home)), "lock_state": exc.lock_state},
+            thread_source=thread_source_payload,
+        )
+    except FtsUnavailableError as exc:
+        return failure(
+            "fts_unavailable",
+            str(exc),
+            warnings=warnings,
+            thread=thread,
+            thread_source=thread_source_payload,
+        )
+    except InvalidSearchQueryError as exc:
+        return failure(
+            "invalid_query",
+            str(exc),
+            warnings=warnings,
+            thread=thread,
+            query_mode=query_mode,
             thread_source=thread_source_payload,
         )
     finally:
@@ -4123,6 +4502,7 @@ def worklog(
     patterns: list[str],
     thread_id: str | None = None,
     codex_home: str | Path | None = None,
+    query_mode: str = "literal",
     role: str | None = None,
     entry_type: str | None = None,
     payload_type: str | None = None,
@@ -4137,6 +4517,8 @@ def worklog(
 ) -> dict[str, Any]:
     if not patterns:
         return failure("invalid_request", "worklog requires at least one --pattern value.")
+    if query_mode not in {"literal", "fts"}:
+        return failure("invalid_request", "worklog --query-mode must be literal or fts.")
 
     thread, threads, warnings, error, thread_source_payload = resolve_thread_set(
         thread_id=thread_id,
@@ -4171,9 +4553,10 @@ def worklog(
             search_column = "raw_text"
         thread_ids = [item["id"] for item in (threads or [thread])]
         thread_map = thread_map_from_threads(threads or [thread])
-        rows = search_candidate_rows(
+        logical_entries, collapsed_count = logical_search_entries(
             conn,
             thread_ids=thread_ids,
+            thread_map=thread_map,
             search_column=search_column,
             patterns=patterns,
             scope_info=scope_info,
@@ -4184,15 +4567,9 @@ def worklog(
             before=before,
             substantive_only=substantive_only,
             sort="time-asc",
+            query_mode=query_mode,
         )
-        raw_matches = len(rows)
-        entries = {entry["id"]: entry for entry in fetch_entry_rows_by_ids(conn, [int(row["id"]) for row in rows])}
-        logical_entries: list[dict[str, Any]] = []
-        for row in rows:
-            entry = dict(entries[int(row["id"])])
-            entry["_facet_score"] = int(row["facet_score"] or 0)
-            logical_entries.append(entry)
-        logical_entries, collapsed_count = collapse_mirror_entries(logical_entries)
+        raw_matches = len(logical_entries) + collapsed_count
         search_entry_sort_in_place(logical_entries, sort="time-asc")
 
         started_at = logical_entries[0]["timestamp"] if logical_entries else None
@@ -4218,6 +4595,7 @@ def worklog(
             "episode": episode_payload_data,
             "thread_source": thread_source_payload,
             "patterns": patterns,
+            "query_mode": query_mode,
             "raw_matches": raw_matches,
             "matched_entries": len(logical_entries),
             "collapsed_mirror_matches": collapsed_count,
@@ -4235,6 +4613,23 @@ def worklog(
             warnings=warnings,
             thread=thread,
             cache={"path": str(cache_db_path(home)), "lock_state": exc.lock_state},
+            thread_source=thread_source_payload,
+        )
+    except FtsUnavailableError as exc:
+        return failure(
+            "fts_unavailable",
+            str(exc),
+            warnings=warnings,
+            thread=thread,
+            thread_source=thread_source_payload,
+        )
+    except InvalidSearchQueryError as exc:
+        return failure(
+            "invalid_query",
+            str(exc),
+            warnings=warnings,
+            thread=thread,
+            query_mode=query_mode,
             thread_source=thread_source_payload,
         )
     finally:

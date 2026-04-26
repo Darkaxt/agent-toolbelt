@@ -30,6 +30,8 @@ def build_parser() -> argparse.ArgumentParser:
     grep_parser.add_argument("--limit", type=int, default=10)
     grep_parser.add_argument("--all", dest="all_matches", action="store_true")
     grep_parser.add_argument("--sort", choices=["relevance", "time-asc", "time-desc"], default="relevance")
+    grep_parser.add_argument("--query-mode", choices=["literal", "fts"], default="literal")
+    grep_parser.add_argument("--context", type=int, default=0)
     grep_parser.add_argument("--role")
     grep_parser.add_argument("--entry-type")
     grep_parser.add_argument("--payload-type")
@@ -55,6 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     worklog_parser = subparsers.add_parser("worklog", help="Compute the first/last active work span for one or more patterns.")
     worklog_parser.add_argument("--pattern", action="append", required=True)
+    worklog_parser.add_argument("--query-mode", choices=["literal", "fts"], default="literal")
     worklog_parser.add_argument("--role")
     worklog_parser.add_argument("--entry-type")
     worklog_parser.add_argument("--payload-type")
@@ -93,6 +96,8 @@ def main(argv: list[str] | None = None) -> int:
             limit=args.limit,
             all_matches=args.all_matches,
             sort=args.sort,
+            query_mode=args.query_mode,
+            context=args.context,
             role=args.role,
             entry_type=args.entry_type,
             payload_type=args.payload_type,
@@ -124,6 +129,7 @@ def main(argv: list[str] | None = None) -> int:
             patterns=args.pattern,
             thread_id=args.thread_id,
             codex_home=args.home_override,
+            query_mode=args.query_mode,
             role=args.role,
             entry_type=args.entry_type,
             payload_type=args.payload_type,

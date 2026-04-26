@@ -35,6 +35,8 @@ Noise behavior:
 - grouped entity timelines prefer concrete artifact anchors over helper/runtime identifiers when both appear in the same episode
 - `status` now tells you why the current episode was selected and how many substantive rows it contains
 - `grep`, `timeline`, and `worklog` collapse mirrored rollout envelopes so audit counts reflect logical events instead of duplicated wrappers
+- `grep` and `worklog` keep literal matching by default; use `--query-mode fts` only when you need phrase, boolean, prefix, or BM25-ranked audit search
+- use `grep --context <n>` with `n` from 0 to 5 when a match needs bounded neighboring evidence
 
 The helper keeps an append-aware cache under `CODEX_HOME/cache/codex-thread-recall/`.
 The first run may build or rebuild the index; later runs should be warm and only
@@ -68,6 +70,8 @@ python scripts/invoke_codex_thread_recall.py recall --profile shipping --scope e
 python scripts/invoke_codex_thread_recall.py timeline --kind installed --group entity --scope thread --include-meta
 python scripts/invoke_codex_thread_recall.py timeline --kind shipped --group none --all --sort time-desc --scope thread
 python scripts/invoke_codex_thread_recall.py grep --pattern "PR" --role assistant --after 2026-04-25T00:00:00Z --scope current --sort time-desc
+python scripts/invoke_codex_thread_recall.py grep --pattern '"audit search" AND artifact*' --query-mode fts --context 2
+python scripts/invoke_codex_thread_recall.py worklog --pattern '"audit search" AND artifact*' --query-mode fts
 python scripts/invoke_codex_thread_recall.py worklog --pattern "codex-thread-recall" --thread-source workspace --max-threads 5
 ```
 
@@ -98,9 +102,11 @@ python scripts/install_codex_thread_recall_runtime.py
 - Check `index.built`, `index.stale`, and `index.appended_entries` when you need to
   understand whether a call rebuilt, reused, or incrementally extended the cache.
 - Check `returned_matches`, `total_matches`, `truncated`, and `collapsed_mirror_matches` on `grep`, `timeline`, and `worklog` before assuming you saw the full audit trail.
+- Check `match.snippet`, `match.matched_patterns`, and `entry_ref` on `grep` and `worklog` evidence before expanding to raw rollout inspection.
 - Use `status` when you need runtime and cache diagnostics such as
   `runtime.mode`, `runtime.release_root`, `cache.last_rebuild_reason`,
-  `cache.lock_state`, `episodes.total`, `episodes.current.selection_reason`, or
+  `cache.lock_state`, `cache.health`, `search.fts_available`,
+  `episodes.total`, `episodes.current.selection_reason`, or
   `episodes.current.substantive_entry_count`.
 - Treat timeline/entity extraction as generic helper logic based on explicit identifiers, paths, repos, PRs, commits, and event verbs. Do not assume local repo layouts or marketplace names.
 - If the wrapper cannot find either the private runtime or an explicit development checkout, stop and repair the runtime instead of guessing at another repo path.

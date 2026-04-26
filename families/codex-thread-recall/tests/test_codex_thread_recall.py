@@ -776,6 +776,33 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertIn("index.sqlite", payload["cache"]["path"])
         self.assertIn(payload["cache"]["lock_state"]["state"], {"unlocked", "not-needed", "acquired"})
 
+    def test_status_reports_fts_health_and_self_heals_missing_fts_rows(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Plan `artifact-health`."}),
+            make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Decision: index `artifact-health`."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                first = thread_recall.status()
+                cache_path = thread_recall.cache_db_path(Path(codex_home))
+                conn = sqlite3.connect(cache_path)
+                try:
+                    conn.execute("delete from entries_fts where entry_id = (select min(id) from entries)")
+                    conn.commit()
+                finally:
+                    conn.close()
+                healed = thread_recall.status()
+
+        self.assertTrue(first["ok"])
+        self.assertTrue(first["search"]["fts_available"])
+        self.assertEqual(first["search"]["fts_indexed_entry_count"], 2)
+        self.assertTrue(healed["ok"], healed)
+        self.assertTrue(healed["cache"]["health"]["ok"])
+        self.assertEqual(healed["search"]["fts_missing_entry_count"], 0)
+        self.assertEqual(healed["search"]["fts_indexed_entry_count"], 2)
+        self.assertIn("fts", healed["search"]["query_modes"])
+
     def test_status_reports_current_episode_diagnostics(self):
         entries = [
             make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Ship `artifact-alpha`."}),
@@ -1498,6 +1525,69 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertEqual(len(no_noise["results"]), 0)
         self.assertGreater(len(with_noise["results"]), 0)
 
+    def test_grep_fts_mode_supports_boolean_prefix_and_match_metadata(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Plan `artifact-search` audit search support."}),
+            make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Decision: implement audit search snippets for `artifact-search`."}),
+            make_entry("2026-04-25T08:02:00Z", "event_msg", {"type": "agent_message", "text": "Unrelated mention of audit logs."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.grep_rollout(
+                    pattern='"audit search" AND artifact*',
+                    query_mode="fts",
+                    limit=10,
+                    sort="relevance",
+                )
+
+        self.assertTrue(payload["ok"], payload)
+        self.assertEqual(payload["query_mode"], "fts")
+        self.assertEqual(payload["total_matches"], 2)
+        self.assertTrue(all(result["entry_ref"].startswith(f"{THREAD_ID}#") for result in payload["results"]))
+        self.assertTrue(all(result["match"]["query_mode"] == "fts" for result in payload["results"]))
+        self.assertTrue(all(isinstance(result["match"].get("fts_rank"), (int, float)) for result in payload["results"]))
+        self.assertTrue(any("[[audit" in result["match"]["snippet"].lower() for result in payload["results"]))
+
+    def test_grep_invalid_fts_query_fails_closed(self):
+        entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-search`."})]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.grep_rollout(pattern='"unterminated phrase', query_mode="fts")
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"], "invalid_query")
+
+    def test_grep_context_returns_scoped_neighbor_evidence(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "agent_message", "text": "Prepare `artifact-context`."}),
+            make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Decision: keep `artifact-context` scoped."}),
+            make_entry("2026-04-25T08:02:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-context`."}),
+            make_entry("2026-04-25T08:03:00Z", "event_msg", {"type": "agent_message", "text": "Validated `artifact-context`."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.grep_rollout(pattern="Published", context=1, limit=1)
+
+        self.assertTrue(payload["ok"])
+        result = payload["results"][0]
+        self.assertEqual(result["entry_index"], 3)
+        self.assertEqual([item["entry_index"] for item in result["context"]["before"]], [2])
+        self.assertEqual([item["entry_index"] for item in result["context"]["after"]], [4])
+        self.assertNotIn("context", result["context"]["before"][0])
+
+    def test_grep_context_limit_is_bounded(self):
+        entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-context`."})]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.grep_rollout(pattern="artifact-context", context=6)
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"], "invalid_request")
+
     def test_timeline_none_reports_total_matches_sort_and_collapses_mirrors(self):
         entries = [
             make_entry("2026-04-25T08:10:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-theta`."}),
@@ -1564,6 +1654,25 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertEqual(payload["started_at"], "2026-04-25T08:00:00Z")
         self.assertEqual(payload["ended_at"], "2026-04-25T08:30:00Z")
         self.assertEqual(payload["matched_entries"], 3)
+
+    def test_worklog_fts_mode_adds_match_metadata_to_boundary_evidence(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Implement audit search for `artifact-mu`."}),
+            make_entry("2026-04-25T08:05:00Z", "event_msg", {"type": "agent_message", "text": "Decision: keep audit search for `artifact-mu` literal-compatible."}),
+            make_entry("2026-04-25T08:10:00Z", "event_msg", {"type": "agent_message", "text": "Published audit search for `artifact-mu`."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.worklog(patterns=['"audit search" AND artifact*'], query_mode="fts")
+
+        self.assertTrue(payload["ok"], payload)
+        self.assertEqual(payload["query_mode"], "fts")
+        self.assertEqual(payload["started_at"], "2026-04-25T08:00:00Z")
+        self.assertEqual(payload["ended_at"], "2026-04-25T08:10:00Z")
+        self.assertEqual(payload["evidence_start"]["match"]["query_mode"], "fts")
+        self.assertIn("[[audit", payload["evidence_start"]["match"]["snippet"].lower())
+        self.assertTrue(payload["evidence_end"]["entry_ref"].startswith(f"{THREAD_ID}#"))
 
     def test_workspace_thread_source_includes_same_cwd_threads_and_coerces_current_scope(self):
         entries = [
@@ -1752,10 +1861,25 @@ class ThreadRecallCliTests(unittest.TestCase):
             "role": kwargs.get("role"),
             "include_noise": kwargs.get("include_noise"),
             "scope": kwargs.get("scope"),
+            "query_mode": kwargs.get("query_mode"),
+            "context": kwargs.get("context"),
         }
         try:
             with io.StringIO() as buffer, redirect_stdout(buffer):
-                exit_code = cli.main(["grep", "--pattern", "fail closed", "--role", "assistant", "--include-noise", "--scope", "current"])
+                exit_code = cli.main([
+                    "grep",
+                    "--pattern",
+                    "fail closed",
+                    "--role",
+                    "assistant",
+                    "--include-noise",
+                    "--scope",
+                    "current",
+                    "--query-mode",
+                    "fts",
+                    "--context",
+                    "2",
+                ])
                 payload = json.loads(buffer.getvalue())
         finally:
             cli.thread_recall.grep_rollout = original_grep
@@ -1765,6 +1889,27 @@ class ThreadRecallCliTests(unittest.TestCase):
         self.assertEqual(payload["role"], "assistant")
         self.assertTrue(payload["include_noise"])
         self.assertEqual(payload["scope"], "current")
+        self.assertEqual(payload["query_mode"], "fts")
+        self.assertEqual(payload["context"], 2)
+
+    def test_worklog_cli_passes_query_mode(self):
+        original_worklog = cli.thread_recall.worklog
+        cli.thread_recall.worklog = lambda **kwargs: {
+            "ok": True,
+            "patterns": kwargs["patterns"],
+            "query_mode": kwargs.get("query_mode"),
+            "warnings": [],
+        }
+        try:
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                exit_code = cli.main(["worklog", "--pattern", "audit search", "--query-mode", "fts"])
+                payload = json.loads(buffer.getvalue())
+        finally:
+            cli.thread_recall.worklog = original_worklog
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["patterns"], ["audit search"])
+        self.assertEqual(payload["query_mode"], "fts")
 
     def test_timeline_cli_passes_kind_and_group(self):
         original_timeline = cli.thread_recall.timeline
