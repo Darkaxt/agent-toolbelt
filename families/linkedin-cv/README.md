@@ -13,4 +13,24 @@ uv run agent-toolbelt-linkedin-cv profile capture --profile personal --profile-i
 uv run agent-toolbelt-linkedin-cv profile compare --own C:\path\own.json --target C:\path\target.json
 ```
 
+## Analysis template
+
+Use captured snapshots as the evidence source of truth. A useful report should
+separate evidence from recommendations:
+
+- Evidence inventory: summarize captured headline, About, Experience, Skills,
+  Featured, education, certifications, languages, and measurable achievements.
+- Profile-section scorecard: mark each visible section as strong, adequate,
+  weak, missing, or not captured, and cite the snapshot fields that support the
+  rating.
+- Recruiter-visibility checklist: check role keywords, seniority signals,
+  location/remote signals, measurable outcomes, technology/domain terms, and
+  proof links or featured artifacts.
+- CV/profile delta: compare the user's CV claims against the captured profile;
+  flag missing profile evidence, profile-only evidence, wording mismatches, and
+  unsupported claims.
+- Truthful rewrite prompts: suggest wording improvements only when backed by
+  captured evidence or user-provided CV facts; ask for missing metrics instead
+  of inventing them.
+
 Managed browser profiles and snapshots are stored outside the repository under local app data by default.

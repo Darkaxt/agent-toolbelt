@@ -23,6 +23,27 @@ This is not a generic LinkedIn optimizer, content generator, lead-generation too
 - Suggest truthful wording improvements, prioritization, and gap-filling prompts. Do not copy another profile verbatim or imply credentials, metrics, roles, or endorsements that are not supported.
 - Treat public LinkedIn optimization advice as optional framing only; the captured profile evidence is the source of truth.
 
+## Analysis Template
+
+For profile reviews, comparisons, and CV/profile gap work, structure the output
+around captured evidence:
+
+- Evidence inventory: list captured headline, About, Experience, Skills,
+  Featured, education, certifications, languages, and measurable achievements;
+  mark missing or uncaptured sections explicitly.
+- Profile-section scorecard: rate each visible section as strong, adequate,
+  weak, missing, or not captured, and cite the snapshot evidence for each
+  rating.
+- Recruiter-visibility checklist: check role keywords, seniority signals,
+  location/remote signals, technology/domain terms, measurable outcomes, and
+  proof links or featured artifacts.
+- CV/profile delta: compare the user's CV claims with the captured profile;
+  flag missing profile evidence, profile-only evidence, wording mismatches, and
+  unsupported claims.
+- Truthful rewrite prompts: propose wording only when supported by captured
+  profile evidence or user-provided CV facts; ask for missing metrics or proof
+  instead of inventing them.
+
 ## Safety Rules
 
 - Read-only is the default. Do not connect, follow, message, endorse, react, comment, save, apply, or submit forms.
