@@ -1,0 +1,16 @@
+{
+  "name": "skills-sh-scout",
+  "version": "0.1.0",
+  "description": "Queries skills.sh and public GitHub skill sources before creating or expanding agent skills.",
+  "author": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "skills",
+    "skills.sh",
+    "marketplace",
+    "discovery"
+  ]
+}

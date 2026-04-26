@@ -1,0 +1,24 @@
+{
+  "name": "agent-toolbelt-local",
+  "metadata": {
+    "description": "Local marketplace for the agent-toolbelt skills.sh scout Claude plugin."
+  },
+  "owner": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "plugins": [
+    {
+      "name": "skills-sh-scout",
+      "description": "Queries skills.sh and public GitHub skill sources before creating or expanding agent skills.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Darkaxt",
+        "email": "opensource@users.noreply.github.com"
+      },
+      "source": "./plugins/skills-sh-scout",
+      "category": "productivity",
+      "strict": false
+    }
+  ]
+}

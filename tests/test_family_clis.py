@@ -46,6 +46,10 @@ FAMILY_IMPORTS = {
         REPO_ROOT / "families" / "whatsapp-wacli" / "src",
         "agent_toolbelt_whatsapp_wacli.cli",
     ),
+    "skills-sh-scout": (
+        REPO_ROOT / "families" / "skills-sh-scout" / "src",
+        "agent_toolbelt_skills_sh_scout.cli",
+    ),
 }
 
 
@@ -297,6 +301,34 @@ class FamilyCLITests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["operation"], "latest")
+
+    def test_skills_sh_scout_cli_routes_scout_command(self):
+        cli = import_family_cli("skills-sh-scout")
+
+        original_report = cli.scout.build_scout_report
+        cli.scout.build_scout_report = lambda **kwargs: {
+            "ok": True,
+            "operation": "scout",
+            "workflow": kwargs["workflow"],
+            "queries": kwargs["explicit_queries"],
+            "capped_queries": [],
+            "candidate_count": 0,
+            "candidates": [],
+            "inspected_candidates": [],
+            "recommendation": {"category": "Create new skill", "summary": "No candidates."},
+            "warnings": [],
+            "errors": [],
+        }
+        try:
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                exit_code = cli.main(["scout", "--workflow", "find a skill for x", "--query", "x"])
+                payload = json.loads(buffer.getvalue())
+        finally:
+            cli.scout.build_scout_report = original_report
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["operation"], "scout")
+        self.assertEqual(payload["queries"], ["x"])
 
 
 if __name__ == "__main__":
