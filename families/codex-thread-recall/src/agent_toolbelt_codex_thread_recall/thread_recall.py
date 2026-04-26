@@ -134,6 +134,8 @@ ENTITY_SOURCE_STRENGTH = {
 }
 CONTENT_CLASSES = {"work", "meta", "command_output", "transcript_dump", "compaction"}
 CACHE_SCHEMA_VERSION = 8
+MEMORY_BUNDLE_FORMAT = "codex-thread-recall.memory_bundle.v1"
+MEMORY_BUNDLE_MAX_BYTES = 5_000_000
 TEXT_SCAN_LIMIT = 2000
 EVIDENCE_SCAN_LIMIT = 200
 RAW_TEXT_STORE_LIMIT = 16000
@@ -209,6 +211,14 @@ def cache_db_path(codex_home: Path) -> Path:
 
 def cache_root(codex_home: Path) -> Path:
     return cache_db_path(codex_home).parent
+
+
+def memory_bundle_root(codex_home: Path) -> Path:
+    return cache_root(codex_home) / "memory-bundles"
+
+
+def memory_index_path(codex_home: Path) -> Path:
+    return memory_bundle_root(codex_home) / "index.sqlite"
 
 
 def thread_lock_path(codex_home: Path, thread_id: str) -> Path:
@@ -1283,6 +1293,16 @@ def connect_cache(codex_home: Path) -> sqlite3.Connection:
     return conn
 
 
+def connect_memory_index(codex_home: Path) -> sqlite3.Connection:
+    db_path = memory_index_path(codex_home)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("pragma foreign_keys = on")
+    ensure_memory_schema(conn)
+    return conn
+
+
 def sqlite_fts5_available(conn: sqlite3.Connection) -> bool:
     try:
         conn.execute("create virtual table temp.__codex_thread_recall_fts_probe using fts5(value)")
@@ -1297,6 +1317,58 @@ def fts_table_exists(conn: sqlite3.Connection) -> bool:
         "select name from sqlite_master where type = 'table' and name = 'entries_fts'"
     ).fetchone()
     return row is not None
+
+
+def memory_fts_table_exists(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "select name from sqlite_master where type = 'table' and name = 'memory_items_fts'"
+    ).fetchone()
+    return row is not None
+
+
+def ensure_memory_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        create table if not exists memory_bundles (
+            bundle_id text primary key,
+            format text not null,
+            created_at text,
+            imported_at text not null,
+            source_summary text not null,
+            scope_json text not null,
+            item_count integer not null,
+            bundle_json text not null
+        );
+
+        create table if not exists memory_items (
+            id integer primary key,
+            bundle_id text not null references memory_bundles(bundle_id) on delete cascade,
+            item_index integer not null,
+            item_type text not null,
+            text text not null,
+            timestamp text,
+            thread_id text,
+            thread_title text,
+            thread_cwd text,
+            entry_ref text,
+            evidence_json text
+        );
+
+        create index if not exists idx_memory_items_bundle on memory_items(bundle_id, item_index);
+        create index if not exists idx_memory_items_type on memory_items(item_type);
+        create index if not exists idx_memory_items_timestamp on memory_items(timestamp);
+        """
+    )
+    if sqlite_fts5_available(conn):
+        conn.execute(
+            """
+            create virtual table if not exists memory_items_fts using fts5(
+                item_id unindexed,
+                bundle_id unindexed,
+                text
+            )
+            """
+        )
 
 
 def drop_cache_schema(conn: sqlite3.Connection) -> None:
@@ -4632,5 +4704,543 @@ def worklog(
             query_mode=query_mode,
             thread_source=thread_source_payload,
         )
+    finally:
+        conn.close()
+
+
+def canonical_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def memory_bundle_id(bundle: dict[str, Any]) -> str:
+    canonical = json.loads(json.dumps(bundle, ensure_ascii=False))
+    canonical["bundle_id"] = None
+    return sha256(canonical_json(canonical).encode("utf-8")).hexdigest()
+
+
+def memory_bundle_file_path(codex_home: Path, bundle_id: str) -> Path:
+    return memory_bundle_root(codex_home) / f"{bundle_id}.json"
+
+
+def append_memory_item(
+    items: list[dict[str, Any]],
+    seen: set[tuple[str, str, str | None]],
+    *,
+    item_type: str,
+    text: Any,
+    evidence: dict[str, Any] | None = None,
+) -> None:
+    if text is None:
+        return
+    if isinstance(text, (int, float)):
+        text_value = str(text)
+    else:
+        text_value = " ".join(str(text).split())
+    if not text_value:
+        return
+    entry_ref = evidence.get("entry_ref") if evidence else None
+    key = (item_type, text_value, entry_ref)
+    if key in seen:
+        return
+    item: dict[str, Any] = {
+        "item_type": item_type,
+        "text": text_value,
+        "timestamp": evidence.get("timestamp") if evidence else None,
+        "thread_id": evidence.get("thread_id") if evidence else None,
+        "thread_title": evidence.get("thread_title") if evidence else None,
+        "thread_cwd": evidence.get("thread_cwd") if evidence else None,
+        "entry_ref": entry_ref,
+    }
+    if evidence:
+        item["evidence"] = {
+            key_name: evidence.get(key_name)
+            for key_name in (
+                "entry_ref",
+                "entry_index",
+                "rollout_line",
+                "timestamp",
+                "entry_type",
+                "payload_type",
+                "role",
+                "excerpt",
+                "thread_id",
+                "thread_title",
+                "thread_cwd",
+            )
+            if evidence.get(key_name) is not None
+        }
+    items.append(item)
+    seen.add(key)
+
+
+def memory_items_from_recalls(recalls: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str | None]] = set()
+    general = recalls["general"]
+    append_memory_item(items, seen, item_type="goal", text=general.get("current_goal"))
+    for key_name, item_type in (
+        ("decisions", "decision"),
+        ("known_facts", "fact"),
+        ("blockers", "blocker"),
+        ("open_questions", "question"),
+        ("touched_paths", "path"),
+        ("commands", "command"),
+    ):
+        for value in general.get(key_name, []):
+            append_memory_item(items, seen, item_type=item_type, text=value)
+
+    shipping = recalls["shipping"]
+    for key_name, item_type in (
+        ("shipped_entities", "shipping_entity"),
+        ("follow_up_fixes", "follow_up_fix"),
+        ("repos_touched", "repo"),
+        ("pr_numbers", "pr_number"),
+        ("commit_oids", "commit_oid"),
+    ):
+        for value in shipping.get(key_name, []):
+            append_memory_item(items, seen, item_type=item_type, text=value)
+
+    debug = recalls["debug"]
+    for key_name, item_type in (
+        ("failure_events", "failure"),
+        ("retry_signals", "retry"),
+        ("commands", "debug_command"),
+        ("unresolved_blockers", "unresolved_blocker"),
+    ):
+        for value in debug.get(key_name, []):
+            append_memory_item(items, seen, item_type=item_type, text=value)
+
+    for profile_name, recall_payload in recalls.items():
+        for evidence in recall_payload.get("evidence", []):
+            append_memory_item(
+                items,
+                seen,
+                item_type=f"{profile_name}_evidence",
+                text=evidence.get("excerpt"),
+                evidence=evidence,
+            )
+
+    for index, item in enumerate(items, start=1):
+        item["item_index"] = index
+    return items
+
+
+def memory_export(
+    thread_id: str | None = None,
+    codex_home: str | Path | None = None,
+    *,
+    scope: str = "current",
+    episode_id: str | None = None,
+    output_path: str | Path | None = None,
+) -> dict[str, Any]:
+    thread, warnings, error = resolve_thread(thread_id=thread_id, codex_home=codex_home)
+    if error is not None:
+        return error
+    home = default_codex_home(codex_home)
+    conn = connect_cache(home)
+    try:
+        index_meta, index_warnings = ensure_index(conn, thread=thread, codex_home=home)
+        warnings.extend(index_warnings)
+        scope_info, episode_payload_data, scope_error = resolve_query_scope(
+            conn,
+            thread=thread,
+            requested_scope=scope,
+            episode_id=episode_id,
+            thread_source="current",
+        )
+        if scope_error is not None:
+            scope_error["thread"] = thread
+            return scope_error
+        thread_ids = [thread["id"]]
+        thread_map = thread_map_from_threads([thread])
+        recalls = {
+            "general": collect_general_recall(
+                conn,
+                thread_ids=thread_ids,
+                thread_map=thread_map,
+                evidence_limit=25,
+                profile="general",
+                scope_info=scope_info,
+            ),
+            "shipping": collect_shipping_recall(
+                conn,
+                thread_ids=thread_ids,
+                thread_map=thread_map,
+                evidence_limit=25,
+                scope_info=scope_info,
+            ),
+            "debug": collect_debug_recall(
+                conn,
+                thread_ids=thread_ids,
+                thread_map=thread_map,
+                evidence_limit=25,
+                scope_info=scope_info,
+            ),
+        }
+        bundle: dict[str, Any] = {
+            "format": MEMORY_BUNDLE_FORMAT,
+            "bundle_id": None,
+            "created_at": datetime.now(tz=UTC).isoformat(),
+            "source_cache_schema": int(index_meta["schema_version"]),
+            "source_threads": [
+                {
+                    "thread_id": thread["id"],
+                    "thread_title": thread["title"],
+                    "thread_cwd": thread["cwd"],
+                }
+            ],
+            "scope": scope_payload(scope_info),
+            "episode": episode_payload_data,
+            "summary": {
+                "general": recalls["general"].get("summary"),
+                "shipping": recalls["shipping"].get("summary"),
+                "debug": recalls["debug"].get("summary"),
+            },
+            "distilled": {
+                "goals": [recalls["general"].get("current_goal")] if recalls["general"].get("current_goal") else [],
+                "decisions": recalls["general"].get("decisions", []),
+                "facts": recalls["general"].get("known_facts", []),
+                "blockers": recalls["general"].get("blockers", []),
+                "questions": recalls["general"].get("open_questions", []),
+                "shipping": {
+                    "entities": recalls["shipping"].get("shipped_entities", []),
+                    "follow_up_fixes": recalls["shipping"].get("follow_up_fixes", []),
+                    "repos": recalls["shipping"].get("repos_touched", []),
+                    "pr_numbers": recalls["shipping"].get("pr_numbers", []),
+                    "commit_oids": recalls["shipping"].get("commit_oids", []),
+                },
+                "debug": {
+                    "failures": recalls["debug"].get("failure_events", []),
+                    "retries": recalls["debug"].get("retry_signals", []),
+                    "commands": recalls["debug"].get("commands", []),
+                    "unresolved_blockers": recalls["debug"].get("unresolved_blockers", []),
+                },
+            },
+            "items": memory_items_from_recalls(recalls),
+        }
+        bundle["bundle_id"] = memory_bundle_id(bundle)
+        rendered = json.dumps(bundle, indent=2, ensure_ascii=False)
+        if output_path is not None:
+            target = Path(output_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(rendered + "\n", encoding="utf-8")
+        return {
+            "ok": True,
+            "thread": thread,
+            "warnings": warnings,
+            "index": index_meta,
+            "scope": scope_payload(scope_info),
+            "episode": episode_payload_data,
+            "bundle_id": bundle["bundle_id"],
+            "item_count": len(bundle["items"]),
+            "output_path": str(output_path) if output_path is not None else None,
+            "bundle": bundle,
+        }
+    except IndexBusyError as exc:
+        return failure(
+            "index_busy",
+            str(exc),
+            warnings=warnings,
+            thread=thread,
+            cache={"path": str(cache_db_path(home)), "lock_state": exc.lock_state},
+        )
+    finally:
+        conn.close()
+
+
+def validate_memory_bundle(bundle: Any) -> tuple[dict[str, Any] | None, str | None]:
+    if not isinstance(bundle, dict):
+        return None, "bundle must be a JSON object"
+    if bundle.get("format") != MEMORY_BUNDLE_FORMAT:
+        return None, "unsupported memory bundle format"
+    if not isinstance(bundle.get("bundle_id"), str) or not bundle["bundle_id"]:
+        return None, "missing bundle_id"
+    if memory_bundle_id(bundle) != bundle["bundle_id"]:
+        return None, "bundle_id does not match bundle content"
+    if not isinstance(bundle.get("source_threads"), list) or not bundle["source_threads"]:
+        return None, "missing source_threads"
+    if not isinstance(bundle.get("items"), list):
+        return None, "missing items"
+    for index, item in enumerate(bundle["items"], start=1):
+        if not isinstance(item, dict):
+            return None, f"item {index} is not an object"
+        if not isinstance(item.get("item_type"), str) or not isinstance(item.get("text"), str):
+            return None, f"item {index} is missing item_type or text"
+    return bundle, None
+
+
+def memory_import(*, bundle_path: str | Path, codex_home: str | Path | None = None) -> dict[str, Any]:
+    path = Path(bundle_path)
+    if not path.is_file():
+        return failure("memory_bundle_missing", f"Memory bundle is not readable: {path}")
+    if path.stat().st_size > MEMORY_BUNDLE_MAX_BYTES:
+        return failure("memory_bundle_too_large", f"Memory bundle exceeds {MEMORY_BUNDLE_MAX_BYTES} bytes.")
+    try:
+        bundle_data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return failure("invalid_memory_bundle", f"Invalid memory bundle JSON: {exc.msg}")
+    bundle, validation_error = validate_memory_bundle(bundle_data)
+    if bundle is None:
+        return failure("invalid_memory_bundle", validation_error or "Invalid memory bundle.")
+
+    home = default_codex_home(codex_home)
+    conn = connect_memory_index(home)
+    try:
+        existing = conn.execute(
+            "select bundle_id from memory_bundles where bundle_id = ?",
+            (bundle["bundle_id"],),
+        ).fetchone()
+        if existing is not None:
+            return {
+                "ok": True,
+                "bundle_id": bundle["bundle_id"],
+                "imported": False,
+                "already_present": True,
+                "memory": {"path": str(memory_index_path(home))},
+            }
+
+        source_summary = json.dumps(bundle.get("source_threads", []), ensure_ascii=False)
+        scope_json = json.dumps(bundle.get("scope", {}), ensure_ascii=False)
+        bundle_json = json.dumps(bundle, ensure_ascii=False, sort_keys=True)
+        conn.execute(
+            """
+            insert into memory_bundles (
+                bundle_id, format, created_at, imported_at, source_summary, scope_json, item_count, bundle_json
+            ) values (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                bundle["bundle_id"],
+                bundle["format"],
+                bundle.get("created_at"),
+                datetime.now(tz=UTC).isoformat(),
+                source_summary,
+                scope_json,
+                len(bundle["items"]),
+                bundle_json,
+            ),
+        )
+        for index, item in enumerate(bundle["items"], start=1):
+            cursor = conn.execute(
+                """
+                insert into memory_items (
+                    bundle_id, item_index, item_type, text, timestamp, thread_id, thread_title,
+                    thread_cwd, entry_ref, evidence_json
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    bundle["bundle_id"],
+                    int(item.get("item_index") or index),
+                    item["item_type"],
+                    item["text"],
+                    item.get("timestamp"),
+                    item.get("thread_id"),
+                    item.get("thread_title"),
+                    item.get("thread_cwd"),
+                    item.get("entry_ref"),
+                    json.dumps(item.get("evidence", {}), ensure_ascii=False, sort_keys=True),
+                ),
+            )
+            if sqlite_fts5_available(conn) and memory_fts_table_exists(conn):
+                item_id = int(cursor.lastrowid)
+                conn.execute(
+                    "insert into memory_items_fts (rowid, item_id, bundle_id, text) values (?, ?, ?, ?)",
+                    (item_id, item_id, bundle["bundle_id"], item["text"]),
+                )
+        conn.commit()
+        bundle_file = memory_bundle_file_path(home, bundle["bundle_id"])
+        bundle_file.parent.mkdir(parents=True, exist_ok=True)
+        bundle_file.write_text(json.dumps(bundle, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        return {
+            "ok": True,
+            "bundle_id": bundle["bundle_id"],
+            "imported": True,
+            "already_present": False,
+            "item_count": len(bundle["items"]),
+            "memory": {"path": str(memory_index_path(home)), "bundle_path": str(bundle_file)},
+        }
+    finally:
+        conn.close()
+
+
+def memory_list(*, codex_home: str | Path | None = None) -> dict[str, Any]:
+    home = default_codex_home(codex_home)
+    conn = connect_memory_index(home)
+    try:
+        rows = conn.execute(
+            """
+            select bundle_id, format, created_at, imported_at, source_summary, scope_json, item_count
+            from memory_bundles
+            order by imported_at desc, bundle_id
+            """
+        ).fetchall()
+        return {
+            "ok": True,
+            "memory": {"path": str(memory_index_path(home))},
+            "bundles": [
+                {
+                    "bundle_id": row["bundle_id"],
+                    "format": row["format"],
+                    "created_at": row["created_at"],
+                    "imported_at": row["imported_at"],
+                    "source_threads": json.loads(row["source_summary"]),
+                    "scope": json.loads(row["scope_json"]),
+                    "item_count": int(row["item_count"]),
+                }
+                for row in rows
+            ],
+        }
+    finally:
+        conn.close()
+
+
+def memory_show(*, bundle_id: str, codex_home: str | Path | None = None) -> dict[str, Any]:
+    home = default_codex_home(codex_home)
+    conn = connect_memory_index(home)
+    try:
+        row = conn.execute(
+            "select bundle_json from memory_bundles where bundle_id = ?",
+            (bundle_id,),
+        ).fetchone()
+        if row is None:
+            return failure("memory_bundle_missing", f"Memory bundle is not imported: {bundle_id}")
+        bundle = json.loads(row["bundle_json"])
+        return {
+            "ok": True,
+            "memory": {"path": str(memory_index_path(home))},
+            "bundle": bundle,
+        }
+    finally:
+        conn.close()
+
+
+def memory_item_payload(row: sqlite3.Row | dict[str, Any], *, query_mode: str, patterns: list[str]) -> dict[str, Any]:
+    text = row["text"] or ""
+    snippet = row.get("match_snippet") if isinstance(row, dict) else (row["match_snippet"] if "match_snippet" in row.keys() else None)
+    if not snippet:
+        snippet = literal_snippet(text, patterns)
+    payload: dict[str, Any] = {
+        "bundle_id": row["bundle_id"],
+        "item_type": row["item_type"],
+        "text": text,
+        "timestamp": row["timestamp"],
+        "thread_id": row["thread_id"],
+        "thread_title": row["thread_title"],
+        "thread_cwd": row["thread_cwd"],
+        "entry_ref": row["entry_ref"],
+        "match": {
+            "query_mode": query_mode,
+            "snippet": snippet,
+            "matched_patterns": patterns if query_mode == "fts" else literal_matched_patterns(text, patterns),
+        },
+    }
+    fts_rank = row.get("fts_rank") if isinstance(row, dict) else (row["fts_rank"] if "fts_rank" in row.keys() else None)
+    if fts_rank is not None:
+        payload["match"]["fts_rank"] = float(fts_rank)
+    return payload
+
+
+def memory_search_order_sql(sort: str, *, fts: bool) -> str:
+    rank = "fts_rank asc, " if fts and sort == "relevance" else ""
+    if sort == "time-desc":
+        return "coalesce(mi.timestamp, '') desc, mi.item_index desc"
+    if sort == "time-asc":
+        return "coalesce(mi.timestamp, ''), mi.item_index"
+    return f"{rank}mi.bundle_id, mi.item_index"
+
+
+def memory_search(
+    *,
+    pattern: str,
+    codex_home: str | Path | None = None,
+    query_mode: str = "literal",
+    limit: int = 10,
+    all_matches: bool = False,
+    sort: str = "relevance",
+) -> dict[str, Any]:
+    if query_mode not in {"literal", "fts"}:
+        return failure("invalid_request", "memory search --query-mode must be literal or fts.")
+    patterns = [pattern]
+    home = default_codex_home(codex_home)
+    conn = connect_memory_index(home)
+    try:
+        if query_mode == "fts":
+            if not sqlite_fts5_available(conn) or not memory_fts_table_exists(conn):
+                return failure("fts_unavailable", "SQLite FTS5 is unavailable for imported memory search.")
+            order_sql = memory_search_order_sql(sort, fts=True)
+            try:
+                rows = conn.execute(
+                    f"""
+                    select mi.bundle_id, mi.item_type, mi.text, mi.timestamp, mi.thread_id, mi.thread_title,
+                           mi.thread_cwd, mi.entry_ref, bm25(memory_items_fts) as fts_rank,
+                           snippet(memory_items_fts, 2, '[[', ']]', '...', 18) as match_snippet
+                    from memory_items mi
+                    join memory_items_fts on memory_items_fts.item_id = mi.id
+                    where memory_items_fts.text match ?
+                    order by {order_sql}
+                    """,
+                    (pattern,),
+                ).fetchall()
+            except sqlite3.OperationalError as exc:
+                return failure("invalid_query", str(exc), query_mode=query_mode)
+            query_rows = [dict(row) for row in rows]
+        else:
+            order_sql = memory_search_order_sql(sort, fts=False)
+            rows = conn.execute(
+                f"""
+                select mi.bundle_id, mi.item_type, mi.text, mi.timestamp, mi.thread_id, mi.thread_title,
+                       mi.thread_cwd, mi.entry_ref
+                from memory_items mi
+                where instr(lower(coalesce(mi.text, '')), lower(?)) > 0
+                order by {order_sql}
+                """,
+                (pattern,),
+            ).fetchall()
+            query_rows = [dict(row) for row in rows]
+
+        total_matches = len(query_rows)
+        returned_rows = query_rows if all_matches else query_rows[:limit]
+        return {
+            "ok": True,
+            "memory": {"path": str(memory_index_path(home))},
+            "pattern": pattern,
+            "query_mode": query_mode,
+            "returned_matches": len(returned_rows),
+            "total_matches": total_matches,
+            "truncated": (not all_matches) and total_matches > len(returned_rows),
+            "results": [memory_item_payload(row, query_mode=query_mode, patterns=patterns) for row in returned_rows],
+        }
+    finally:
+        conn.close()
+
+
+def memory_forget(*, bundle_id: str, codex_home: str | Path | None = None) -> dict[str, Any]:
+    home = default_codex_home(codex_home)
+    conn = connect_memory_index(home)
+    try:
+        existing = conn.execute(
+            "select bundle_id from memory_bundles where bundle_id = ?",
+            (bundle_id,),
+        ).fetchone()
+        if existing is None:
+            return {
+                "ok": True,
+                "bundle_id": bundle_id,
+                "forgotten": False,
+                "memory": {"path": str(memory_index_path(home))},
+            }
+        if memory_fts_table_exists(conn):
+            conn.execute("delete from memory_items_fts where bundle_id = ?", (bundle_id,))
+        conn.execute("delete from memory_items where bundle_id = ?", (bundle_id,))
+        conn.execute("delete from memory_bundles where bundle_id = ?", (bundle_id,))
+        conn.commit()
+        bundle_file = memory_bundle_file_path(home, bundle_id)
+        if bundle_file.exists():
+            bundle_file.unlink()
+        return {
+            "ok": True,
+            "bundle_id": bundle_id,
+            "forgotten": True,
+            "memory": {"path": str(memory_index_path(home))},
+        }
     finally:
         conn.close()

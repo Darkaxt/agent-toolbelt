@@ -16,7 +16,8 @@ Use `scripts/invoke_codex_thread_recall.py` when long-running or resumed work ri
 5. If one detail is still missing, run `grep --pattern <term>` with structured filters against this same thread before looking elsewhere.
 6. If the question is “when did we work on X?” or “what was the first/last span for X?”, use `worklog --pattern <term>` instead of hand-assembling a grep span.
 7. If you need broader operational context from the same workspace, opt into `--thread-source workspace --max-threads <n>`; this only includes threads whose normalized `cwd` exactly matches the current one.
-8. Only do broad repo or web exploration after current-thread recall fails to answer it.
+8. If you need to carry distilled context elsewhere, explicitly use the `memory` subcommands. Imported memory bundles are not searched by default and are not source-of-truth rollout recall.
+9. Only do broad repo or web exploration after current-thread recall fails to answer it.
 
 Default scope behavior:
 
@@ -37,6 +38,13 @@ Noise behavior:
 - `grep`, `timeline`, and `worklog` collapse mirrored rollout envelopes so audit counts reflect logical events instead of duplicated wrappers
 - `grep` and `worklog` keep literal matching by default; use `--query-mode fts` only when you need phrase, boolean, prefix, or BM25-ranked audit search
 - use `grep --context <n>` with `n` from 0 to 5 when a match needs bounded neighboring evidence
+
+Memory bundle behavior:
+
+- `memory export` creates a portable `codex-thread-recall.memory_bundle.v1` JSON file from scoped distilled facts and bounded evidence excerpts
+- `memory import`, `list`, `show`, `search`, and `forget` use only imported bundles under `CODEX_HOME/cache/codex-thread-recall/memory-bundles/`
+- normal `status`, `recall`, `grep`, `timeline`, and `worklog` calls never query imported bundles
+- use memory bundles only when an explicitly portable, distilled context artifact is needed; prefer source-thread recall when the rollout is available
 
 The helper keeps an append-aware cache under `CODEX_HOME/cache/codex-thread-recall/`.
 The first run may build or rebuild the index; later runs should be warm and only
@@ -59,6 +67,8 @@ python scripts/invoke_codex_thread_recall.py recall --profile general --scope cu
 python scripts/invoke_codex_thread_recall.py timeline --kind shipped --group entity --scope current
 python scripts/invoke_codex_thread_recall.py grep --pattern "CODEX_THREAD_ID" --scope thread
 python scripts/invoke_codex_thread_recall.py worklog --pattern "codex-thread-recall" --scope thread
+python scripts/invoke_codex_thread_recall.py memory export --scope current --output recall.bundle.json
+python scripts/invoke_codex_thread_recall.py memory search --pattern "codex-thread-recall"
 ```
 
 Optional overrides:
@@ -73,6 +83,10 @@ python scripts/invoke_codex_thread_recall.py grep --pattern "PR" --role assistan
 python scripts/invoke_codex_thread_recall.py grep --pattern '"audit search" AND artifact*' --query-mode fts --context 2
 python scripts/invoke_codex_thread_recall.py worklog --pattern '"audit search" AND artifact*' --query-mode fts
 python scripts/invoke_codex_thread_recall.py worklog --pattern "codex-thread-recall" --thread-source workspace --max-threads 5
+python scripts/invoke_codex_thread_recall.py memory import --path recall.bundle.json
+python scripts/invoke_codex_thread_recall.py memory list
+python scripts/invoke_codex_thread_recall.py memory show --bundle-id <bundle-id>
+python scripts/invoke_codex_thread_recall.py memory forget --bundle-id <bundle-id>
 ```
 
 Refresh the private local runtime after repo updates:
@@ -103,6 +117,7 @@ python scripts/install_codex_thread_recall_runtime.py
   understand whether a call rebuilt, reused, or incrementally extended the cache.
 - Check `returned_matches`, `total_matches`, `truncated`, and `collapsed_mirror_matches` on `grep`, `timeline`, and `worklog` before assuming you saw the full audit trail.
 - Check `match.snippet`, `match.matched_patterns`, and `entry_ref` on `grep` and `worklog` evidence before expanding to raw rollout inspection.
+- Do not treat memory bundles as implicit recall. They are opt-in portable summaries and must be queried through `memory search` or inspected through `memory show`.
 - Use `status` when you need runtime and cache diagnostics such as
   `runtime.mode`, `runtime.release_root`, `cache.last_rebuild_reason`,
   `cache.lock_state`, `cache.health`, `search.fts_available`,
