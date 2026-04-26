@@ -11,6 +11,24 @@ This family is intentionally local-first and experimental. Install the Codex/Cla
 - Support sending text, reacting, and presence only through explicit `--confirm` gates in the local adapter.
 - No raw `wacli` passthrough.
 
+## Why use this adapter instead of raw `wacli`
+
+Public raw-CLI skills can be useful when an agent already knows the exact
+`wacli` command and identifier to use. This family is narrower on purpose: it
+adds a structured helper layer so agents do not have to infer WhatsApp storage
+details or safety policy from raw terminal output.
+
+- JSON-first responses make chat lookup, latest-message reads, context windows,
+  and draft generation easier to audit.
+- Chat resolution returns `chat_jid`, `contact_jid`, `resolved_jid`,
+  `resolution_source`, `used_jid`, and `attempted_jids` where applicable, so
+  phone-number JID versus LID ambiguity is visible instead of hidden.
+- `latest` uses bounded, explicit backfill behavior and reports
+  `backfill_seed_missing` when the local store lacks an anchor for older
+  history.
+- WhatsApp-visible actions stay behind exact `--confirm` gates; local sync and
+  backfill only update the local store.
+
 ## Local Client
 
 The family package only bridges into the local client:

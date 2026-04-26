@@ -15,6 +15,21 @@ Use `scripts/invoke_whatsapp_wacli.py` for local WhatsApp access through the cur
 
 This skill is experimental and local-first. Use the curated adapter and structured JSON output; do not expose raw `wacli` passthrough or package WhatsApp sessions, message stores, or local database files.
 
+## Why This Wrapper
+
+Use this wrapper instead of raw `wacli` when an agent needs reliable, auditable
+WhatsApp context rather than direct terminal passthrough:
+
+- It returns structured JSON for chat lookup, message reads, search, context,
+  drafts, and visible-action safety failures.
+- It exposes phone-number JID versus LID ambiguity through fields such as
+  `chat_jid`, `contact_jid`, `resolved_jid`, `resolution_source`, `used_jid`,
+  and `attempted_jids`.
+- It keeps history expansion bounded and reports `backfill_seed_missing` when
+  the local store lacks the anchor needed for targeted history backfill.
+- It blocks WhatsApp-visible actions unless the exact action is confirmed with
+  the adapter's `--confirm` flag.
+
 ## Routing Rules
 
 Use this skill when:
