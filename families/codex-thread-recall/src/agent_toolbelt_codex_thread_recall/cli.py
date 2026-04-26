@@ -69,6 +69,32 @@ def build_parser() -> argparse.ArgumentParser:
     worklog_parser.add_argument("--include-noise", action="store_true")
     worklog_parser.add_argument("--thread-source", choices=["current", "workspace"], default="current")
     worklog_parser.add_argument("--max-threads", type=int, default=10)
+
+    memory_parser = subparsers.add_parser("memory", help="Manage opt-in portable recall memory bundles.")
+    memory_subparsers = memory_parser.add_subparsers(dest="memory_command", required=True)
+
+    memory_export = memory_subparsers.add_parser("export", help="Export distilled current-thread recall facts.")
+    memory_export.add_argument("--scope", choices=["current", "thread", "episode"], default="current")
+    memory_export.add_argument("--episode-id")
+    memory_export.add_argument("--output")
+
+    memory_import = memory_subparsers.add_parser("import", help="Import a portable recall memory bundle.")
+    memory_import.add_argument("--path", required=True)
+
+    memory_subparsers.add_parser("list", help="List imported recall memory bundles.")
+
+    memory_show = memory_subparsers.add_parser("show", help="Show an imported recall memory bundle.")
+    memory_show.add_argument("--bundle-id", required=True)
+
+    memory_search = memory_subparsers.add_parser("search", help="Search imported recall memory bundles.")
+    memory_search.add_argument("--pattern", required=True)
+    memory_search.add_argument("--query-mode", choices=["literal", "fts"], default="literal")
+    memory_search.add_argument("--limit", type=int, default=10)
+    memory_search.add_argument("--all", dest="all_matches", action="store_true")
+    memory_search.add_argument("--sort", choices=["relevance", "time-asc", "time-desc"], default="relevance")
+
+    memory_forget = memory_subparsers.add_parser("forget", help="Forget an imported recall memory bundle.")
+    memory_forget.add_argument("--bundle-id", required=True)
     return parser
 
 
@@ -124,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
             thread_source=args.thread_source,
             max_threads=args.max_threads,
         )
-    else:
+    elif args.command == "worklog":
         payload = thread_recall.worklog(
             patterns=args.pattern,
             thread_id=args.thread_id,
@@ -142,6 +168,34 @@ def main(argv: list[str] | None = None) -> int:
             thread_source=args.thread_source,
             max_threads=args.max_threads,
         )
+    elif args.memory_command == "export":
+        payload = thread_recall.memory_export(
+            thread_id=args.thread_id,
+            codex_home=args.home_override,
+            scope=args.scope,
+            episode_id=args.episode_id,
+            output_path=args.output,
+        )
+    elif args.memory_command == "import":
+        payload = thread_recall.memory_import(
+            codex_home=args.home_override,
+            bundle_path=args.path,
+        )
+    elif args.memory_command == "list":
+        payload = thread_recall.memory_list(codex_home=args.home_override)
+    elif args.memory_command == "show":
+        payload = thread_recall.memory_show(codex_home=args.home_override, bundle_id=args.bundle_id)
+    elif args.memory_command == "search":
+        payload = thread_recall.memory_search(
+            codex_home=args.home_override,
+            pattern=args.pattern,
+            query_mode=args.query_mode,
+            limit=args.limit,
+            all_matches=args.all_matches,
+            sort=args.sort,
+        )
+    else:
+        payload = thread_recall.memory_forget(codex_home=args.home_override, bundle_id=args.bundle_id)
 
     print(json.dumps(payload, indent=2, ensure_ascii=True))
     return 0 if payload.get("ok") else 1

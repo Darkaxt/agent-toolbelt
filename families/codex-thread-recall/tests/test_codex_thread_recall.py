@@ -1741,6 +1741,98 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertIn("artifact-beta", payload["recall"]["shipped_entities"])
         self.assertTrue(any(item.get("thread_id") == "019-thread-other" for item in payload["recall"]["evidence"]))
 
+    def test_memory_export_import_list_show_search_and_forget_are_opt_in(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Implement portable memory for `artifact-memory`."}),
+            make_entry("2026-04-25T08:05:00Z", "event_msg", {"type": "agent_message", "text": "Decision: export distilled facts for `artifact-memory` only."}),
+            make_entry("2026-04-25T08:10:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-memory` in `example/toolbelt`."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            bundle_path = Path(temp_dir) / "artifact-memory.bundle.json"
+            with self.with_env(codex_home):
+                exported = thread_recall.memory_export(scope="thread", output_path=bundle_path)
+                imported = thread_recall.memory_import(bundle_path=bundle_path)
+                imported_again = thread_recall.memory_import(bundle_path=bundle_path)
+                listed = thread_recall.memory_list()
+                shown = thread_recall.memory_show(bundle_id=exported["bundle_id"])
+                searched = thread_recall.memory_search(pattern="artifact-memory", limit=10)
+                recalled = thread_recall.recall(scope="thread")
+                forgotten = thread_recall.memory_forget(bundle_id=exported["bundle_id"])
+                searched_after_forget = thread_recall.memory_search(pattern="artifact-memory", limit=10)
+                bundle_file_exists = bundle_path.is_file()
+
+        self.assertTrue(exported["ok"], exported)
+        self.assertEqual(exported["bundle"]["format"], "codex-thread-recall.memory_bundle.v1")
+        self.assertEqual(exported["bundle_id"], exported["bundle"]["bundle_id"])
+        self.assertTrue(bundle_file_exists)
+        self.assertNotIn("raw_text", json.dumps(exported["bundle"]).lower())
+        self.assertTrue(imported["ok"], imported)
+        self.assertTrue(imported["imported"])
+        self.assertTrue(imported_again["ok"], imported_again)
+        self.assertFalse(imported_again["imported"])
+        self.assertEqual(listed["bundles"][0]["bundle_id"], exported["bundle_id"])
+        self.assertEqual(shown["bundle"]["bundle_id"], exported["bundle_id"])
+        self.assertGreaterEqual(searched["total_matches"], 1)
+        self.assertIn("[[artifact-memory]]", searched["results"][0]["match"]["snippet"])
+        self.assertEqual(searched["results"][0]["bundle_id"], exported["bundle_id"])
+        self.assertTrue(recalled["ok"])
+        self.assertNotIn("memory_bundles", recalled)
+        self.assertTrue(forgotten["forgotten"])
+        self.assertEqual(searched_after_forget["total_matches"], 0)
+
+    def test_memory_import_rejects_tampered_or_oversized_bundles(self):
+        entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Implement `artifact-memory`."})]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            bundle_path = Path(temp_dir) / "memory.bundle.json"
+            tampered_path = Path(temp_dir) / "tampered.bundle.json"
+            oversized_path = Path(temp_dir) / "oversized.bundle.json"
+            oversized_path.write_text("x" * (thread_recall.MEMORY_BUNDLE_MAX_BYTES + 1), encoding="utf-8")
+            with self.with_env(codex_home):
+                exported = thread_recall.memory_export(scope="thread", output_path=bundle_path)
+                tampered = json.loads(bundle_path.read_text(encoding="utf-8"))
+                tampered["items"][0]["text"] = "tampered content"
+                tampered_path.write_text(json.dumps(tampered), encoding="utf-8")
+                tampered_payload = thread_recall.memory_import(bundle_path=tampered_path)
+                oversized_payload = thread_recall.memory_import(bundle_path=oversized_path)
+
+        self.assertTrue(exported["ok"])
+        self.assertFalse(tampered_payload["ok"])
+        self.assertEqual(tampered_payload["error"], "invalid_memory_bundle")
+        self.assertFalse(oversized_payload["ok"])
+        self.assertEqual(oversized_payload["error"], "memory_bundle_too_large")
+
+    def test_memory_search_fts_and_unavailable_fallback_are_explicit(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Implement audit bundle for `artifact-memory`."}),
+            make_entry("2026-04-25T08:05:00Z", "event_msg", {"type": "agent_message", "text": "Decision: keep audit bundle searchable for `artifact-memory`."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            bundle_path = Path(temp_dir) / "memory.bundle.json"
+            with self.with_env(codex_home):
+                exported = thread_recall.memory_export(scope="thread", output_path=bundle_path)
+                imported = thread_recall.memory_import(bundle_path=bundle_path)
+                fts_payload = thread_recall.memory_search(pattern='"audit bundle" AND artifact*', query_mode="fts", limit=10)
+                original_probe = thread_recall.sqlite_fts5_available
+                try:
+                    thread_recall.sqlite_fts5_available = lambda conn: False
+                    literal_payload = thread_recall.memory_search(pattern="artifact-memory", query_mode="literal", limit=10)
+                    unavailable_payload = thread_recall.memory_search(pattern="artifact-memory", query_mode="fts", limit=10)
+                finally:
+                    thread_recall.sqlite_fts5_available = original_probe
+
+        self.assertTrue(exported["ok"])
+        self.assertTrue(imported["ok"])
+        self.assertTrue(fts_payload["ok"], fts_payload)
+        self.assertGreaterEqual(fts_payload["total_matches"], 1)
+        self.assertEqual(fts_payload["results"][0]["match"]["query_mode"], "fts")
+        self.assertTrue(literal_payload["ok"])
+        self.assertGreaterEqual(literal_payload["total_matches"], 1)
+        self.assertFalse(unavailable_payload["ok"])
+        self.assertEqual(unavailable_payload["error"], "fts_unavailable")
+
     def test_recall_skips_malformed_jsonl_with_warning(self):
         entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "hello"})]
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1910,6 +2002,38 @@ class ThreadRecallCliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["patterns"], ["audit search"])
         self.assertEqual(payload["query_mode"], "fts")
+
+    def test_memory_cli_routes_export_import_and_search(self):
+        calls: list[tuple[str, dict]] = []
+        original_export = cli.thread_recall.memory_export
+        original_import = cli.thread_recall.memory_import
+        original_search = cli.thread_recall.memory_search
+        cli.thread_recall.memory_export = lambda **kwargs: calls.append(("export", kwargs)) or {"ok": True, "bundle_id": "bundle-1"}
+        cli.thread_recall.memory_import = lambda **kwargs: calls.append(("import", kwargs)) or {"ok": True, "bundle_id": "bundle-1"}
+        cli.thread_recall.memory_search = lambda **kwargs: calls.append(("search", kwargs)) or {"ok": True, "results": []}
+        try:
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                self.assertEqual(cli.main(["memory", "export", "--scope", "thread", "--output", "bundle.json"]), 0)
+                export_payload = json.loads(buffer.getvalue())
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                self.assertEqual(cli.main(["memory", "import", "--path", "bundle.json"]), 0)
+                import_payload = json.loads(buffer.getvalue())
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                self.assertEqual(cli.main(["memory", "search", "--pattern", "artifact", "--query-mode", "fts", "--limit", "5"]), 0)
+                search_payload = json.loads(buffer.getvalue())
+        finally:
+            cli.thread_recall.memory_export = original_export
+            cli.thread_recall.memory_import = original_import
+            cli.thread_recall.memory_search = original_search
+
+        self.assertEqual(export_payload["bundle_id"], "bundle-1")
+        self.assertEqual(import_payload["bundle_id"], "bundle-1")
+        self.assertEqual(search_payload["results"], [])
+        self.assertEqual(calls[0], ("export", {"thread_id": None, "codex_home": None, "scope": "thread", "episode_id": None, "output_path": "bundle.json"}))
+        self.assertEqual(calls[1], ("import", {"codex_home": None, "bundle_path": "bundle.json"}))
+        self.assertEqual(calls[2][0], "search")
+        self.assertEqual(calls[2][1]["query_mode"], "fts")
+        self.assertEqual(calls[2][1]["limit"], 5)
 
     def test_timeline_cli_passes_kind_and_group(self):
         original_timeline = cli.thread_recall.timeline

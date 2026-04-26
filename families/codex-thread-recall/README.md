@@ -57,6 +57,13 @@ Phase 9 improves audit search quality:
 - `grep` results include match snippets and stable `entry_ref` values, and `--context <n>` returns bounded neighboring evidence around each result.
 - `status` reports FTS availability, FTS row health, supported query modes, and cache health so corrupted search indexes rebuild instead of silently degrading.
 
+Phase 10 adds portable memory bundles as an explicit separate workflow:
+
+- `memory export` writes a distilled JSON bundle of scoped recall facts and bounded evidence excerpts.
+- `memory import`, `list`, `show`, `search`, and `forget` operate only on imported bundles under `CODEX_HOME/cache/codex-thread-recall/memory-bundles/`.
+- imported bundles are never searched by default by `status`, `recall`, `grep`, `timeline`, or `worklog`.
+- bundles are portable context artifacts, not source-of-truth rollout history; use them only when you intentionally need distilled context outside the current thread.
+
 ## Commands
 
 ```powershell
@@ -65,6 +72,8 @@ uv run --project families/codex-thread-recall agent-toolbelt-codex-thread-recall
 uv run --project families/codex-thread-recall agent-toolbelt-codex-thread-recall timeline --kind shipped --group entity --scope current
 uv run --project families/codex-thread-recall agent-toolbelt-codex-thread-recall grep --pattern "CODEX_THREAD_ID" --scope thread
 uv run --project families/codex-thread-recall agent-toolbelt-codex-thread-recall worklog --pattern "codex-thread-recall" --scope thread
+uv run --project families/codex-thread-recall agent-toolbelt-codex-thread-recall memory export --scope current --output recall.bundle.json
+uv run --project families/codex-thread-recall agent-toolbelt-codex-thread-recall memory search --pattern "codex-thread-recall"
 ```
 
 To install or refresh the private local runtime from a repo checkout:
@@ -107,6 +116,12 @@ Optional filters and overrides:
 - `worklog --scope current|thread|episode --episode-id episode-N`
 - `worklog --include-incidental [--include-noise]`
 - `worklog --thread-source current|workspace --max-threads <n>`
+- `memory export --scope current|thread|episode --episode-id episode-N --output <path>`
+- `memory import --path <bundle.json>`
+- `memory list`
+- `memory show --bundle-id <id>`
+- `memory search --pattern <term> --query-mode literal|fts --limit <n> --all --sort relevance|time-asc|time-desc`
+- `memory forget --bundle-id <id>`
 
 ## Output shape
 
@@ -122,6 +137,12 @@ Optional filters and overrides:
 - `worklog` returns first/last logical work evidence, collapsed mirror counts,
   and a human-readable duration for one or more patterns. Literal matching stays
   the default; FTS mode is opt-in.
+- `memory export` returns a `codex-thread-recall.memory_bundle.v1` JSON bundle
+  with source-thread metadata, selected scope, distilled goals, decisions, facts,
+  blockers, questions, shipping/debug facts, and bounded evidence excerpts.
+- `memory search` searches imported bundle facts and excerpts only. It returns
+  bundle id, source-thread metadata, fact/evidence type, highlighted snippets,
+  matched patterns, and source `entry_ref` values when present.
 
 Successful scoped responses also include additive scope metadata:
 
@@ -193,3 +214,6 @@ Failure is explicit:
 - `rollout_missing` when the rollout JSONL path cannot be read
 - `index_busy` when another live process still owns the per-thread cache lock after the brief wait budget
 - runtime bootstrap failure when neither `AGENT_TOOLBELT_HOME`, a repo bundle, nor the private local runtime can be resolved
+- `invalid_memory_bundle` when an imported bundle has the wrong format, missing required fields, or a mismatched deterministic bundle id
+- `memory_bundle_too_large` when an import exceeds the local bundle size limit
+- `memory_bundle_missing` when `memory show` or `memory forget` targets an unknown bundle id
