@@ -70,6 +70,14 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertEqual(command[:7], ["uv.exe", "run", "--project", str(client_home), "outlook-classic-mail-client", "--queue-timeout-sec", "900"])
         self.assertEqual(command[-1], "accounts")
 
+    def test_standalone_local_client_is_source_controlled(self):
+        client_root = REPO_ROOT / "families" / "outlook-classic-mail" / "local-client"
+
+        self.assertTrue((client_root / "pyproject.toml").is_file())
+        self.assertTrue((client_root / "src" / "outlook_classic_mail_client" / "client.py").is_file())
+        self.assertTrue((client_root / "tests" / "test_client.py").is_file())
+        self.assertFalse((client_root / "state").exists())
+
     def test_invoke_client_normalizes_json_success(self):
         original_run = outlook_classic_mail.run_process
         original_uv = outlook_classic_mail.resolve_uv_executable
@@ -135,6 +143,48 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("uv", result["stderr"].lower())
         self.assertEqual(result["wrapper_diagnostics"]["failure_kind"], "uv_unavailable")
         self.assertFalse(result["wrapper_diagnostics"]["cloud_connector_used"])
+        self.assertRegex(result["wrapper_diagnostics"]["invocation_id"], r"^[0-9a-f-]{36}$")
+
+    def test_invoke_client_preserves_client_diagnostics(self):
+        original_run = outlook_classic_mail.run_process
+        original_uv = outlook_classic_mail.resolve_uv_executable
+        original_home = outlook_classic_mail.resolve_client_home
+        outlook_classic_mail.resolve_uv_executable = lambda: "uv.exe"
+        outlook_classic_mail.resolve_client_home = lambda explicit_home=None: Path(r"C:\Tools\outlook-classic-mail")
+
+        def fake_run(command, **kwargs):
+            return outlook_classic_mail.subprocess.CompletedProcess(
+                command,
+                74,
+                stdout=json.dumps(
+                    {
+                        "ok": False,
+                        "operation": "accounts",
+                        "stderr": "outlook_dispatch_failed: Outlook.Application COM dispatch failed.",
+                        "exit_code": 74,
+                        "result": {},
+                        "warnings": [],
+                        "client_diagnostics": {
+                            "invocation_id": "client-invocation",
+                            "failure_kind": "outlook_dispatch_failed",
+                        },
+                    }
+                ),
+                stderr="",
+            )
+
+        outlook_classic_mail.run_process = fake_run
+        try:
+            result = outlook_classic_mail.invoke_client(operation_args=["accounts"])
+        finally:
+            outlook_classic_mail.run_process = original_run
+            outlook_classic_mail.resolve_uv_executable = original_uv
+            outlook_classic_mail.resolve_client_home = original_home
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["client_diagnostics"]["failure_kind"], "outlook_dispatch_failed")
+        self.assertEqual(result["client_diagnostics"]["invocation_id"], "client-invocation")
+        self.assertIn("wrapper_diagnostics", result)
 
     def test_invoke_client_reports_missing_client_home_diagnostics(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -306,6 +356,15 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         parser = outlook_classic_mail.build_parser()
         args = parser.parse_args(["--queue-timeout-sec", "45", "accounts"])
         self.assertEqual(args.queue_timeout_sec, 45)
+
+    def test_parser_routes_diagnostics_commands(self):
+        parser = outlook_classic_mail.build_parser()
+
+        probe_args = parser.parse_args(["diagnostics-probe"])
+        log_args = parser.parse_args(["diagnostics-log", "--limit", "7"])
+
+        self.assertEqual(outlook_classic_mail.build_operation_args(probe_args), ["diagnostics-probe"])
+        self.assertEqual(outlook_classic_mail.build_operation_args(log_args), ["diagnostics-log", "--limit", "7"])
 
     def test_build_operation_args_routes_find_response(self):
         parser = outlook_classic_mail.build_parser()
@@ -585,6 +644,7 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn('package_dir_name="agent_toolbelt_outlook_classic_mail"', wrapper_text)
         self.assertIn("from agent_toolbelt_outlook_classic_mail import cli", wrapper_text)
         self.assertNotIn("win32com", wrapper_text.lower())
+        self.assertNotIn("DEFAULT_AGENT_TOOLBELT_HOME", wrapper_text)
 
     def test_claude_skill_documents_outlook_workflows(self):
         skill_path = (

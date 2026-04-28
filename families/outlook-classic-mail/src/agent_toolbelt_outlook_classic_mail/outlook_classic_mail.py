@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import subprocess
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -93,6 +94,7 @@ def build_wrapper_diagnostics(
     failure_kind: str | None = None,
 ) -> dict[str, Any]:
     diagnostics: dict[str, Any] = {
+        "invocation_id": str(uuid.uuid4()),
         "access_model": "local_outlook_classic_com",
         "cloud_connector_used": False,
         "client_home_source": client_home_source(explicit_home=client_home, resolved_home=resolved_home),
@@ -307,6 +309,11 @@ def build_parser() -> argparse.ArgumentParser:
     sync_mail.add_argument("--force", action="store_true")
     sync_mail.add_argument("--cache-path")
 
+    subparsers.add_parser("diagnostics-probe", help="Probe Outlook COM availability and diagnostic metadata.")
+
+    diagnostics_log = subparsers.add_parser("diagnostics-log", help="Show recent local Outlook COM diagnostic events.")
+    diagnostics_log.add_argument("--limit", type=int, default=20)
+
     search = subparsers.add_parser("search", help="Search mail in a specific account and folder.")
     search.add_argument("--account")
     search.add_argument("--folder", default="inbox")
@@ -484,6 +491,13 @@ def build_operation_args(args: argparse.Namespace) -> list[str]:
         if args.force:
             parts.append("--force")
         append_optional_arg(parts, "--cache-path", args.cache_path)
+        return parts
+
+    if args.operation == "diagnostics-probe":
+        return parts
+
+    if args.operation == "diagnostics-log":
+        parts.extend(["--limit", str(args.limit)])
         return parts
 
     if args.operation == "search":

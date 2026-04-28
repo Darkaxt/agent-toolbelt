@@ -1,26 +1,48 @@
-import json
+import os
 import sys
 from pathlib import Path
 
 
-def bootstrap_core_src() -> None:
+WORKSPACE_MARKER = "[tool.uv.workspace]"
+
+
+def workspace_candidates(current: Path) -> list[Path]:
+    candidates: list[Path] = []
+    env_home = os.getenv("AGENT_TOOLBELT_HOME")
+    if env_home:
+        candidates.append(Path(env_home).expanduser())
+
+    for start in (current, Path.cwd().resolve()):
+        for parent in (start, *start.parents):
+            candidates.append(parent)
+            candidates.append(parent / "agent-toolbelt")
+    return candidates
+
+
+def bootstrap_core_src() -> Path:
     current = Path(__file__).resolve()
-    for parent in current.parents:
-        pyproject = parent / "pyproject.toml"
-        core_src = parent / "packages" / "core" / "src"
-        if pyproject.exists() and "[tool.uv.workspace]" in pyproject.read_text(encoding="utf-8"):
+    seen: set[str] = set()
+    for candidate in workspace_candidates(current.parent):
+        root = candidate.resolve()
+        root_key = str(root).lower()
+        if root_key in seen:
+            continue
+        seen.add(root_key)
+        pyproject = root / "pyproject.toml"
+        core_src = root / "packages" / "core" / "src"
+        if pyproject.exists() and WORKSPACE_MARKER in pyproject.read_text(encoding="utf-8"):
             if str(core_src) not in sys.path:
                 sys.path.insert(0, str(core_src))
-            return
+            return root
     raise RuntimeError("Could not locate the repository packages/core/src directory.")
 
 
-bootstrap_core_src()
+REPO_ROOT = bootstrap_core_src()
 
 from agent_toolbelt_core.bootstrap import bootstrap_family_package  # noqa: E402
 
 bootstrap_family_package(
-    __file__,
+    REPO_ROOT / "families" / "outlook-classic-mail",
     family_name="outlook-classic-mail",
     package_dir_name="agent_toolbelt_outlook_classic_mail",
 )

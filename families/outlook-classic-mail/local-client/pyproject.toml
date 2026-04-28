@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "outlook-classic-mail-client"
+version = "0.1.0"
+description = "Standalone Outlook Classic COM client for local multi-account mail workflows."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Darkaxt" }]
+dependencies = ["pywin32>=306; platform_system == 'Windows'"]
+
+[project.scripts]
+outlook-classic-mail-client = "outlook_classic_mail_client.cli:entrypoint"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

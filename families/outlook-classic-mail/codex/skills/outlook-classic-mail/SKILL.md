@@ -39,6 +39,7 @@ Do not use this skill when:
 - Outlook COM-backed calls now join a local FIFO queue. Do not launch parallel heavy Outlook queries expecting linear timeout inflation; prefer targeted or batched requests and let the queue serialize execution.
 - If the client returns `queue_timeout`, the call never got a turn before the queue budget expired. If the client returns `outlook_busy`, queue admission succeeded but COM acquisition still failed unexpectedly.
 - Read `wrapper_diagnostics` on every response. It identifies the access model as local Outlook Classic COM, reports that no cloud connector was used, shows the resolved client-home source, and labels wrapper-level failures such as missing client, missing `uv`, timeout, invalid JSON, or process start failure.
+- When scheduled or background tasks report Outlook COM unavailable, run `diagnostics-probe` and then `diagnostics-log --limit 20`. These commands collect safe local runtime/COM metadata only; they do not read mailbox content.
 - For "find my response/reply" tasks tied to a received message, use `find-response` first; fall back to manual Sent/Drafts searches only if the command fails or the anchor message cannot be resolved.
 - For domain age or blocklist evidence, use `inspect-domains` for one message or `scan-domain-refs` for a bounded folder scan; these commands are read-only.
 - Use `blocklists status` to inspect the local DNS blocklist cache and `blocklists refresh` only when cache maintenance is explicitly needed.
@@ -56,6 +57,8 @@ Do not use this skill when:
 ```bash
 python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] accounts
 python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] sync-mail [--refresh-cache] [--account <smtp|store>|--all-accounts] [--days <n>] [--force]
+python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] diagnostics-probe
+python scripts/invoke_outlook_mail.py diagnostics-log [--limit <n>]
 python scripts/invoke_outlook_mail.py cache-status [--query <text>]
 python scripts/invoke_outlook_mail.py cache-show --query <text> [--account <smtp|store>] [--days <n>] [--limit <n>]
 python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] cache-refresh [--account <smtp|store>|--all-accounts] [--days <n>] [--force]

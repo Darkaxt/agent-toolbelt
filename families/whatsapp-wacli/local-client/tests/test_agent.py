@@ -42,8 +42,42 @@ class WhatsAppWacliAgentTests(unittest.TestCase):
     def write_lid_mapping(self, store_dir, *, lid, pn):
         conn = sqlite3.connect(store_dir / "session.db")
         try:
-            conn.execute("create table whatsmeow_lid_map (lid text primary key, pn text not null)")
-            conn.execute("insert into whatsmeow_lid_map (lid, pn) values (?, ?)", (lid, pn))
+            conn.execute("create table if not exists whatsmeow_lid_map (lid text primary key, pn text not null)")
+            conn.execute("insert or replace into whatsmeow_lid_map (lid, pn) values (?, ?)", (lid, pn))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def write_session_contacts(self, store_dir, rows):
+        conn = sqlite3.connect(store_dir / "session.db")
+        try:
+            conn.execute(
+                """
+                create table if not exists whatsmeow_contacts (
+                    our_jid text,
+                    their_jid text,
+                    first_name text,
+                    full_name text,
+                    push_name text,
+                    business_name text,
+                    redacted_phone text
+                )
+                """
+            )
+            conn.executemany(
+                """
+                insert into whatsmeow_contacts (
+                    our_jid,
+                    their_jid,
+                    first_name,
+                    full_name,
+                    push_name,
+                    business_name,
+                    redacted_phone
+                ) values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
             conn.commit()
         finally:
             conn.close()
@@ -57,6 +91,114 @@ class WhatsAppWacliAgentTests(unittest.TestCase):
                     "insert into messages (chat_jid) values (?)",
                     [(jid,) for _ in range(count)],
                 )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def write_chat_rows(self, store_dir, rows):
+        conn = sqlite3.connect(store_dir / "wacli.db")
+        try:
+            conn.execute(
+                "create table chats (jid text primary key, kind text not null, name text, last_message_ts integer)"
+            )
+            conn.executemany(
+                "insert into chats (jid, kind, name, last_message_ts) values (?, ?, ?, ?)",
+                rows,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def write_chat_message_times(self, store_dir, *, jid, message_timestamps, chat_last_message_ts):
+        conn = sqlite3.connect(store_dir / "wacli.db")
+        try:
+            conn.execute(
+                "create table messages (chat_jid text not null, ts integer not null)"
+            )
+            conn.execute(
+                "create table chats (jid text primary key, kind text not null, name text, last_message_ts integer)"
+            )
+            conn.executemany(
+                "insert into messages (chat_jid, ts) values (?, ?)",
+                [(jid, ts) for ts in message_timestamps],
+            )
+            conn.execute(
+                "insert into chats (jid, kind, name, last_message_ts) values (?, ?, ?, ?)",
+                (jid, "contact", "Demo Contact", chat_last_message_ts),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def write_media_message_metadata(
+        self,
+        store_dir,
+        *,
+        chat_jid,
+        msg_id,
+        media_type="image",
+        media_caption="db caption",
+        filename="receipt.jpg",
+        mime_type="image/jpeg",
+        file_length=12345,
+        local_path="C:\\tmp\\media\\receipt.jpg",
+        downloaded_at="2026-04-28T13:00:00Z",
+    ):
+        conn = sqlite3.connect(store_dir / "wacli.db")
+        try:
+            conn.execute(
+                """
+                create table messages (
+                    chat_jid text not null,
+                    msg_id text not null,
+                    media_type text,
+                    media_caption text,
+                    filename text,
+                    mime_type text,
+                    file_length integer,
+                    local_path text,
+                    downloaded_at text,
+                    media_key text,
+                    direct_path text,
+                    file_sha256 text,
+                    file_enc_sha256 text
+                )
+                """
+            )
+            conn.execute(
+                """
+                insert into messages (
+                    chat_jid,
+                    msg_id,
+                    media_type,
+                    media_caption,
+                    filename,
+                    mime_type,
+                    file_length,
+                    local_path,
+                    downloaded_at,
+                    media_key,
+                    direct_path,
+                    file_sha256,
+                    file_enc_sha256
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    chat_jid,
+                    msg_id,
+                    media_type,
+                    media_caption,
+                    filename,
+                    mime_type,
+                    file_length,
+                    local_path,
+                    downloaded_at,
+                    "secret-key",
+                    "https://mmg.whatsapp.net/private",
+                    "sha",
+                    "enc-sha",
+                ),
+            )
             conn.commit()
         finally:
             conn.close()
@@ -239,6 +381,194 @@ class WhatsAppWacliAgentTests(unittest.TestCase):
         self.assertEqual(result["result"]["chat"]["source"], "contact")
         self.assertIn("contacts", runner.commands[1])
 
+    def test_find_chat_falls_back_to_local_chat_metadata_for_non_contact_chat(self):
+        runner = FakeRunner(
+            [
+                {"stdout": {"success": True, "data": []}},
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            self.write_chat_rows(
+                cfg.store_dir,
+                [("123@lid", "unknown", "Non Contact Chat", 1777380000)],
+            )
+            result = agent.find_chat("Non Contact", runner=runner, config=cfg)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["result"]["chat"]["jid"], "123@lid")
+        self.assertEqual(result["result"]["chat"]["source"], "local_chat")
+        self.assertEqual(len(runner.commands), 1)
+
+    def test_find_chat_uses_archived_store_alias_when_fresh_store_keeps_only_jid_name(self):
+        runner = FakeRunner(
+            [
+                {"stdout": {"success": True, "data": []}},
+                {"stdout": {"success": True, "data": []}},
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            self.write_message_counts(cfg.store_dir, {"123@lid": 2})
+            archived_store = cfg.store_dir.parent / "store-stale-20260428-152530"
+            archived_store.mkdir()
+            self.write_chat_rows(
+                archived_store,
+                [("123@lid", "unknown", "Archived Alias", 1777370000)],
+            )
+
+            result = agent.find_chat("Archived Alias", runner=runner, config=cfg)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["result"]["chat"]["jid"], "123@lid")
+        self.assertEqual(result["result"]["chat"]["source"], "archived_chat_alias:store-stale-20260428-152530")
+        self.assertIn("resolved_from_archived_store_alias", result["warnings"])
+        self.assertIn("contacts", runner.commands[1])
+
+    def test_find_chat_resolves_non_contact_from_live_session_push_name(self):
+        runner = FakeRunner(
+            [
+                {"stdout": {"success": True, "data": []}},
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            self.write_lid_mapping(cfg.store_dir, lid="193793236189416", pn="35799041717")
+            self.write_message_counts(cfg.store_dir, {"193793236189416@lid": 3})
+            self.write_session_contacts(
+                cfg.store_dir,
+                [
+                    (
+                        "34610895060:47@s.whatsapp.net",
+                        "35799041717@s.whatsapp.net",
+                        None,
+                        None,
+                        "Monzer",
+                        None,
+                        None,
+                    )
+                ],
+            )
+
+            result = agent.find_chat("Monzer", runner=runner, config=cfg)
+
+        self.assertTrue(result["ok"])
+        chat = result["result"]["chat"]
+        self.assertEqual(chat["jid"], "193793236189416@lid")
+        self.assertEqual(chat["source"], "live_session_contact")
+        self.assertEqual(chat["resolved_jid"], "193793236189416@lid")
+        self.assertEqual(chat["contact_jid"], "35799041717@s.whatsapp.net")
+        self.assertEqual(chat["phone"], "35799041717")
+        self.assertEqual(chat["phone_jid"], "35799041717@s.whatsapp.net")
+        self.assertEqual(chat["display_label"], "Monzer")
+        self.assertEqual(len(runner.commands), 1)
+
+    def test_find_chat_resolves_phone_fragments_through_live_session_metadata(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            self.write_lid_mapping(cfg.store_dir, lid="193793236189416", pn="35799041717")
+            self.write_message_counts(cfg.store_dir, {"193793236189416@lid": 3})
+            self.write_session_contacts(
+                cfg.store_dir,
+                [
+                    (
+                        "34610895060:47@s.whatsapp.net",
+                        "35799041717@s.whatsapp.net",
+                        None,
+                        None,
+                        "Monzer",
+                        None,
+                        None,
+                    )
+                ],
+            )
+
+            for query in ("+357 99 041717", "+35799041717", "99041717", "041717"):
+                with self.subTest(query=query):
+                    runner = FakeRunner([{"stdout": {"success": True, "data": []}}])
+                    result = agent.find_chat(query, runner=runner, config=cfg)
+
+                    self.assertTrue(result["ok"])
+                    self.assertEqual(result["result"]["chat"]["jid"], "193793236189416@lid")
+                    self.assertEqual(result["result"]["chat"]["source"], "live_session_contact")
+
+    def test_live_session_metadata_beats_archived_alias(self):
+        runner = FakeRunner(
+            [
+                {"stdout": {"success": True, "data": []}},
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            self.write_lid_mapping(cfg.store_dir, lid="193793236189416", pn="35799041717")
+            self.write_message_counts(cfg.store_dir, {"193793236189416@lid": 3})
+            self.write_session_contacts(
+                cfg.store_dir,
+                [
+                    (
+                        "34610895060:47@s.whatsapp.net",
+                        "35799041717@s.whatsapp.net",
+                        None,
+                        None,
+                        "Monzer",
+                        None,
+                        None,
+                    )
+                ],
+            )
+            archived_store = cfg.store_dir.parent / "store-stale-20260428-152530"
+            archived_store.mkdir()
+            self.write_chat_rows(
+                archived_store,
+                [("193793236189416@lid", "unknown", "Monzer", 1777370000)],
+            )
+
+            result = agent.find_chat("Monzer", runner=runner, config=cfg)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["result"]["chat"]["source"], "live_session_contact")
+        self.assertNotIn("resolved_from_archived_store_alias", result.get("warnings", []))
+
+    def test_ambiguous_phone_fragment_fails_closed(self):
+        runner = FakeRunner(
+            [
+                {"stdout": {"success": True, "data": []}},
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            self.write_lid_mapping(cfg.store_dir, lid="111", pn="35799041717")
+            self.write_lid_mapping(cfg.store_dir, lid="222", pn="44777041717")
+            self.write_message_counts(cfg.store_dir, {"111@lid": 1, "222@lid": 1})
+
+            result = agent.find_chat("041717", runner=runner, config=cfg)
+
+        self.assertFalse(result["ok"])
+        self.assertIn("ambiguous_chat", result["warnings"])
+
+    def test_too_short_phone_fragment_does_not_match_live_lid_map(self):
+        runner = FakeRunner(
+            [
+                {"stdout": {"success": True, "data": []}},
+                {"stdout": {"success": True, "data": []}},
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            self.write_lid_mapping(cfg.store_dir, lid="193793236189416", pn="35799041717")
+            self.write_message_counts(cfg.store_dir, {"193793236189416@lid": 3})
+
+            result = agent.find_chat("1717", runner=runner, config=cfg)
+
+        self.assertFalse(result["ok"])
+        self.assertIn("chat_not_found", result["warnings"])
+
     def test_is_jid_accepts_lid_jids(self):
         self.assertTrue(agent.is_jid("900001234567@lid"))
 
@@ -335,6 +665,116 @@ class WhatsAppWacliAgentTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["result"]["payload"]["data"]["messages"], [])
         self.assertIn("messages_null_normalized", result["warnings"])
+
+    def test_latest_fails_closed_when_chat_metadata_is_newer_than_message_store(self):
+        runner = FakeRunner(
+            [
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {
+                            "messages": [
+                                {"MsgID": "m2", "Timestamp": 1776711328},
+                                {"MsgID": "m1", "Timestamp": 1776620000},
+                            ]
+                        },
+                    }
+                },
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            self.write_chat_message_times(
+                cfg.store_dir,
+                jid="193793236189416@lid",
+                message_timestamps=[1776620000, 1776711328],
+                chat_last_message_ts=1777376212,
+            )
+
+            result = agent.latest("193793236189416@lid", limit=2, runner=runner, config=cfg)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["exit_code"], 2)
+        self.assertIn("message_store_lag", result["warnings"])
+        self.assertIn("recreat", result["stderr"].lower())
+        self.assertEqual(result["result"]["backfill"]["reason"], "requested_limit_satisfied")
+        freshness = result["result"]["message_store_freshness"]
+        self.assertTrue(freshness["stale"])
+        self.assertEqual(freshness["chat_last_message_at"], "2026-04-28T11:36:52Z")
+        self.assertEqual(freshness["latest_readable_message_at"], "2026-04-20T18:55:28Z")
+        self.assertEqual(freshness["gap_seconds"], 664884)
+        self.assertEqual(freshness["recovery"]["recommended_action"], "recreate_session")
+        self.assertIn("fresh store", freshness["recovery"]["message"])
+        self.assertEqual(len(result["result"]["payload"]["data"]["messages"]), 2)
+
+    def test_latest_no_backfill_still_reports_message_store_lag(self):
+        runner = FakeRunner(
+            [
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {"messages": [{"MsgID": "m1", "Timestamp": 1776711328}]},
+                    }
+                },
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            self.write_chat_message_times(
+                cfg.store_dir,
+                jid="193793236189416@lid",
+                message_timestamps=[1776711328],
+                chat_last_message_ts=1777376212,
+            )
+
+            result = agent.latest(
+                "193793236189416@lid",
+                limit=20,
+                runner=runner,
+                config=cfg,
+                auto_backfill=False,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("message_store_lag", result["warnings"])
+        self.assertEqual(result["result"]["backfill"]["backfill_attempted"], False)
+        self.assertTrue(result["result"]["message_store_freshness"]["stale"])
+        self.assertEqual(
+            result["result"]["message_store_freshness"]["recovery"]["recommended_action"],
+            "recreate_session",
+        )
+
+    def test_latest_stays_ok_when_message_store_reaches_chat_metadata(self):
+        runner = FakeRunner(
+            [
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {"messages": [{"MsgID": "m1", "Timestamp": 1777376212}]},
+                    }
+                },
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            self.write_chat_message_times(
+                cfg.store_dir,
+                jid="193793236189416@lid",
+                message_timestamps=[1777376212],
+                chat_last_message_ts=1777376212,
+            )
+
+            result = agent.latest(
+                "193793236189416@lid",
+                limit=20,
+                runner=runner,
+                config=cfg,
+                auto_backfill=False,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertNotIn("message_store_lag", result["warnings"])
+        self.assertFalse(result["result"]["message_store_freshness"]["stale"])
 
     def test_backfill_prefers_chat_jid_when_message_store_is_keyed_by_phone_jid(self):
         runner = FakeRunner(
@@ -577,6 +1017,507 @@ class WhatsAppWacliAgentTests(unittest.TestCase):
         self.assertEqual(len(runner.commands), 1)
         self.assertEqual(result["result"]["backfill"]["backfill_attempted"], False)
 
+    def test_latest_adds_presentation_display_name_from_resolution(self):
+        runner = FakeRunner(
+            [
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": [
+                            {"JID": "193793236189416@lid", "Name": "Monzer"}
+                        ],
+                    }
+                },
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {
+                            "messages": [
+                                {
+                                    "MsgID": "m1",
+                                    "ChatJID": "193793236189416@lid",
+                                    "ChatName": "193793236189416@lid",
+                                    "Text": "hello",
+                                    "DisplayText": "hello",
+                                }
+                            ]
+                        },
+                    }
+                },
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            result = agent.latest(
+                "Monzer",
+                limit=1,
+                runner=runner,
+                config=cfg,
+                auto_backfill=False,
+            )
+
+        message = result["result"]["payload"]["data"]["messages"][0]
+        self.assertEqual(message["ChatName"], "193793236189416@lid")
+        self.assertEqual(message["presentation"]["chat_display_name"], "Monzer")
+        self.assertEqual(message["presentation"]["chat_display_name_source"], "resolution")
+        self.assertEqual(message["presentation"]["text"], "hello")
+
+    def test_presentation_uses_display_text_for_edited_messages(self):
+        message = {
+            "ChatJID": "123@s.whatsapp.net",
+            "ChatName": "Demo",
+            "Text": "",
+            "DisplayText": "Edited message: corrected text",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            presentation = agent.presentation_for_message(
+                message,
+                config=cfg,
+                resolution=None,
+            )
+
+        self.assertEqual(presentation["text"], "Edited message: corrected text")
+        self.assertEqual(presentation["text_source"], "display_text")
+        self.assertTrue(presentation["is_edited"])
+
+    def test_presentation_keeps_media_placeholder_readable(self):
+        message = {
+            "ChatJID": "123@s.whatsapp.net",
+            "ChatName": "Demo",
+            "MsgID": "m1",
+            "Text": "",
+            "DisplayText": "Sent image",
+            "MediaType": "image",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            presentation = agent.presentation_for_message(
+                message,
+                config=cfg,
+                resolution=None,
+            )
+
+        self.assertEqual(presentation["media_type"], "image")
+        self.assertEqual(presentation["text"], "Sent image")
+        self.assertEqual(presentation["text_source"], "media_placeholder")
+        self.assertEqual(presentation["media_label"], "Sent image")
+
+    def test_presentation_media_caption_outranks_generic_placeholder(self):
+        message = {
+            "ChatJID": "123@s.whatsapp.net",
+            "ChatName": "Demo",
+            "MsgID": "m1",
+            "Text": "Sent image",
+            "DisplayText": "Sent image",
+            "MediaType": "image",
+            "MediaCaption": "receipt photo",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            presentation = agent.presentation_for_message(
+                message,
+                config=cfg,
+                resolution=None,
+            )
+
+        self.assertEqual(presentation["text"], "receipt photo")
+        self.assertEqual(presentation["text_source"], "media_caption")
+        self.assertEqual(presentation["media_label"], "receipt photo")
+
+    def test_latest_include_media_downloads_bounded_artifacts(self):
+        runner = FakeRunner(
+            [
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {
+                            "messages": [
+                                {
+                                    "MsgID": "m1",
+                                    "ChatJID": "123@s.whatsapp.net",
+                                    "ChatName": "Demo",
+                                    "DisplayText": "Sent image",
+                                    "MediaType": "image",
+                                }
+                            ]
+                        },
+                    }
+                },
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {"path": "C:\\tmp\\media\\m1.jpg"},
+                    }
+                },
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            result = agent.latest(
+                "123@s.whatsapp.net",
+                limit=1,
+                runner=runner,
+                config=cfg,
+                auto_backfill=False,
+                include_media=True,
+                media_limit=1,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(runner.commands), 2)
+        self.assertEqual(runner.commands[1][-6:], ["media", "download", "--id", "m1", "--chat", "123@s.whatsapp.net"])
+        self.assertEqual(runner.envs[1], {})
+        message = result["result"]["payload"]["data"]["messages"][0]
+        self.assertEqual(message["presentation"]["media"]["artifact_path"], "C:\\tmp\\media\\m1.jpg")
+        self.assertTrue(message["presentation"]["media"]["downloaded"])
+        self.assertEqual(result["result"]["media"]["media_attempted"], 1)
+
+    def test_presentation_enriches_media_metadata_from_local_db(self):
+        runner = FakeRunner(
+            [
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {
+                            "messages": [
+                                {
+                                    "MsgID": "m1",
+                                    "ChatJID": "123@s.whatsapp.net",
+                                    "ChatName": "Demo",
+                                    "DisplayText": "Sent image",
+                                    "MediaType": "image",
+                                }
+                            ]
+                        },
+                    }
+                }
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            self.write_media_message_metadata(
+                cfg.store_dir,
+                chat_jid="123@s.whatsapp.net",
+                msg_id="m1",
+            )
+            result = agent.latest(
+                "123@s.whatsapp.net",
+                limit=1,
+                runner=runner,
+                config=cfg,
+                auto_backfill=False,
+            )
+
+        presentation = result["result"]["payload"]["data"]["messages"][0]["presentation"]
+        self.assertEqual(presentation["mime_type"], "image/jpeg")
+        self.assertEqual(presentation["file_length"], 12345)
+        self.assertEqual(presentation["filename"], "receipt.jpg")
+        self.assertEqual(presentation["local_path"], "C:\\tmp\\media\\receipt.jpg")
+        self.assertEqual(presentation["downloaded_at"], "2026-04-28T13:00:00Z")
+        self.assertNotIn("media_key", presentation)
+        self.assertNotIn("direct_path", presentation)
+        self.assertNotIn("file_sha256", presentation)
+
+    def test_locked_media_download_uses_existing_local_path_without_partial_failure(self):
+        runner = FakeRunner(
+            [
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {
+                            "messages": [
+                                {
+                                    "MsgID": "m1",
+                                    "ChatJID": "123@s.whatsapp.net",
+                                    "ChatName": "Demo",
+                                    "DisplayText": "Sent image",
+                                    "MediaType": "image",
+                                }
+                            ]
+                        },
+                    }
+                },
+                {
+                    "returncode": 1,
+                    "stdout": {},
+                    "stderr": "store is locked",
+                },
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            self.write_media_message_metadata(
+                cfg.store_dir,
+                chat_jid="123@s.whatsapp.net",
+                msg_id="m1",
+                local_path="C:\\tmp\\media\\receipt.jpg",
+            )
+            result = agent.latest(
+                "123@s.whatsapp.net",
+                limit=1,
+                runner=runner,
+                config=cfg,
+                auto_backfill=False,
+                include_media=True,
+                media_limit=1,
+            )
+
+        media = result["result"]["payload"]["data"]["messages"][0]["presentation"]["media"]
+        self.assertTrue(media["available"])
+        self.assertEqual(media["artifact_path"], "C:\\tmp\\media\\receipt.jpg")
+        self.assertEqual(media["artifact_source"], "existing_local_path")
+        self.assertFalse(media["downloaded"])
+        self.assertIn("store is locked", media["download_attempt_error"])
+        self.assertNotIn("download_error", media)
+        self.assertEqual(result["result"]["media"]["media_errors"], 0)
+        self.assertNotIn("media_download_partial_failure", result["warnings"])
+
+    def test_media_filename_derives_from_local_path_when_db_filename_missing(self):
+        runner = FakeRunner(
+            [
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {
+                            "messages": [
+                                {
+                                    "MsgID": "m1",
+                                    "ChatJID": "123@s.whatsapp.net",
+                                    "ChatName": "Demo",
+                                    "DisplayText": "Sent image",
+                                    "MediaType": "image",
+                                }
+                            ]
+                        },
+                    }
+                }
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            self.write_media_message_metadata(
+                cfg.store_dir,
+                chat_jid="123@s.whatsapp.net",
+                msg_id="m1",
+                filename="",
+                local_path="C:\\tmp\\media\\derived-name.jpg",
+            )
+            result = agent.latest(
+                "123@s.whatsapp.net",
+                limit=1,
+                runner=runner,
+                config=cfg,
+                auto_backfill=False,
+            )
+
+        presentation = result["result"]["payload"]["data"]["messages"][0]["presentation"]
+        self.assertEqual(presentation["filename"], "derived-name.jpg")
+
+    def test_media_filename_derives_from_downloaded_artifact_path(self):
+        runner = FakeRunner(
+            [
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {
+                            "messages": [
+                                {
+                                    "MsgID": "m1",
+                                    "ChatJID": "123@s.whatsapp.net",
+                                    "ChatName": "Demo",
+                                    "DisplayText": "Sent image",
+                                    "MediaType": "image",
+                                }
+                            ]
+                        },
+                    }
+                },
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {"path": "C:\\tmp\\media\\downloaded-name.jpg"},
+                    }
+                },
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            result = agent.latest(
+                "123@s.whatsapp.net",
+                limit=1,
+                runner=runner,
+                config=cfg,
+                auto_backfill=False,
+                include_media=True,
+                media_limit=1,
+            )
+
+        media = result["result"]["payload"]["data"]["messages"][0]["presentation"]["media"]
+        self.assertEqual(media["filename"], "downloaded-name.jpg")
+
+    def test_draft_reply_context_uses_presentation_fields(self):
+        runner = FakeRunner(
+            [
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {
+                            "messages": [
+                                {
+                                    "MsgID": "m1",
+                                    "ChatJID": "123@s.whatsapp.net",
+                                    "ChatName": "123@s.whatsapp.net",
+                                    "Text": "",
+                                    "DisplayText": "Edited message: yes",
+                                }
+                            ]
+                        },
+                    }
+                }
+            ]
+        )
+        result = agent.draft_reply(
+            "123@s.whatsapp.net",
+            "reply politely",
+            runner=runner,
+            limit=1,
+        )
+
+        message = result["result"]["context"]["data"]["messages"][0]
+        self.assertEqual(message["presentation"]["text"], "Edited message: yes")
+        self.assertTrue(message["presentation"]["is_edited"])
+
+    def test_draft_reply_returns_model_free_draft_packet(self):
+        runner = FakeRunner(
+            [
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {
+                            "messages": [
+                                {
+                                    "MsgID": "m1",
+                                    "ChatJID": "123@s.whatsapp.net",
+                                    "ChatName": "123@s.whatsapp.net",
+                                    "Text": "Can you confirm?",
+                                    "DisplayText": "Can you confirm?",
+                                    "FromMe": False,
+                                    "Timestamp": "2026-04-28T13:00:00Z",
+                                }
+                            ]
+                        },
+                    }
+                }
+            ]
+        )
+        result = agent.draft_reply(
+            "123@s.whatsapp.net",
+            "Confirm that I will review it today.",
+            runner=runner,
+            limit=1,
+        )
+
+        packet = result["result"]["draft_packet"]
+        self.assertFalse(result["result"]["mutation_performed"])
+        self.assertEqual(packet["draft_status"], "needs_model_generation")
+        self.assertEqual(packet["instruction"], "Confirm that I will review it today.")
+        self.assertEqual(packet["context_messages"][0]["text"], "Can you confirm?")
+        self.assertEqual(packet["context_messages"][0]["message_id"], "m1")
+        self.assertEqual(packet["media_artifacts"], [])
+        self.assertIn("Return only the proposed reply text", packet["model_prompt"])
+
+    def test_draft_reply_include_media_carries_artifact_paths(self):
+        runner = FakeRunner(
+            [
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {
+                            "messages": [
+                                {
+                                    "MsgID": "m1",
+                                    "ChatJID": "123@s.whatsapp.net",
+                                    "ChatName": "Demo",
+                                    "DisplayText": "Sent image",
+                                    "MediaType": "image",
+                                }
+                            ]
+                        },
+                    }
+                },
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {"path": "C:\\tmp\\media\\m1.jpg"},
+                    }
+                },
+            ]
+        )
+        result = agent.draft_reply(
+            "123@s.whatsapp.net",
+            "Reply after considering the image.",
+            runner=runner,
+            limit=1,
+            include_media=True,
+            media_limit=1,
+        )
+
+        artifact = result["result"]["draft_packet"]["media_artifacts"][0]
+        self.assertEqual(artifact["message_id"], "m1")
+        self.assertEqual(artifact["artifact_path"], "C:\\tmp\\media\\m1.jpg")
+        self.assertTrue(artifact["downloaded"])
+
+    def test_draft_reply_packet_is_compact_and_exposes_media_availability(self):
+        runner = FakeRunner(
+            [
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {
+                            "messages": [
+                                {
+                                    "MsgID": "m1",
+                                    "ChatJID": "123@s.whatsapp.net",
+                                    "ChatName": "Demo",
+                                    "DisplayText": "Sent image",
+                                    "MediaType": "image",
+                                    "FromMe": False,
+                                }
+                            ]
+                        },
+                    }
+                },
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {"path": "C:\\tmp\\media\\m1.jpg"},
+                    }
+                },
+            ]
+        )
+        result = agent.draft_reply(
+            "123@s.whatsapp.net",
+            "Reply after considering the image.",
+            runner=runner,
+            limit=1,
+            include_media=True,
+            media_limit=1,
+        )
+
+        packet = result["result"]["draft_packet"]
+        self.assertEqual(packet["context_message_count"], 1)
+        self.assertEqual(packet["media_artifact_count"], 1)
+        self.assertEqual(packet["context_summary"]["message_count"], 1)
+        self.assertEqual(packet["context_summary"]["messages"][0]["text"], "Sent image")
+        self.assertEqual(packet["context_summary"]["messages"][0]["media_type"], "image")
+        context_message = packet["context_messages"][0]
+        self.assertNotIn("sender_jid", context_message)
+        self.assertNotIn("sender_name", context_message)
+        artifact = packet["media_artifacts"][0]
+        self.assertTrue(artifact["available"])
+        self.assertEqual(artifact["artifact_source"], "downloaded")
+
     def test_parse_malformed_json_as_failure(self):
         payload = agent.normalize_process_result(
             operation="status",
@@ -606,10 +1547,15 @@ class WhatsAppWacliAgentTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["backend"], "wacli-popup")
         self.assertEqual(result["result"]["pid"], 1234)
+        self.assertTrue(result["result"]["login_process_safety"]["do_not_terminate_from_agent"])
+        self.assertTrue(result["result"]["login_process_safety"]["requires_user_approval_before_kill"])
+        self.assertIn("Do not terminate", result["result"]["note"])
         self.assertEqual(len(launched), 1)
         command_text = " ".join(launched[0])
         self.assertIn("wacli.exe", command_text)
         self.assertIn("auth", command_text)
+        self.assertIn("Do not close or kill this window", command_text)
+        self.assertIn("ask the user before terminating", command_text)
         self.assertNotIn("--json", command_text)
 
     def test_parser_accepts_auth_login_popup(self):

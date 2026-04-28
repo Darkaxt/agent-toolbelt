@@ -116,6 +116,55 @@ class WhatsAppWacliBridgeTests(unittest.TestCase):
         self.assertIn("--backfill-requests", args)
         self.assertIn("--backfill-wait-sec", args)
 
+    def test_parser_forwards_latest_media_flags(self):
+        parser = whatsapp_wacli.build_parser()
+
+        args = whatsapp_wacli.build_operation_args(
+            parser.parse_args(
+                [
+                    "latest",
+                    "--chat",
+                    "Demo Contact",
+                    "--include-media",
+                    "--media-limit",
+                    "2",
+                ]
+            )
+        )
+
+        self.assertIn("--include-media", args)
+        self.assertIn("--media-limit", args)
+        self.assertIn("2", args)
+
+    def test_parser_forwards_search_context_and_draft_media_flags(self):
+        parser = whatsapp_wacli.build_parser()
+
+        search = whatsapp_wacli.build_operation_args(
+            parser.parse_args(["search", "--query", "photo", "--include-media", "--media-limit", "1"])
+        )
+        context = whatsapp_wacli.build_operation_args(
+            parser.parse_args(["context", "--message-id", "m1", "--include-media", "--media-limit", "1"])
+        )
+        draft = whatsapp_wacli.build_operation_args(
+            parser.parse_args(
+                [
+                    "draft-reply",
+                    "--chat",
+                    "Demo Contact",
+                    "--instruction",
+                    "summarize the image",
+                    "--include-media",
+                    "--media-limit",
+                    "1",
+                ]
+            )
+        )
+
+        for forwarded in (search, context, draft):
+            self.assertIn("--include-media", forwarded)
+            self.assertIn("--media-limit", forwarded)
+            self.assertIn("1", forwarded)
+
     def test_invoke_client_normalizes_json_payload(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             old_resolve_uv = whatsapp_wacli.resolve_uv_executable
@@ -178,6 +227,8 @@ class WhatsAppWacliBridgeTests(unittest.TestCase):
         self.assertIn("backfill_seed_missing", skill)
         self.assertIn("--confirm", skill)
         self.assertIn("WhatsApp-visible", skill)
+        self.assertIn("draft_packet", skill)
+        self.assertIn("needs_model_generation", skill)
 
     def test_local_client_source_is_present_without_generated_artifacts(self):
         client_root = REPO_ROOT / "families" / "whatsapp-wacli" / "local-client"
