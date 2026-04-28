@@ -17,6 +17,7 @@ DEFAULT_TIMEOUT_SEC = 300
 DEFAULT_BACKFILL_COUNT = 100
 DEFAULT_BACKFILL_REQUESTS = 3
 DEFAULT_BACKFILL_WAIT_SEC = 60
+DEFAULT_MEDIA_LIMIT = 3
 
 
 @dataclass(frozen=True)
@@ -213,6 +214,8 @@ def build_parser() -> argparse.ArgumentParser:
     latest.add_argument("--backfill-count", type=int, default=DEFAULT_BACKFILL_COUNT)
     latest.add_argument("--backfill-requests", type=int, default=DEFAULT_BACKFILL_REQUESTS)
     latest.add_argument("--backfill-wait-sec", type=int, default=DEFAULT_BACKFILL_WAIT_SEC)
+    latest.add_argument("--include-media", action="store_true")
+    latest.add_argument("--media-limit", type=int, default=DEFAULT_MEDIA_LIMIT)
 
     backfill = subparsers.add_parser("backfill")
     backfill.add_argument("--chat", required=True)
@@ -224,16 +227,22 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--query", required=True)
     search.add_argument("--chat")
     search.add_argument("--limit", type=int, default=50)
+    search.add_argument("--include-media", action="store_true")
+    search.add_argument("--media-limit", type=int, default=DEFAULT_MEDIA_LIMIT)
 
     context = subparsers.add_parser("context")
     context.add_argument("--message-id", required=True)
     context.add_argument("--before", type=int, default=5)
     context.add_argument("--after", type=int, default=5)
+    context.add_argument("--include-media", action="store_true")
+    context.add_argument("--media-limit", type=int, default=DEFAULT_MEDIA_LIMIT)
 
     draft_reply = subparsers.add_parser("draft-reply")
     draft_reply.add_argument("--chat", required=True)
     draft_reply.add_argument("--instruction", required=True)
     draft_reply.add_argument("--limit", type=int, default=20)
+    draft_reply.add_argument("--include-media", action="store_true")
+    draft_reply.add_argument("--media-limit", type=int, default=DEFAULT_MEDIA_LIMIT)
 
     send_text = subparsers.add_parser("send-text")
     send_text.add_argument("--chat", required=True)
@@ -271,6 +280,9 @@ def build_operation_args(args: argparse.Namespace) -> list[str]:
         parts.extend(["--backfill-count", str(args.backfill_count)])
         parts.extend(["--backfill-requests", str(args.backfill_requests)])
         parts.extend(["--backfill-wait-sec", str(args.backfill_wait_sec)])
+        if args.include_media:
+            parts.append("--include-media")
+        parts.extend(["--media-limit", str(args.media_limit)])
         return parts
     if args.operation == "backfill":
         return [
@@ -288,27 +300,24 @@ def build_operation_args(args: argparse.Namespace) -> list[str]:
         parts.extend(["--query", args.query, "--limit", str(args.limit)])
         if args.chat:
             parts.extend(["--chat", args.chat])
+        if args.include_media:
+            parts.append("--include-media")
+        parts.extend(["--media-limit", str(args.media_limit)])
         return parts
     if args.operation == "context":
-        return [
-            *parts,
-            "--message-id",
-            args.message_id,
-            "--before",
-            str(args.before),
-            "--after",
-            str(args.after),
-        ]
+        parts.extend(["--message-id", args.message_id])
+        parts.extend(["--before", str(args.before), "--after", str(args.after)])
+        if args.include_media:
+            parts.append("--include-media")
+        parts.extend(["--media-limit", str(args.media_limit)])
+        return parts
     if args.operation == "draft-reply":
-        return [
-            *parts,
-            "--chat",
-            args.chat,
-            "--instruction",
-            args.instruction,
-            "--limit",
-            str(args.limit),
-        ]
+        parts.extend(["--chat", args.chat, "--instruction", args.instruction])
+        parts.extend(["--limit", str(args.limit)])
+        if args.include_media:
+            parts.append("--include-media")
+        parts.extend(["--media-limit", str(args.media_limit)])
+        return parts
     if args.operation == "send-text":
         parts.extend(["--chat", args.chat, "--message", args.message])
         if args.confirm:

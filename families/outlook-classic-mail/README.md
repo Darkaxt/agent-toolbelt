@@ -5,6 +5,7 @@ Use this family when an agent needs local mailbox access through Microsoft Outlo
 ## What it does
 
 - discovers a standalone Outlook Classic COM client project from an explicit override or default local project root
+- keeps the standalone client source under `local-client/` so COM behavior and tests are reviewed with the family
 - launches that client through `uv run --project ...`
 - normalizes JSON results for Codex-facing wrappers
 - exposes fast folder discovery before message search for rule-managed Outlook folders
@@ -26,13 +27,15 @@ Use this family when an agent needs local mailbox access through Microsoft Outlo
 
 - Outlook Classic installed and configured with the accounts you want to use
 - `uv` available on `PATH`
-- local client project available through `OUTLOOK_CLASSIC_MAIL_HOME`, `--client-home`, or the default compatibility project root
+- local client runtime installed under `%LOCALAPPDATA%\Tools\outlook-classic-mail`, or an override through `OUTLOOK_CLASSIC_MAIL_HOME` / `--client-home`
 
 ## CLI
 
 ```bash
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 accounts
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 sync-mail --refresh-cache --all-accounts
+agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 diagnostics-probe
+agent-toolbelt-outlook-classic-mail diagnostics-log --limit 20
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 cache-refresh --all-accounts --days 90
 agent-toolbelt-outlook-classic-mail cache-status --query lettre24
 agent-toolbelt-outlook-classic-mail cache-show --query lettre24 --limit 10
@@ -69,6 +72,13 @@ wrapper-level `failure_kind` values such as `client_unavailable`,
 `uv_unavailable`, `wrapper_timeout`, `invalid_json`, or
 `process_start_failed`.
 
+For scheduled-task or background-session failures, run `diagnostics-probe` and
+then inspect `diagnostics-log --limit 20`. The local client records safe
+runtime/COM metadata such as Windows session, input-desktop accessibility,
+Outlook process presence, COM stage, and structured failure kind. It does not
+log mailbox content, account addresses, search queries, message IDs, or
+subjects.
+
 For very recent sent or received mail, run `sync-mail` first. It triggers Outlook Send/Receive through SyncObjects when available and falls back to `SendAndReceive(False)`.
 
 If a command returns `queue_timeout`, it never reached execution before the queue budget expired. If it returns `outlook_busy`, queue admission succeeded but the underlying COM execution lock still failed unexpectedly.
@@ -78,5 +88,10 @@ For response lookups such as "find my response to this email", use `find-respons
 For folder moves such as "move this email to X", use `find-folders` first when the destination is ambiguous, then run `move-message` without `--confirm` to preview the source and target. Add `--confirm` only after explicit user approval.
 
 For draft replies or forwards, `--account` resolves the original message. Use `--send-using-account` when the outgoing draft should be sent from a different configured Outlook account.
+When `--send-using-account` targets a different Outlook store, the local COM
+client creates the saved draft directly in that target store's default Drafts
+folder and returns `draft_placement` metadata. This avoids Outlook saving a
+Gmail-backed draft under a localized anchor folder such as `Borradores` while
+leaving the sender account unset.
 
 Cache and folder-hint writes are best-effort. If the local state files are temporarily locked, the client returns the search results and reports the skipped update as a warning. Use `--no-update-cache` for repeated read-only direct-folder searches when cache freshness is not needed.
