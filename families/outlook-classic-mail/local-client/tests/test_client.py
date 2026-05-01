@@ -181,6 +181,11 @@ class FakeSyncObject:
         self.started = True
 
 
+class FailingCreateItemApplication:
+    def CreateItem(self, item_type):
+        raise AssertionError("generic draft creation must use the target store Drafts folder")
+
+
 def make_session() -> FakeSession:
     root = FakeFolder("Mailbox", r"\\Mailbox")
     inbox = root.add_child(FakeFolder("Inbox", r"\\Mailbox\\Inbox"))
@@ -846,6 +851,20 @@ class OutlookClassicMailClientTests(unittest.TestCase):
     def test_draft_reply_create_preserves_existing_html_body(self):
         message = self.session.GetItemFromID("msg-1")
 
+        def reply_with_thread():
+            message.last_reply = FakeReply(
+                Subject=f"RE: {message.Subject}",
+                To=message.SenderEmailAddress,
+                Body=f"Quoted original\r\n{message.Body}",
+                HTMLBody=(
+                    "<html><body><table><tr><td>Quoted original</td></tr></table>"
+                    f"<p>{message.Body}</p></body></html>"
+                ),
+            )
+            return message.last_reply
+
+        message.Reply = reply_with_thread
+
         result = client.draft_reply(
             self.session,
             account_selector="demo@example.com",
@@ -862,8 +881,105 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         self.assertTrue(draft.saved)
         self.assertIn("<p>Thanks &lt;Alice&gt;.<br>Confirming review.</p>", draft.HTMLBody)
         self.assertIn("<table><tr><td>Quoted original</td></tr></table>", draft.HTMLBody)
-        self.assertEqual(draft.Body, "Quoted original")
+        self.assertIn("Need approval today for the contract.", draft.Body)
         self.assertEqual(result["draft_placement"]["strategy"], "native_reply")
+        self.assertEqual(result["draft_content"]["thread_content_source"], "native_reply")
+
+    def test_draft_reply_reconstructs_thread_when_native_reply_is_empty(self):
+        message = self.session.GetItemFromID("msg-1")
+        message.HTMLBody = "<html><body><p>Original thread HTML</p></body></html>"
+
+        def empty_reply():
+            message.last_reply = FakeReply(
+                Subject=f"RE: {message.Subject}",
+                To=message.SenderEmailAddress,
+                Body="",
+                HTMLBody="",
+            )
+            return message.last_reply
+
+        message.Reply = empty_reply
+
+        result = client.draft_reply(
+            self.session,
+            account_selector="demo@example.com",
+            message_id="msg-1",
+            instruction="Reply with thanks.",
+            body="Thanks.",
+            create_draft=True,
+            confirm=True,
+        )
+
+        draft = message.last_reply
+        self.assertTrue(result["created"])
+        self.assertIn("<p>Thanks.</p>", draft.HTMLBody)
+        self.assertIn("Original thread HTML", draft.HTMLBody)
+        self.assertEqual(result["draft_content"]["thread_content_included"], True)
+        self.assertEqual(result["draft_content"]["thread_content_source"], "manual_quote_fallback")
+        self.assertIn("thread_quote_fallback_used", result["draft_content"]["warnings"])
+
+    def test_draft_reply_reconstructs_thread_when_native_reply_only_has_signature(self):
+        message = self.session.GetItemFromID("msg-1")
+
+        def signature_only_reply():
+            message.last_reply = FakeReply(
+                Subject=f"RE: {message.Subject}",
+                To=message.SenderEmailAddress,
+                Body="Best regards, Demo",
+                HTMLBody="<html><body><p>Best regards, Demo</p></body></html>",
+            )
+            return message.last_reply
+
+        message.Reply = signature_only_reply
+
+        result = client.draft_reply(
+            self.session,
+            account_selector="demo@example.com",
+            message_id="msg-1",
+            instruction="Reply with thanks.",
+            body="Thanks.",
+            create_draft=True,
+            confirm=True,
+        )
+
+        draft = message.last_reply
+        self.assertTrue(result["created"])
+        self.assertIn("Best regards, Demo", draft.HTMLBody)
+        self.assertIn("Need approval today for the contract.", draft.HTMLBody)
+        self.assertEqual(result["draft_content"]["thread_content_source"], "manual_quote_fallback")
+        self.assertIn("thread_quote_fallback_used", result["draft_content"]["warnings"])
+
+    def test_same_account_reply_uses_target_store_drafts_when_sender_cannot_be_verified(self):
+        message = self.session.GetItemFromID("msg-1")
+        drafts = client.resolve_folder(client.resolve_account(self.session, "demo@example.com"), "drafts")
+
+        def reply_rejecting_sender():
+            message.last_reply = FakeReply(
+                Subject=f"RE: {message.Subject}",
+                To=message.SenderEmailAddress,
+                reject_send_using=True,
+            )
+            return message.last_reply
+
+        message.Reply = reply_rejecting_sender
+
+        result = client.draft_reply(
+            self.session,
+            account_selector="demo@example.com",
+            message_id="msg-1",
+            instruction="Reply with thanks.",
+            body="Thanks.",
+            create_draft=True,
+            confirm=True,
+        )
+
+        self.assertTrue(result["created"])
+        self.assertEqual(result["draft_placement"]["strategy"], "target_store_drafts")
+        self.assertEqual(len(drafts.Items), 1)
+        draft = drafts.Items[-1]
+        self.assertTrue(draft.saved)
+        self.assertEqual(draft.SendUsingAccount.SmtpAddress, "demo@example.com")
+        self.assertEqual(draft.To, "alice@example.com")
 
     def test_draft_reply_cross_account_creates_draft_in_target_store_drafts(self):
         response_session = make_response_session()
@@ -983,6 +1099,20 @@ class OutlookClassicMailClientTests(unittest.TestCase):
     def test_draft_forward_create_preserves_existing_html_body(self):
         message = self.session.GetItemFromID("msg-1")
 
+        def forward_with_thread():
+            message.last_forward = FakeForward(
+                Subject=f"FW: {message.Subject}",
+                To="",
+                Body=f"Quoted original\r\n{message.Body}",
+                HTMLBody=(
+                    "<html><body><table><tr><td>Quoted original</td></tr></table>"
+                    f"<p>{message.Body}</p></body></html>"
+                ),
+            )
+            return message.last_forward
+
+        message.Forward = forward_with_thread
+
         result = client.draft_forward(
             self.session,
             account_selector="demo@example.com",
@@ -1000,7 +1130,36 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         self.assertTrue(draft.saved)
         self.assertIn("<p>Forwarding &lt;context&gt;.</p>", draft.HTMLBody)
         self.assertIn("<table><tr><td>Quoted original</td></tr></table>", draft.HTMLBody)
-        self.assertEqual(draft.Body, "Quoted original")
+        self.assertIn("Need approval today for the contract.", draft.Body)
+        self.assertEqual(result["draft_content"]["thread_content_source"], "native_forward")
+
+    def test_apply_action_create_draft_uses_selected_account_drafts_folder(self):
+        account = client.resolve_account(self.session, "demo@example.com")
+        drafts = client.resolve_folder(account, "drafts")
+
+        result = client.apply_action(
+            self.session,
+            account_selector="demo@example.com",
+            message_id=None,
+            action="create-draft",
+            confirm=True,
+            application=FailingCreateItemApplication(),
+            subject="Manual follow-up",
+            to="recipient@example.com",
+            body="Draft body",
+        )
+
+        self.assertTrue(result["created"])
+        self.assertEqual(len(drafts.Items), 1)
+        draft = drafts.Items[-1]
+        self.assertTrue(draft.saved)
+        self.assertIs(draft.Parent, drafts)
+        self.assertEqual(draft.SendUsingAccount.SmtpAddress, "demo@example.com")
+        self.assertEqual(draft.Subject, "Manual follow-up")
+        self.assertEqual(draft.To, "recipient@example.com")
+        self.assertEqual(draft.Body, "Draft body")
+        self.assertEqual(result["draft_placement"]["strategy"], "target_store_drafts")
+        self.assertTrue(result["draft_placement"]["placement_verified"])
 
     def test_move_message_preview_does_not_mutate(self):
         account = client.resolve_account(self.session, "demo@example.com")

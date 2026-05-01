@@ -20,7 +20,8 @@ Standalone Outlook Classic COM client for local mailbox access on Windows.
 - triage inboxes
 - preview or create reply/forward drafts
 - preserve existing HTML reply/forward chains when creating drafts
-- optionally set the configured Outlook account used to send reply/forward drafts
+- verify quoted thread content and sender-store placement for created reply/forward drafts
+- create standalone new drafts in the selected account's Drafts folder
 - apply explicit mailbox actions with confirmation gates
 
 ## Requirements
@@ -71,6 +72,23 @@ presence, COM stage, and structured failure kind. It does not log mailbox
 content, account addresses, search queries, message IDs, or subjects.
 
 If Outlook is still syncing, use `sync-mail` before looking for very recent sent or received messages. If cache or folder-hint writes hit a transient file lock, the command returns its mail results and reports the skipped local state update as a warning instead of failing the whole search. `--no-update-cache` is still useful for repeated read-only direct-folder searches when cache freshness is not needed.
+
+For threaded drafts, use `draft-reply` or `draft-forward`. These commands build
+from Outlook's native reply/forward item first, verify that the quoted original
+thread is present, and add a manual quoted block from the anchor message when
+Outlook returns an empty or signature-only draft body. Created draft payloads
+include `draft_content.thread_content_included`,
+`draft_content.thread_content_source`, and warnings such as
+`thread_quote_fallback_used` or `thread_content_missing`.
+
+Sender placement is account-store first. If the requested sender cannot be
+verified on Outlook's native reply/forward item, or if `--send-using-account`
+points to another store, the client saves a replacement item directly under the
+target account's default Drafts folder. Inspect `draft_placement.target_account`,
+`actual_send_using_account`, `target_drafts_folder`, `actual_folder`, and
+`placement_verified` before claiming the sender/folder is correct. Generic
+`apply-action --action create-draft` is only for standalone new drafts; it uses
+the selected account's Drafts folder but has no thread content to include.
 
 Blocklist support is read-only. The `threat` profile uses threat-centered DNS
 lists; `debug-all` adds broader ad/tracking/adult/platform lists for exploratory

@@ -579,6 +579,25 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("without `--confirm` as a preview", skill_text)
         self.assertIn("explicit user approval", skill_text)
 
+    def test_codex_skill_documents_draft_thread_and_sender_diagnostics(self):
+        skill_path = (
+            REPO_ROOT
+            / "families"
+            / "outlook-classic-mail"
+            / "codex"
+            / "skills"
+            / "outlook-classic-mail"
+            / "SKILL.md"
+        )
+
+        skill_text = skill_path.read_text(encoding="utf-8")
+
+        self.assertIn("prefer `draft-reply` or `draft-forward`", skill_text)
+        self.assertIn("draft_content.thread_content_included", skill_text)
+        self.assertIn("draft_placement.actual_send_using_account", skill_text)
+        self.assertIn("thread_quote_fallback_used", skill_text)
+        self.assertIn("standalone new drafts", skill_text)
+
     def test_codex_skill_documents_cache_and_sync_workflows(self):
         skill_path = (
             REPO_ROOT
@@ -676,6 +695,9 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("explicit confirmation", skill_text)
         self.assertIn("wrapper_diagnostics", skill_text)
         self.assertIn("cloud connector", skill_text)
+        self.assertIn("draft_content.thread_content_included", skill_text)
+        self.assertIn("draft_placement.actual_send_using_account", skill_text)
+        self.assertIn("thread_quote_fallback_used", skill_text)
 
 
 if __name__ == "__main__":

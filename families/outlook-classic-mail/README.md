@@ -14,7 +14,7 @@ Use this family when an agent needs local mailbox access through Microsoft Outlo
 - serializes COM-backed operations through a client-wide FIFO queue
 - exposes deterministic response lookup from the original recipient account's Sent and Drafts folders
 - exposes explicit folder move previews and confirmed message moves
-- forwards optional send-account selection for reply and forward drafts
+- creates reply and forward drafts with quoted thread content diagnostics and verified sender-store placement when Outlook does not do that reliably
 
 ## What it does not do
 
@@ -87,11 +87,27 @@ For response lookups such as "find my response to this email", use `find-respons
 
 For folder moves such as "move this email to X", use `find-folders` first when the destination is ambiguous, then run `move-message` without `--confirm` to preview the source and target. Add `--confirm` only after explicit user approval.
 
-For draft replies or forwards, `--account` resolves the original message. Use `--send-using-account` when the outgoing draft should be sent from a different configured Outlook account.
-When `--send-using-account` targets a different Outlook store, the local COM
-client creates the saved draft directly in that target store's default Drafts
-folder and returns `draft_placement` metadata. This avoids Outlook saving a
-Gmail-backed draft under a localized anchor folder such as `Borradores` while
-leaving the sender account unset.
+For draft replies or forwards, use `draft-reply` or `draft-forward` instead of
+generic `apply-action --action create-draft`; the threaded commands use the
+anchor message as the quote source. `--account` resolves the original message.
+Use `--send-using-account` when the outgoing draft should be sent from a
+different configured Outlook account.
+
+Created reply/forward payloads include `draft_content` and `draft_placement`.
+Check `draft_content.thread_content_included`,
+`draft_content.thread_content_source`, `draft_placement.actual_send_using_account`,
+and `draft_placement.placement_verified` before reporting that a draft is
+correctly threaded and sender-safe. If Outlook does not materialize the quoted
+thread, the client adds a manual quoted block from the anchor message and
+reports `thread_quote_fallback_used`.
+
+When the sender account cannot be verified, or when `--send-using-account`
+targets a different Outlook store, the local COM client creates the saved draft
+directly in that target store's default Drafts folder and returns
+`draft_placement` metadata. This avoids Outlook saving a Gmail-backed draft
+under a localized anchor folder such as `Borradores` while leaving the sender
+account unset. Generic `apply-action --action create-draft` is for standalone
+new drafts only; it also creates in the selected account's Drafts folder but has
+no original thread to quote.
 
 Cache and folder-hint writes are best-effort. If the local state files are temporarily locked, the client returns the search results and reports the skipped update as a warning. Use `--no-update-cache` for repeated read-only direct-folder searches when cache freshness is not needed.
