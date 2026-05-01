@@ -65,6 +65,13 @@ EXPECTED_FAMILIES = {
         "package_dir": "agent_toolbelt_skills_sh_scout",
         "has_claude": True,
     },
+    "skill-gardener": {
+        "project_name": "agent-toolbelt-skill-gardener",
+        "script_name": "agent-toolbelt-skill-gardener",
+        "package_dir": "agent_toolbelt_skill_gardener",
+        "has_codex": False,
+        "has_claude": False,
+    },
 }
 
 
@@ -88,6 +95,7 @@ class MonorepoLayoutTests(unittest.TestCase):
                 "families/codex-thread-recall",
                 "families/whatsapp-wacli",
                 "families/skills-sh-scout",
+                "families/skill-gardener",
             ],
         )
 

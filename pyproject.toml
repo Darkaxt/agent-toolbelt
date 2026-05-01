@@ -12,6 +12,7 @@ members = [
   "families/codex-thread-recall",
   "families/whatsapp-wacli",
   "families/skills-sh-scout",
+  "families/skill-gardener",
 ]
 
 [tool.pytest.ini_options]

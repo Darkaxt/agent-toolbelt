@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-toolbelt-skill-gardener"
+version = "0.1.0"
+description = "Evidence-backed Agent Skill proposal gardener."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Darkaxt" }]
+dependencies = []
+
+[project.scripts]
+agent-toolbelt-skill-gardener = "agent_toolbelt_skill_gardener.cli:entrypoint"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

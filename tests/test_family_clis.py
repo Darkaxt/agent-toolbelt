@@ -46,6 +46,10 @@ FAMILY_IMPORTS = {
         REPO_ROOT / "families" / "skills-sh-scout" / "src",
         "agent_toolbelt_skills_sh_scout.cli",
     ),
+    "skill-gardener": (
+        REPO_ROOT / "families" / "skill-gardener" / "src",
+        "agent_toolbelt_skill_gardener.cli",
+    ),
 }
 
 
@@ -248,6 +252,27 @@ class FamilyCLITests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["thread"]["id"], "019-thread")
+
+    def test_skill_gardener_cli_routes_scan_command(self):
+        cli = import_family_cli("skill-gardener")
+
+        original_scan = cli.gardener.run_scan
+        cli.gardener.run_scan = lambda **kwargs: cli.gardener.ScanResult(
+            ok=True,
+            console="skill gardener dry run",
+            run_dir=None,
+            findings=[],
+            diagnostics={},
+        )
+        try:
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                exit_code = cli.main(["scan", "--dry-run"])
+                output = buffer.getvalue()
+        finally:
+            cli.gardener.run_scan = original_scan
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("skill gardener dry run", output)
 
     def test_whatsapp_wacli_routes_latest_command(self):
         cli = import_family_cli("whatsapp-wacli")
