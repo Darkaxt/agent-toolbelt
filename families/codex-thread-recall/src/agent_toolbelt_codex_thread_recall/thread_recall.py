@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import ctypes
 import re
 import sqlite3
 import sys
@@ -10,7 +11,7 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 
 FILE_EXTENSION_PATTERN = "py|md|json|yaml|yml|toml|txt|sql|sqlite|ps1|bat|exe|js|ts|tsx|jsx|go|rs|java|c|cpp|h|hpp|sh|html|css"
@@ -140,9 +141,14 @@ TEXT_SCAN_LIMIT = 2000
 EVIDENCE_SCAN_LIMIT = 200
 RAW_TEXT_STORE_LIMIT = 16000
 MAX_CONTEXT_ENTRIES = 5
+SQLITE_PARAM_CHUNK_SIZE = 500
 INDEX_LOCK_POLL_SECONDS = 0.1
 INDEX_LOCK_WAIT_SECONDS = 5.0
 INDEX_LOCK_STALE_SECONDS = 300.0
+COLLECTOR_LOCK_SKIP_STATES = {"locked", "busy"}
+DEFAULT_COLLECTOR_UPDATED_WITHIN_HOURS = 48
+DEFAULT_COLLECTOR_MAX_THREADS = 10
+DEFAULT_COLLECTOR_MAX_RUN_SECONDS = 90
 EPISODE_GAP_SECONDS = 1800
 EPISODE_DOMINANT_LIMIT = 5
 FACET_TABLES: dict[str, tuple[str, str]] = {
@@ -215,6 +221,14 @@ def cache_root(codex_home: Path) -> Path:
 
 def memory_bundle_root(codex_home: Path) -> Path:
     return cache_root(codex_home) / "memory-bundles"
+
+
+def collector_root(codex_home: Path) -> Path:
+    return cache_root(codex_home) / "collector"
+
+
+def collector_last_run_path(codex_home: Path) -> Path:
+    return collector_root(codex_home) / "last-run.json"
 
 
 def memory_index_path(codex_home: Path) -> Path:
@@ -293,9 +307,31 @@ def format_duration_human(seconds: int | None) -> str | None:
     return " ".join(parts[:2]) or "0s"
 
 
+def windows_pid_is_running(pid: int) -> bool:
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    STILL_ACTIVE = 259
+    ERROR_ACCESS_DENIED = 5
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+    if not handle:
+        return kernel32.GetLastError() == ERROR_ACCESS_DENIED
+    try:
+        exit_code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return False
+        return exit_code.value == STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def pid_is_running(pid: int) -> bool:
     if pid <= 0:
         return False
+    if os.name == "nt":
+        try:
+            return windows_pid_is_running(pid)
+        except Exception:
+            return False
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -355,6 +391,9 @@ class ThreadIndexLock:
             "rollout_path": thread["rollout_path"],
             "pid": os.getpid(),
             "started_at": datetime.now(tz=UTC).isoformat(),
+            "owner_executable": sys.executable,
+            "owner_argv0": Path(sys.argv[0]).name if sys.argv else None,
+            "owner_operation": next((arg for arg in sys.argv[1:] if not str(arg).startswith("-")), None),
         }
         self.state = "acquired"
         self._acquired = False
@@ -1293,6 +1332,23 @@ def connect_cache(codex_home: Path) -> sqlite3.Connection:
     return conn
 
 
+def connect_existing_cache(codex_home: Path) -> sqlite3.Connection | None:
+    db_path = cache_db_path(codex_home)
+    if not db_path.is_file():
+        return None
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        "select name from sqlite_master where type in ('table', 'view') and name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
 def connect_memory_index(codex_home: Path) -> sqlite3.Connection:
     db_path = memory_index_path(codex_home)
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2034,15 +2090,16 @@ def delete_episode_tail(conn: sqlite3.Connection, *, thread_id: str, start_episo
     if not rows:
         raise TailEpisodeRebuildError("no stored tail episodes available for deletion")
     episode_ids = [int(row["id"]) for row in rows]
-    placeholders = ",".join("?" for _ in episode_ids)
-    conn.execute(
-        f"delete from entry_episode_links where episode_id in ({placeholders})",
-        episode_ids,
-    )
-    conn.execute(
-        f"delete from episodes where id in ({placeholders})",
-        episode_ids,
-    )
+    for episode_id_chunk in chunks(episode_ids):
+        placeholders = ",".join("?" for _ in episode_id_chunk)
+        conn.execute(
+            f"delete from entry_episode_links where episode_id in ({placeholders})",
+            episode_id_chunk,
+        )
+        conn.execute(
+            f"delete from episodes where id in ({placeholders})",
+            episode_id_chunk,
+        )
 
 
 def rebuild_tail_thread_episodes(conn: sqlite3.Connection, *, thread_id: str) -> None:
@@ -2247,6 +2304,123 @@ def cache_health(conn: sqlite3.Connection, *, thread_id: str | None = None) -> d
     }
 
 
+def empty_thread_stats() -> dict[str, int]:
+    return {"entry_rows": 0, "max_entry_index": 0, "max_rollout_line": 0}
+
+
+def safe_thread_entry_stats(conn: sqlite3.Connection, thread_id: str) -> sqlite3.Row | dict[str, int]:
+    if not table_exists(conn, "entries"):
+        return empty_thread_stats()
+    return thread_entry_stats(conn, thread_id)
+
+
+def safe_fts_stats(conn: sqlite3.Connection | None, *, thread_id: str | None = None) -> dict[str, int | bool]:
+    if conn is None or not table_exists(conn, "entries"):
+        return {
+            "available": False,
+            "indexed_entry_count": 0,
+            "missing_entry_count": 0,
+            "orphaned_entry_count": 0,
+        }
+    try:
+        return fts_stats(conn, thread_id=thread_id)
+    except sqlite3.Error:
+        return {
+            "available": False,
+            "indexed_entry_count": 0,
+            "missing_entry_count": 0,
+            "orphaned_entry_count": 0,
+        }
+
+
+def safe_cache_health(conn: sqlite3.Connection | None, *, thread_id: str | None = None) -> dict[str, Any]:
+    if conn is None:
+        return {"ok": False, "issues": ["cache-missing"], "rebuild_recommended": True}
+    if not table_exists(conn, "rollout_indexes") or not table_exists(conn, "entries"):
+        return {"ok": False, "issues": ["schema-missing"], "rebuild_recommended": True}
+    try:
+        return cache_health(conn, thread_id=thread_id)
+    except sqlite3.Error as exc:
+        return {"ok": False, "issues": [f"cache-health-error:{exc.__class__.__name__}"], "rebuild_recommended": True}
+
+
+def read_collector_last_run(codex_home: Path) -> dict[str, Any] | None:
+    path = collector_last_run_path(codex_home)
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def write_collector_last_run(codex_home: Path, payload: dict[str, Any]) -> None:
+    root = collector_root(codex_home)
+    root.mkdir(parents=True, exist_ok=True)
+    sanitized = collector_json_log_payload(payload)
+    collector_last_run_path(codex_home).write_text(json.dumps(sanitized, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+
+
+def collector_json_log_payload(payload: Any) -> Any:
+    if isinstance(payload, dict):
+        return {
+            key: collector_json_log_payload(value)
+            for key, value in payload.items()
+            if key not in {"thread_title", "title"}
+        }
+    if isinstance(payload, list):
+        return [collector_json_log_payload(value) for value in payload]
+    return payload
+
+
+def append_collector_json_log(path: str | Path | None, payload: dict[str, Any]) -> None:
+    if not path:
+        return
+    log_path = Path(path).expanduser()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(collector_json_log_payload(payload), ensure_ascii=True) + "\n")
+
+
+def cache_freshness_payload(
+    *,
+    conn: sqlite3.Connection | None,
+    thread: dict[str, Any],
+    codex_home: Path,
+    metadata_row: sqlite3.Row | None,
+    health_payload: dict[str, Any],
+) -> dict[str, Any]:
+    lock_state = classify_lock_state(read_lock_metadata(thread_lock_path(codex_home, thread["id"])))
+    if lock_state["state"] == "locked":
+        return {"state": "busy", "reason": "index-lock-held", "lock_state": lock_state}
+
+    if conn is None or metadata_row is None:
+        return {"state": "not_indexed", "reason": "missing-cache" if conn is None else "missing-rollout-index"}
+
+    rollout_path = Path(thread["rollout_path"])
+    try:
+        rollout_size, rollout_mtime_ns = rollout_signature(rollout_path)
+        thread_stats = safe_thread_entry_stats(conn, thread["id"])
+        rebuild_reason, _force_rebuild = cache_rebuild_reason(
+            existing=metadata_row,
+            thread_stats=thread_stats,
+            rollout_path=rollout_path,
+            rollout_size=rollout_size,
+            rollout_mtime_ns=rollout_mtime_ns,
+        )
+    except Exception as exc:
+        return {"state": "stale", "reason": f"freshness-error:{exc.__class__.__name__}"}
+
+    if health_payload.get("rebuild_recommended"):
+        return {"state": "stale", "reason": "cache-health-rebuild-recommended"}
+    if rebuild_reason is None:
+        return {"state": "fresh", "reason": "up-to-date"}
+    if rebuild_reason == "metadata-drift":
+        return {"state": "fresh", "reason": "metadata-drift"}
+    return {"state": "stale", "reason": rebuild_reason}
+
+
 def cache_rebuild_reason(
     *,
     existing: sqlite3.Row | None,
@@ -2446,6 +2620,11 @@ def ensure_index(
     ), warnings
 
 
+def chunks(items: list[Any], size: int = SQLITE_PARAM_CHUNK_SIZE) -> Iterable[list[Any]]:
+    for index in range(0, len(items), size):
+        yield items[index:index + size]
+
+
 def load_facets_for_entries(conn: sqlite3.Connection, entry_ids: list[int]) -> dict[int, dict[str, list[Any]]]:
     facets_by_entry: dict[int, dict[str, list[Any]]] = {
         entry_id: {facet_name: [] for facet_name in FACET_TABLES} for entry_id in entry_ids
@@ -2453,19 +2632,20 @@ def load_facets_for_entries(conn: sqlite3.Connection, entry_ids: list[int]) -> d
     if not entry_ids:
         return facets_by_entry
 
-    placeholders = ",".join("?" for _ in entry_ids)
     for facet_name, (table_name, column_name) in FACET_TABLES.items():
-        rows = conn.execute(
-            f"""
-            select entry_id, {column_name} as value
-            from {table_name}
-            where entry_id in ({placeholders})
-            order by entry_id, rowid
-            """,
-            entry_ids,
-        ).fetchall()
-        for row in rows:
-            facets_by_entry[int(row["entry_id"])][facet_name].append(row["value"])
+        for entry_id_chunk in chunks(entry_ids):
+            placeholders = ",".join("?" for _ in entry_id_chunk)
+            rows = conn.execute(
+                f"""
+                select entry_id, {column_name} as value
+                from {table_name}
+                where entry_id in ({placeholders})
+                order by entry_id, rowid
+                """,
+                entry_id_chunk,
+            ).fetchall()
+            for row in rows:
+                facets_by_entry[int(row["entry_id"])][facet_name].append(row["value"])
     return facets_by_entry
 
 
@@ -2493,16 +2673,20 @@ def entry_from_row(row: sqlite3.Row, facets: dict[str, list[Any]]) -> dict[str, 
 def fetch_entry_rows_by_ids(conn: sqlite3.Connection, entry_ids: list[int]) -> list[dict[str, Any]]:
     if not entry_ids:
         return []
-    placeholders = ",".join("?" for _ in entry_ids)
-    rows = conn.execute(
-        f"""
-        select id, thread_id, entry_index, rollout_line, timestamp, entry_type, payload_type, role, content_class,
-               command, raw_text, search_text, excerpt, is_noise, noise_reason
-        from entries
-        where id in ({placeholders})
-        """,
-        entry_ids,
-    ).fetchall()
+    rows: list[sqlite3.Row] = []
+    for entry_id_chunk in chunks(entry_ids):
+        placeholders = ",".join("?" for _ in entry_id_chunk)
+        rows.extend(
+            conn.execute(
+                f"""
+                select id, thread_id, entry_index, rollout_line, timestamp, entry_type, payload_type, role, content_class,
+                       command, raw_text, search_text, excerpt, is_noise, noise_reason
+                from entries
+                where id in ({placeholders})
+                """,
+                entry_id_chunk,
+            ).fetchall()
+        )
     row_map = {int(row["id"]): row for row in rows}
     facet_map = load_facets_for_entries(conn, entry_ids)
     return [entry_from_row(row_map[entry_id], facet_map[entry_id]) for entry_id in entry_ids if entry_id in row_map]
@@ -3055,33 +3239,39 @@ def entry_primary_ranked_entities(
     *,
     entry_ids: list[int],
     ranked_entities: list[dict[str, Any]],
-) -> dict[int, str]:
+    ) -> dict[int, str]:
     if not entry_ids or not ranked_entities:
         return {}
     ranked_lookup = {item["entity"]: item for item in ranked_entities}
-    placeholders = ",".join("?" for _ in entry_ids)
-    entity_placeholders = ",".join("?" for _ in ranked_lookup)
-    rows = conn.execute(
-        f"""
-        select
-            m.entry_id,
-            m.entity,
-            max(
-                case m.source_kind
-                    when 'qualified_id_prefix' then 4
-                    when 'path_parent_fallback' then 3
-                    when 'backtick_identifier' then 2
-                    when 'path_leaf' then 1
-                    else 0
-                end
-            ) as entry_source_rank
-        from entry_entity_mentions m
-        where m.entry_id in ({placeholders})
-          and m.entity in ({entity_placeholders})
-        group by m.entry_id, m.entity
-        """,
-        (*entry_ids, *ranked_lookup.keys()),
-    ).fetchall()
+    rows: list[sqlite3.Row] = []
+    ranked_entity_names_list = list(ranked_lookup.keys())
+    for entry_id_chunk in chunks(entry_ids):
+        placeholders = ",".join("?" for _ in entry_id_chunk)
+        for entity_chunk in chunks(ranked_entity_names_list):
+            entity_placeholders = ",".join("?" for _ in entity_chunk)
+            rows.extend(
+                conn.execute(
+                    f"""
+                    select
+                        m.entry_id,
+                        m.entity,
+                        max(
+                            case m.source_kind
+                                when 'qualified_id_prefix' then 4
+                                when 'path_parent_fallback' then 3
+                                when 'backtick_identifier' then 2
+                                when 'path_leaf' then 1
+                                else 0
+                            end
+                        ) as entry_source_rank
+                    from entry_entity_mentions m
+                    where m.entry_id in ({placeholders})
+                      and m.entity in ({entity_placeholders})
+                    group by m.entry_id, m.entity
+                    """,
+                    (*entry_id_chunk, *entity_chunk),
+                ).fetchall()
+            )
     candidates_by_entry: dict[int, list[tuple[Any, ...]]] = defaultdict(list)
     for row in rows:
         item = ranked_lookup[row["entity"]]
@@ -4032,19 +4222,233 @@ def index_busy_failure(thread: dict[str, Any], warnings: list[str], error: Index
     )
 
 
+def recent_thread_set(
+    *,
+    codex_home: Path,
+    max_threads: int,
+    updated_within_hours: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]:
+    db_path = state_db_path(codex_home)
+    if not db_path.is_file():
+        return [], [], failure("thread_unavailable", f"Codex state database not found: {db_path}")
+    cutoff = int(datetime.now(tz=UTC).timestamp()) - max(0, int(updated_within_hours)) * 3600
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "select id, title, cwd, rollout_path, created_at, updated_at from threads order by updated_at desc"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    included: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for row in rows:
+        candidate = thread_metadata_from_row(row)
+        if int(candidate["updated_at"] or 0) < cutoff:
+            skipped.append(thread_source_item(candidate, reason="updated_before_window"))
+            continue
+        if not Path(candidate["rollout_path"]).is_file():
+            skipped.append(thread_source_item(candidate, reason="rollout_missing"))
+            continue
+        if len(included) >= max_threads:
+            skipped.append(thread_source_item(candidate, reason="max_threads"))
+            continue
+        included.append(candidate)
+    return included, skipped, None
+
+
+def collect_thread_set(
+    *,
+    thread_id: str | None,
+    codex_home: Path,
+    thread_source: str,
+    max_threads: int,
+    updated_within_hours: int,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]], list[str], dict[str, Any] | None, dict[str, Any]]:
+    if thread_source == "recent":
+        threads, skipped, error = recent_thread_set(
+            codex_home=codex_home,
+            max_threads=max_threads,
+            updated_within_hours=updated_within_hours,
+        )
+        payload = {
+            "requested": thread_source,
+            "applied": "recent",
+            "workspace_cwd": None,
+            "included_threads": [thread_source_item(item) for item in threads],
+            "skipped_threads": skipped,
+            "max_threads": max_threads,
+        }
+        return (threads[0] if threads else None), threads, [], error, payload
+
+    current_thread, threads, warnings, error, payload = resolve_thread_set(
+        thread_id=thread_id,
+        codex_home=codex_home,
+        thread_source=thread_source,
+        max_threads=max_threads,
+    )
+    return current_thread, threads or [], warnings, error, payload or {}
+
+
+def collector_thread_result(
+    *,
+    conn: sqlite3.Connection,
+    codex_home: Path,
+    thread: dict[str, Any],
+) -> dict[str, Any]:
+    started = time.monotonic()
+    before = cache_metadata_row(conn, thread["id"]) if table_exists(conn, "rollout_indexes") else None
+    before_reason = before["last_rebuild_reason"] if before is not None else None
+    try:
+        index_meta, warnings = ensure_index(conn, thread=thread, codex_home=codex_home)
+    except IndexBusyError as exc:
+        return {
+            **thread_source_item(thread),
+            "result": "busy",
+            "duration_seconds": round(time.monotonic() - started, 3),
+            "warnings": [],
+            "lock_state": exc.lock_state,
+        }
+    except Exception as exc:
+        return {
+            **thread_source_item(thread),
+            "result": "failed",
+            "duration_seconds": round(time.monotonic() - started, 3),
+            "warnings": [],
+            "failure_kind": exc.__class__.__name__,
+            "message": str(exc),
+        }
+
+    result = "already_fresh"
+    if index_meta.get("built"):
+        result = "appended" if int(index_meta.get("appended_entries") or 0) > 0 else "rebuilt"
+    after_reason = index_meta.get("last_rebuild_reason") or before_reason
+    return {
+        **thread_source_item(thread),
+        "result": result,
+        "duration_seconds": round(time.monotonic() - started, 3),
+        "warnings": warnings,
+        "entry_count": index_meta.get("entry_count", 0),
+        "appended_entries": index_meta.get("appended_entries", 0),
+        "last_rebuild_reason": after_reason,
+        "lock_state": index_meta.get("lock_state"),
+    }
+
+
+def collect(
+    thread_id: str | None = None,
+    codex_home: str | Path | None = None,
+    *,
+    thread_source: str = "recent",
+    max_threads: int = DEFAULT_COLLECTOR_MAX_THREADS,
+    updated_within_hours: int = DEFAULT_COLLECTOR_UPDATED_WITHIN_HOURS,
+    max_run_seconds: int = DEFAULT_COLLECTOR_MAX_RUN_SECONDS,
+    json_log: str | Path | None = None,
+) -> dict[str, Any]:
+    started_dt = datetime.now(tz=UTC)
+    started_monotonic = time.monotonic()
+    home = default_codex_home(codex_home)
+    max_threads = max(1, int(max_threads))
+    updated_within_hours = max(0, int(updated_within_hours))
+    max_run_seconds = max(1, int(max_run_seconds))
+    current_thread, threads, warnings, error, thread_source_payload = collect_thread_set(
+        thread_id=thread_id,
+        codex_home=home,
+        thread_source=thread_source,
+        max_threads=max_threads,
+        updated_within_hours=updated_within_hours,
+    )
+    if error is not None:
+        return error
+
+    conn = connect_cache(home)
+    thread_results: list[dict[str, Any]] = []
+    skipped_threads = list(thread_source_payload.get("skipped_threads", []))
+    try:
+        ensure_cache_schema(conn)
+        for thread in threads:
+            if time.monotonic() - started_monotonic >= max_run_seconds:
+                skipped_threads.append(thread_source_item(thread, reason="max_run_seconds"))
+                continue
+            lock_state = classify_lock_state(read_lock_metadata(thread_lock_path(home, thread["id"])))
+            if lock_state["state"] in COLLECTOR_LOCK_SKIP_STATES:
+                thread_results.append(
+                    {
+                        **thread_source_item(thread),
+                        "result": "busy",
+                        "duration_seconds": 0.0,
+                        "warnings": [],
+                        "lock_state": lock_state,
+                    }
+                )
+                continue
+            thread_results.append(collector_thread_result(conn=conn, codex_home=home, thread=thread))
+    finally:
+        conn.close()
+
+    duration = round(time.monotonic() - started_monotonic, 3)
+    payload = {
+        "ok": True,
+        "operation": "collect",
+        "thread": current_thread,
+        "warnings": warnings,
+        "collector": {
+            "started_at": started_dt.isoformat(),
+            "finished_at": datetime.now(tz=UTC).isoformat(),
+            "duration_seconds": duration,
+            "thread_source": {**thread_source_payload, "skipped_threads": skipped_threads},
+            "max_threads": max_threads,
+            "updated_within_hours": updated_within_hours,
+            "max_run_seconds": max_run_seconds,
+            "json_log": str(json_log) if json_log else None,
+            "threads": thread_results,
+            "skipped_threads": skipped_threads,
+        },
+    }
+    write_collector_last_run(home, payload["collector"])
+    append_collector_json_log(json_log, payload["collector"])
+    return payload
+
+
 def status(thread_id: str | None = None, codex_home: str | Path | None = None) -> dict[str, Any]:
     thread, warnings, error = resolve_thread(thread_id=thread_id, codex_home=codex_home)
     if error is not None:
         return error
     home = default_codex_home(codex_home)
-    conn = connect_cache(home)
+    conn = connect_existing_cache(home)
     try:
-        index_meta, index_warnings = ensure_index(conn, thread=thread, codex_home=home)
-        warnings.extend(index_warnings)
-        current_episode_row_value, current_selection_reason = current_episode_selection(conn, thread_id=thread["id"])
-        current_episode = episode_payload(conn, current_episode_row_value, selection_reason=current_selection_reason)
-        health_payload = cache_health(conn, thread_id=thread["id"])
-        search_stats = fts_stats(conn, thread_id=thread["id"])
+        metadata_row = None
+        if conn is not None and table_exists(conn, "rollout_indexes"):
+            metadata_row = cache_metadata_row(conn, thread["id"])
+        lock_state = classify_lock_state(read_lock_metadata(thread_lock_path(home, thread["id"])))
+        index_meta = index_meta_payload(
+            home,
+            metadata_row,
+            built=False,
+            stale=False,
+            appended_entries=0,
+            lock_state=lock_state,
+        )
+        health_payload = safe_cache_health(conn, thread_id=thread["id"])
+        freshness = cache_freshness_payload(
+            conn=conn,
+            thread=thread,
+            codex_home=home,
+            metadata_row=metadata_row,
+            health_payload=health_payload,
+        )
+        search_stats = safe_fts_stats(conn, thread_id=thread["id"])
+        current_episode = None
+        episodes_total = 0
+        if conn is not None and table_exists(conn, "episodes"):
+            try:
+                current_episode_row_value, current_selection_reason = current_episode_selection(conn, thread_id=thread["id"])
+                current_episode = episode_payload(conn, current_episode_row_value, selection_reason=current_selection_reason)
+                episodes_total = episode_count(conn, thread_id=thread["id"])
+            except sqlite3.Error:
+                current_episode = None
+                episodes_total = 0
         return {
             "ok": True,
             "thread": thread,
@@ -4061,6 +4465,8 @@ def status(thread_id: str | None = None, codex_home: str | Path | None = None) -
                 "last_rebuild_reason": index_meta["last_rebuild_reason"],
                 "lock_state": index_meta["lock_state"],
                 "health": health_payload,
+                "freshness": freshness,
+                "collector": read_collector_last_run(home),
             },
             "search": {
                 "fts_available": bool(search_stats["available"]),
@@ -4070,7 +4476,7 @@ def status(thread_id: str | None = None, codex_home: str | Path | None = None) -
                 "context_max": MAX_CONTEXT_ENTRIES,
             },
             "episodes": {
-                "total": episode_count(conn, thread_id=thread["id"]),
+                "total": episodes_total,
                 "current": current_episode,
                 "last_boundary_reason": current_episode["boundary_reason"] if current_episode is not None else None,
             },
@@ -4088,7 +4494,8 @@ def status(thread_id: str | None = None, codex_home: str | Path | None = None) -
             },
         )
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 def recall(

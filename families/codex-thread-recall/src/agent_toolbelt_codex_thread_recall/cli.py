@@ -17,6 +17,13 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("status", help="Resolve the current thread and show metadata.")
 
+    collect_parser = subparsers.add_parser("collect", help="Warm recall indexes for current, recent, or workspace threads.")
+    collect_parser.add_argument("--thread-source", choices=["current", "recent", "workspace"], default="recent")
+    collect_parser.add_argument("--max-threads", type=int, default=10)
+    collect_parser.add_argument("--updated-within-hours", type=int, default=48)
+    collect_parser.add_argument("--max-run-seconds", type=int, default=90)
+    collect_parser.add_argument("--json-log")
+
     recall_parser = subparsers.add_parser("recall", help="Summarize the current thread's raw rollout history.")
     recall_parser.add_argument("--evidence-limit", type=int, default=25)
     recall_parser.add_argument("--profile", choices=["general", "shipping", "debug"], default="general")
@@ -103,6 +110,16 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "status":
         payload = thread_recall.status(thread_id=args.thread_id, codex_home=args.home_override)
+    elif args.command == "collect":
+        payload = thread_recall.collect(
+            thread_id=args.thread_id,
+            codex_home=args.home_override,
+            thread_source=args.thread_source,
+            max_threads=args.max_threads,
+            updated_within_hours=args.updated_within_hours,
+            max_run_seconds=args.max_run_seconds,
+            json_log=args.json_log,
+        )
     elif args.command == "recall":
         payload = thread_recall.recall(
             thread_id=args.thread_id,

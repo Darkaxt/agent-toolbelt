@@ -179,9 +179,56 @@ def add_repo_sources(repo_root: Path) -> None:
             sys.path.insert(0, resolved)
 
 
-def execute_cli(target: Mapping[str, Any], args: list[str]) -> int:
+def terminate_process_tree(process: subprocess.Popen) -> None:
+    poll = getattr(process, "poll", None)
+    if callable(poll) and poll() is not None:
+        return
+    if not callable(poll) and getattr(process, "returncode", None) is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+
+
+def wrapper_timeout_seconds(env: Mapping[str, str]) -> float | None:
+    value = env.get("CODEX_THREAD_RECALL_WRAPPER_TIMEOUT_SEC")
+    if not value:
+        return None
+    try:
+        parsed = float(value)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def wrapper_timeout_payload(target: Mapping[str, Any], args: list[str], timeout: float) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "error": "wrapper_timeout",
+        "message": f"codex-thread-recall runtime command exceeded wrapper timeout of {timeout:g} seconds.",
+        "runtime": {
+            "mode": target.get("mode"),
+            "python": target.get("runtime_python"),
+            "release_root": target.get("release_root"),
+            "repo_root": target.get("repo_root"),
+        },
+        "command": args[:2],
+    }
+
+
+def execute_cli(target: Mapping[str, Any], args: list[str], env: Mapping[str, str] | None = None) -> int:
     mode = target["mode"]
-    runtime_env = execution_environment(target)
+    runtime_env = execution_environment(target, env)
     if mode == "repo":
         original_env = dict(os.environ)
         try:
@@ -196,11 +243,21 @@ def execute_cli(target: Mapping[str, Any], args: list[str]) -> int:
             os.environ.update(original_env)
 
     if mode == "runtime":
-        completed = subprocess.run(
+        process = subprocess.Popen(
             [str(target["runtime_python"]), "-m", "agent_toolbelt_codex_thread_recall.cli", *args],
-            check=False,
             env=runtime_env,
         )
-        return completed.returncode
+        timeout = wrapper_timeout_seconds(runtime_env)
+        try:
+            if timeout is None:
+                return process.wait()
+            return process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            terminate_process_tree(process)
+            print(json.dumps(wrapper_timeout_payload(target, args, timeout or 0), indent=2, ensure_ascii=True))
+            return 124
+        except KeyboardInterrupt:
+            terminate_process_tree(process)
+            raise
 
     raise RuntimeError(f"Unsupported execution target mode: {mode}")
