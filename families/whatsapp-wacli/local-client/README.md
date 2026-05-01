@@ -44,7 +44,12 @@ queries like `+357 99 041717`, `99041717`, or `041717` can resolve to a live
 LID-backed chat. Archived stale-store aliases remain a last-resort fallback and
 are only used when the target JID exists in the current store.
 
-WhatsApp may store one-to-one chats under either phone-number JIDs or LID JIDs. The adapter reads the configured `wacli` session store read-only, records `contact_jid`, `resolved_jid`, and `resolution_source`, then chooses history/backfill JIDs from a fallback chain instead of blindly preferring the mapped LID. When the local store already has messages under the phone JID, reads prefer that chat JID first; if `wacli` returns `messages:null` or a seed-missing backfill result, the adapter retries alternate JIDs automatically.
+WhatsApp may store one-to-one chats under either phone-number JIDs or LID JIDs, and both shards can contain different readable rows for the same conversation. For `latest` and chat-scoped `search`, the adapter reads every seeded PN/LID candidate shard, merges rows, dedupes by message id where possible, sorts by message timestamp, and then applies the requested limit. `used_jid` remains the newest returned row's JID for compatibility; `used_jids`, `history_selection.candidate_jids`, `history_selection.per_jid`, and `split_history_merged` expose shard aggregation. `backfill` still uses bounded fallback behavior and is not converted into an all-shard mutation.
+
+`find-chat` enriches chat summary timestamps from the same shard set. A raw
+chat-list `LastMessageTS` can therefore be updated to the newest local PN/LID
+metadata timestamp, with details under `chat_metadata_selection`, without
+reading message bodies.
 
 If a contact has neither local messages nor a PN-to-LID mapping, targeted backfill may fail because `wacli` needs an existing anchor message. In that case `latest` reports `backfill_seed_missing` instead of returning empty history as if it were complete.
 

@@ -19,7 +19,7 @@ WhatsApp context rather than direct terminal passthrough:
   drafts, and visible-action safety failures.
 - It exposes phone-number JID versus LID ambiguity through fields such as
   `chat_jid`, `contact_jid`, `resolved_jid`, `resolution_source`, `used_jid`,
-  and `attempted_jids`.
+  `used_jids`, `attempted_jids`, and `history_selection`.
 - It keeps history expansion bounded and reports `backfill_seed_missing` when
   the local store lacks the anchor needed for targeted history backfill.
 - It fails closed with `message_store_lag` when chat metadata is newer than
@@ -48,8 +48,10 @@ WhatsApp context rather than direct terminal passthrough:
 
 - For `auth-login --popup` and new-session relinking, launch the popup and let the user scan the QR. Do not kill the QR/login PowerShell process from an agent session to clear a store lock; it may own the local `wacli` store lock after authentication while the session settles. Poll `auth-status` and `status`, run `sync-once` only after the popup exits or releases the lock, and ask the user before terminating any QR/login/sync process.
 - For "latest conversation with X", run `auth-status`, then `sync-once` when needed, then `find-chat --query "<name-or-phone>"`, then `latest --chat "<name-or-jid>" --limit <n>`. `find-chat` searches chats, local chat/message metadata, live WhatsApp session profile/phone metadata, contact metadata, and read-only archived store aliases for non-contact chats when the same JID exists in the current fresh store.
-- Check `chat_jid`, `resolved_jid`, and `resolution_source`, but let the adapter choose the actual history JID. The adapter now uses a fallback chain instead of blindly preferring the mapped LID.
+- Check `chat_jid`, `resolved_jid`, and `resolution_source`, but let the adapter choose the actual history shards. For `latest` and chat-scoped `search`, it reads seeded PN/LID shards, merges rows, dedupes by message id where possible, sorts by timestamp, and then applies the requested limit.
+- Treat `find-chat` `LastMessageTS`/`last_message_ts` as shard-aware helper metadata. If `chat_metadata_selection.split_history_detected` is true, the timestamp may come from a linked PN/LID shard rather than the raw chat-list row.
 - Allow bounded auto-backfill for `latest` unless the user asks for current synced data only.
+- If `resolution.used_jids` contains multiple JIDs or warnings include `split_history_merged`, treat the result as one merged conversation. Use `history_selection.per_jid` only as diagnostics.
 - Prefer `message.presentation.chat_display_name` and `message.presentation.text` for summaries. Raw `ChatName`, `Text`, and `DisplayText` remain provenance/debug fields.
 - If returned rows contain media that matters for the task, rerun the same read with `--include-media --media-limit <n>` and inspect `message.presentation.media.available`, `artifact_source`, and `artifact_path` for OCR or visual analysis. `available=true` is usable even when `downloaded=false`; use `download_attempt_error` only as diagnostic context.
 - If `backfill_seed_missing` is returned, report that the local store lacks the anchor needed for targeted history backfill instead of implying there are no messages.

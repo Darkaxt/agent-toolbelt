@@ -223,7 +223,9 @@ class WhatsAppWacliBridgeTests(unittest.TestCase):
 
         self.assertIn("resolved_jid", skill)
         self.assertIn("chat_jid", skill)
-        self.assertIn("fallback chain", skill)
+        self.assertIn("PN/LID shards", skill)
+        self.assertIn("history_selection", skill)
+        self.assertIn("split_history_merged", skill)
         self.assertIn("backfill_seed_missing", skill)
         self.assertIn("--confirm", skill)
         self.assertIn("WhatsApp-visible", skill)
