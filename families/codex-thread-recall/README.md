@@ -17,6 +17,12 @@ JSONL records. Index builds are coordinated with a per-thread lock file in that
 same cache directory so concurrent callers wait briefly, reclaim stale locks,
 and fail closed with `index_busy` instead of hanging indefinitely.
 
+`status` is intentionally lightweight and non-mutating: it resolves the thread,
+reports cache freshness/lock/collector diagnostics, and does not build or append
+the index. Use `collect` to warm caches explicitly, or let `recall`, `grep`,
+`timeline`, and `worklog` ensure freshness when they are the command you
+actually need.
+
 The installed Codex skill is self-contained by default. It prefers:
 
 1. `AGENT_TOOLBELT_HOME` when you explicitly want to run against a development checkout
@@ -64,10 +70,18 @@ Phase 10 adds portable memory bundles as an explicit separate workflow:
 - imported bundles are never searched by default by `status`, `recall`, `grep`, `timeline`, or `worklog`.
 - bundles are portable context artifacts, not source-of-truth rollout history; use them only when you intentionally need distilled context outside the current thread.
 
+The scheduled collector keeps large active threads warm outside foreground
+agent commands:
+
+- `collect` warms current, recent, or exact-workspace thread indexes without changing recall query semantics.
+- collector metadata is written under `CODEX_HOME/cache/codex-thread-recall/collector/`.
+- the optional Windows scheduled task runs the collector every few minutes while the user is logged in.
+
 ## Commands
 
 ```powershell
 uv run --project families/codex-thread-recall agent-toolbelt-codex-thread-recall status
+uv run --project families/codex-thread-recall agent-toolbelt-codex-thread-recall collect --thread-source recent --max-threads 10 --updated-within-hours 48 --max-run-seconds 90
 uv run --project families/codex-thread-recall agent-toolbelt-codex-thread-recall recall --profile general --scope current
 uv run --project families/codex-thread-recall agent-toolbelt-codex-thread-recall timeline --kind shipped --group entity --scope current
 uv run --project families/codex-thread-recall agent-toolbelt-codex-thread-recall grep --pattern "CODEX_THREAD_ID" --scope thread
@@ -94,6 +108,17 @@ $env:AGENT_TOOLBELT_HOME='D:\path\to\agent-toolbelt'
 python C:\Users\<you>\.codex\skills\codex-thread-recall\scripts\install_codex_thread_recall_runtime.py
 ```
 
+To install or remove the optional scheduled warm-cache collector:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File C:\Users\<you>\.codex\skills\codex-thread-recall\scripts\install_codex_thread_recall_collector_task.ps1
+powershell -ExecutionPolicy Bypass -File C:\Users\<you>\.codex\skills\codex-thread-recall\scripts\uninstall_codex_thread_recall_collector_task.ps1
+```
+
+The scheduled task uses the staged runtime's `pythonw.exe` when available so
+background collection does not open console windows. If it reports
+`no_console: false`, install a refreshed runtime before enabling the task.
+
 Optional filters and overrides:
 
 - `--thread-id <id>` for offline debugging or tests
@@ -101,6 +126,7 @@ Optional filters and overrides:
 - `recall --profile general|shipping|debug`
 - `recall --scope current|thread|episode --episode-id episode-N`
 - `recall --thread-source current|workspace --max-threads <n>`
+- `collect --thread-source current|recent|workspace --max-threads <n> --updated-within-hours <n> --max-run-seconds <n> --json-log <path>`
 - `timeline --kind shipped|published|merged|pushed|installed|validated|all`
 - `timeline --group entity|repo|none`
 - `timeline --scope current|thread|episode --episode-id episode-N --include-meta`
@@ -125,7 +151,8 @@ Optional filters and overrides:
 
 ## Output shape
 
-- `status` resolves the current thread and rollout path and reports current-episode diagnostics.
+- `status` resolves the current thread and rollout path and reports cache freshness, collector, lock, and current-episode diagnostics without mutating the index.
+- `collect` warms selected thread indexes and returns per-thread outcomes such as `already_fresh`, `appended`, `rebuilt`, `busy`, or `failed`.
 - `recall` returns a bounded brief with summary, known facts, decisions, touched
   paths, commands, blockers, open questions, and evidence pointers.
 - `timeline` returns grouped or flat event history with timestamps, excerpts,
@@ -197,6 +224,8 @@ Successful indexed responses also include cache metadata:
 - `cache.last_rebuild_reason`
 - `cache.lock_state`
 - `cache.health`
+- `cache.freshness`
+- `cache.collector`
 - `search.fts_available`
 - `search.fts_indexed_entry_count`
 - `search.fts_missing_entry_count`

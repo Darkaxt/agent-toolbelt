@@ -90,6 +90,9 @@ def make_codex_home(
     rollout_entries: list[dict] | None = None,
     malformed_line: str | None = None,
     missing_rollout: bool = False,
+    title: str = "Thread Recall Test",
+    created_at: int = 1777077000,
+    updated_at: int = 1777077300,
 ) -> tuple[Path, Path]:
     codex_home = Path(temp_dir) / "codex-home"
     codex_home.mkdir(parents=True, exist_ok=True)
@@ -119,11 +122,11 @@ def make_codex_home(
         "insert into threads (id, title, cwd, rollout_path, created_at, updated_at) values (?, ?, ?, ?, ?, ?)",
         (
             thread_id,
-            "Thread Recall Test",
+            title,
             r"\\?\D:\Workspace\Projects\recall-sandbox",
             str(rollout_path),
-            1777077000,
-            1777077300,
+            created_at,
+            updated_at,
         ),
     )
     conn.commit()
@@ -176,6 +179,11 @@ class ThreadRecallTests(unittest.TestCase):
 
         return _Env()
 
+    def warm_status(self) -> dict:
+        collector = thread_recall.collect(thread_source="current")
+        self.assertTrue(collector["ok"], collector)
+        return thread_recall.status()
+
     def test_status_resolves_current_thread_from_env(self):
         entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "hello"})]
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -186,6 +194,170 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["thread"]["id"], THREAD_ID)
         self.assertEqual(payload["thread"]["rollout_path"], str(rollout_path))
+
+    def test_status_does_not_build_index_by_default(self):
+        entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "hello"})]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            cache_db = codex_home / "cache" / "codex-thread-recall" / "index.sqlite"
+            with self.with_env(codex_home):
+                payload = thread_recall.status()
+
+        self.assertTrue(payload["ok"])
+        self.assertFalse(cache_db.exists())
+        self.assertEqual(payload["cache"]["freshness"]["state"], "not_indexed")
+        self.assertEqual(payload["cache"]["entry_count"], 0)
+        self.assertIsNone(payload["episodes"]["current"])
+
+    def test_collect_current_builds_index_and_status_reports_fresh(self):
+        entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Implement `artifact-alpha`."})]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                collected = thread_recall.collect(thread_source="current")
+                payload = thread_recall.status()
+
+        self.assertTrue(collected["ok"], collected)
+        self.assertEqual(collected["collector"]["thread_source"]["applied"], "current")
+        self.assertEqual(collected["collector"]["threads"][0]["result"], "rebuilt")
+        self.assertEqual(payload["cache"]["freshness"]["state"], "fresh")
+        self.assertEqual(payload["cache"]["entry_count"], 1)
+
+    def test_collect_append_tail_rebuild_handles_large_tail_slice(self):
+        entries = [
+            make_entry(
+                f"2026-04-25T08:{index % 60:02d}:00Z",
+                "event_msg",
+                {"type": "agent_message", "text": f"Validated `artifact-alpha` step {index}."},
+            )
+            for index in range(thread_recall.SQLITE_PARAM_CHUNK_SIZE * 3)
+        ]
+        appended_entry = make_entry(
+            "2026-04-25T10:00:00Z",
+            "event_msg",
+            {"type": "agent_message", "text": "Validated `artifact-alpha` after append."},
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, rollout_path = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                first = thread_recall.collect(thread_source="current")
+                with rollout_path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(appended_entry, ensure_ascii=False) + "\n")
+                second = thread_recall.collect(thread_source="current")
+                payload = thread_recall.status()
+
+        self.assertTrue(first["ok"], first)
+        self.assertTrue(second["ok"], second)
+        self.assertEqual(second["collector"]["threads"][0]["result"], "appended")
+        self.assertEqual(payload["cache"]["freshness"]["state"], "fresh")
+        self.assertEqual(payload["cache"]["entry_count"], len(entries) + 1)
+
+    def test_collect_recent_selects_newest_readable_threads(self):
+        now = int(datetime.now(tz=UTC).timestamp())
+        entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "hello"})]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(
+                temp_dir,
+                thread_id="current-thread",
+                rollout_entries=entries,
+                updated_at=now - 60,
+            )
+            add_thread_to_codex_home(
+                codex_home,
+                thread_id="newer-readable",
+                rollout_entries=entries,
+                updated_at=now - 30,
+            )
+            add_thread_to_codex_home(
+                codex_home,
+                thread_id="too-old",
+                rollout_entries=entries,
+                updated_at=now - 72 * 3600,
+            )
+            add_thread_to_codex_home(
+                codex_home,
+                thread_id="missing-rollout",
+                rollout_entries=entries,
+                missing_rollout=True,
+                updated_at=now - 10,
+            )
+            with self.with_env(codex_home, thread_id="current-thread"):
+                payload = thread_recall.collect(
+                    thread_source="recent",
+                    max_threads=2,
+                    updated_within_hours=48,
+                )
+
+        self.assertTrue(payload["ok"], payload)
+        included_ids = [item["thread_id"] for item in payload["collector"]["threads"]]
+        skipped = {item["thread_id"]: item["reason"] for item in payload["collector"]["skipped_threads"]}
+        self.assertEqual(included_ids, ["newer-readable", "current-thread"])
+        self.assertEqual(skipped["missing-rollout"], "rollout_missing")
+        self.assertEqual(skipped["too-old"], "updated_before_window")
+
+    def test_collect_jsonl_log_omits_thread_titles(self):
+        now = int(datetime.now(tz=UTC).timestamp())
+        entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "hello"})]
+        sensitive_title = "PRIVATE MESSAGE BODY SHOULD NOT BE IN JSONL"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(
+                temp_dir,
+                rollout_entries=entries,
+                title=sensitive_title,
+                updated_at=now - 60,
+            )
+            json_log = Path(temp_dir) / "collector.jsonl"
+            with self.with_env(codex_home):
+                payload = thread_recall.collect(thread_source="current", json_log=json_log)
+            log_line = json_log.read_text(encoding="utf-8")
+            log_payload = json.loads(log_line)
+            last_run_payload = json.loads(thread_recall.collector_last_run_path(codex_home).read_text(encoding="utf-8"))
+
+        def contains_key(value: object, key: str) -> bool:
+            if isinstance(value, dict):
+                return key in value or any(contains_key(item, key) for item in value.values())
+            if isinstance(value, list):
+                return any(contains_key(item, key) for item in value)
+            return False
+
+        self.assertTrue(payload["ok"], payload)
+        self.assertIn(sensitive_title, json.dumps(payload))
+        self.assertNotIn(sensitive_title, log_line)
+        self.assertFalse(contains_key(log_payload, "thread_title"))
+        self.assertFalse(contains_key(last_run_payload, "thread_title"))
+        self.assertNotIn(sensitive_title, json.dumps(last_run_payload))
+
+    def test_collector_task_installer_prefers_no_console_pythonw(self):
+        installer = (
+            SKILL_SCRIPTS / "install_codex_thread_recall_collector_task.ps1"
+        ).read_text(encoding="utf-8")
+
+        self.assertLess(installer.index("pythonw.exe"), installer.index("python.exe"))
+        self.assertIn("no_console", installer)
+
+    def test_collect_skips_live_lock_without_waiting_for_full_lock_budget(self):
+        entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "hello"})]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            lock_path = thread_recall.thread_lock_path(codex_home, THREAD_ID)
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            lock_path.write_text(
+                json.dumps(
+                    {
+                        "thread_id": THREAD_ID,
+                        "rollout_path": "rollout.jsonl",
+                        "pid": os.getpid(),
+                        "started_at": datetime.now(tz=thread_recall.UTC).isoformat(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.with_env(codex_home):
+                payload = thread_recall.collect(thread_source="current", max_run_seconds=10)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["collector"]["threads"][0]["result"], "busy")
+        self.assertEqual(payload["collector"]["threads"][0]["lock_state"]["state"], "locked")
 
     def test_thread_override_is_used_when_provided(self):
         entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "hello"})]
@@ -423,7 +595,7 @@ class ThreadRecallTests(unittest.TestCase):
                 conn.close()
 
             with self.with_env(codex_home):
-                payload = thread_recall.status()
+                payload = self.warm_status()
 
             conn = sqlite3.connect(cache_db)
             try:
@@ -481,7 +653,7 @@ class ThreadRecallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
             with self.with_env(codex_home):
-                payload = thread_recall.status()
+                payload = self.warm_status()
                 conn = thread_recall.connect_cache(codex_home)
                 try:
                     seed = thread_recall.episode_tail_rebuild_seed(conn, thread_id=THREAD_ID)
@@ -505,7 +677,7 @@ class ThreadRecallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
             with self.with_env(codex_home):
-                payload = thread_recall.status()
+                payload = self.warm_status()
                 conn = thread_recall.connect_cache(codex_home)
                 try:
                     seed = thread_recall.episode_tail_rebuild_seed(conn, thread_id=THREAD_ID)
@@ -534,7 +706,7 @@ class ThreadRecallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, rollout_path = make_codex_home(temp_dir, rollout_entries=entries)
             with self.with_env(codex_home):
-                first = thread_recall.status()
+                first = self.warm_status()
                 original_full_rebuild = thread_recall.rebuild_thread_episodes
                 try:
                     thread_recall.rebuild_thread_episodes = lambda *_args, **_kwargs: (_ for _ in ()).throw(
@@ -542,7 +714,7 @@ class ThreadRecallTests(unittest.TestCase):
                     )
                     with rollout_path.open("a", encoding="utf-8") as handle:
                         handle.write(json.dumps(appended_entry, ensure_ascii=False) + "\n")
-                    second = thread_recall.status()
+                    second = self.warm_status()
                 finally:
                     thread_recall.rebuild_thread_episodes = original_full_rebuild
 
@@ -568,7 +740,7 @@ class ThreadRecallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, rollout_path = make_codex_home(temp_dir, rollout_entries=entries)
             with self.with_env(codex_home):
-                first = thread_recall.status()
+                first = self.warm_status()
                 original_tail_rebuild = thread_recall.rebuild_tail_thread_episodes
                 original_full_rebuild = thread_recall.rebuild_thread_episodes
                 full_rebuild_called = {"value": False}
@@ -585,7 +757,7 @@ class ThreadRecallTests(unittest.TestCase):
                     thread_recall.rebuild_thread_episodes = wrapped_full_rebuild
                     with rollout_path.open("a", encoding="utf-8") as handle:
                         handle.write(json.dumps(appended_entry, ensure_ascii=False) + "\n")
-                    second = thread_recall.status()
+                    second = self.warm_status()
                 finally:
                     thread_recall.rebuild_tail_thread_episodes = original_tail_rebuild
                     thread_recall.rebuild_thread_episodes = original_full_rebuild
@@ -608,7 +780,7 @@ class ThreadRecallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, rollout_path = make_codex_home(temp_dir, rollout_entries=entries)
             with self.with_env(codex_home):
-                first = thread_recall.status()
+                first = self.warm_status()
                 original_full_rebuild = thread_recall.rebuild_thread_episodes
                 try:
                     thread_recall.rebuild_thread_episodes = lambda *_args, **_kwargs: (_ for _ in ()).throw(
@@ -616,7 +788,7 @@ class ThreadRecallTests(unittest.TestCase):
                     )
                     with rollout_path.open("a", encoding="utf-8") as handle:
                         handle.write(json.dumps(appended_entry, ensure_ascii=False) + "\n")
-                    second = thread_recall.status()
+                    second = self.warm_status()
                 finally:
                     thread_recall.rebuild_thread_episodes = original_full_rebuild
 
@@ -637,11 +809,11 @@ class ThreadRecallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, rollout_path = make_codex_home(temp_dir, rollout_entries=entries)
             with self.with_env(codex_home):
-                first = thread_recall.status()
+                first = self.warm_status()
                 with rollout_path.open("a", encoding="utf-8") as handle:
                     for entry in appended_entries:
                         handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
-                second = thread_recall.status()
+                second = self.warm_status()
 
         self.assertTrue(first["ok"])
         self.assertTrue(second["ok"])
@@ -666,7 +838,7 @@ class ThreadRecallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, rollout_path = make_codex_home(temp_dir, rollout_entries=entries)
             with self.with_env(codex_home):
-                first = thread_recall.status()
+                first = self.warm_status()
                 cache_db = codex_home / "cache" / "codex-thread-recall" / "index.sqlite"
                 conn = sqlite3.connect(cache_db)
                 try:
@@ -679,7 +851,7 @@ class ThreadRecallTests(unittest.TestCase):
                     conn.close()
                 with rollout_path.open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(appended_entry, ensure_ascii=False) + "\n")
-                second = thread_recall.status()
+                second = self.warm_status()
                 conn = sqlite3.connect(cache_db)
                 try:
                     repaired_starts = [
@@ -768,7 +940,7 @@ class ThreadRecallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
             with self.with_env(codex_home):
-                payload = thread_recall.status()
+                payload = self.warm_status()
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["runtime"]["mode"], "direct")
@@ -776,7 +948,7 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertIn("index.sqlite", payload["cache"]["path"])
         self.assertIn(payload["cache"]["lock_state"]["state"], {"unlocked", "not-needed", "acquired"})
 
-    def test_status_reports_fts_health_and_self_heals_missing_fts_rows(self):
+    def test_status_reports_fts_health_and_collector_self_heals_missing_fts_rows(self):
         entries = [
             make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Plan `artifact-health`."}),
             make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Decision: index `artifact-health`."}),
@@ -784,7 +956,7 @@ class ThreadRecallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
             with self.with_env(codex_home):
-                first = thread_recall.status()
+                first = self.warm_status()
                 cache_path = thread_recall.cache_db_path(Path(codex_home))
                 conn = sqlite3.connect(cache_path)
                 try:
@@ -792,11 +964,16 @@ class ThreadRecallTests(unittest.TestCase):
                     conn.commit()
                 finally:
                     conn.close()
+                stale = thread_recall.status()
+                collector = thread_recall.collect(thread_source="current")
                 healed = thread_recall.status()
 
         self.assertTrue(first["ok"])
         self.assertTrue(first["search"]["fts_available"])
         self.assertEqual(first["search"]["fts_indexed_entry_count"], 2)
+        self.assertTrue(stale["cache"]["health"]["rebuild_recommended"])
+        self.assertEqual(stale["search"]["fts_missing_entry_count"], 1)
+        self.assertTrue(collector["ok"], collector)
         self.assertTrue(healed["ok"], healed)
         self.assertTrue(healed["cache"]["health"]["ok"])
         self.assertEqual(healed["search"]["fts_missing_entry_count"], 0)
@@ -813,7 +990,7 @@ class ThreadRecallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
             with self.with_env(codex_home):
-                payload = thread_recall.status()
+                payload = self.warm_status()
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["episodes"]["total"], 2)
@@ -831,7 +1008,7 @@ class ThreadRecallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
             with self.with_env(codex_home):
-                payload = thread_recall.status()
+                payload = self.warm_status()
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["episodes"]["total"], 1)
@@ -850,7 +1027,7 @@ class ThreadRecallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
             with self.with_env(codex_home):
-                payload = thread_recall.status()
+                payload = self.warm_status()
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["episodes"]["total"], 1)
@@ -866,7 +1043,7 @@ class ThreadRecallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
             with self.with_env(codex_home):
-                payload = thread_recall.status()
+                payload = self.warm_status()
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["episodes"]["total"], 1)
@@ -883,7 +1060,7 @@ class ThreadRecallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
             with self.with_env(codex_home):
-                payload = thread_recall.status()
+                payload = self.warm_status()
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["episodes"]["total"], 2)
@@ -901,7 +1078,7 @@ class ThreadRecallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
             with self.with_env(codex_home):
-                payload = thread_recall.status()
+                payload = self.warm_status()
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["episodes"]["total"], 1)
@@ -917,7 +1094,7 @@ class ThreadRecallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
             with self.with_env(codex_home):
-                payload = thread_recall.status()
+                payload = self.warm_status()
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["episodes"]["total"], 2)
@@ -937,7 +1114,7 @@ class ThreadRecallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
             with self.with_env(codex_home):
-                payload = thread_recall.status()
+                payload = self.warm_status()
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["episodes"]["current"]["dominant_entities"], ["artifact-gamma"])
@@ -1250,7 +1427,7 @@ class ThreadRecallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
             with self.with_env(codex_home):
-                payload = thread_recall.status()
+                payload = self.warm_status()
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["episodes"]["current"]["dominant_entities"], ["artifact-beta"])
@@ -1269,7 +1446,7 @@ class ThreadRecallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
             with self.with_env(codex_home):
-                payload = thread_recall.status()
+                payload = self.warm_status()
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["episodes"]["current"]["dominant_entities"], ["artifact-beta"])
@@ -2003,6 +2180,46 @@ class ThreadRecallCliTests(unittest.TestCase):
         self.assertEqual(payload["patterns"], ["audit search"])
         self.assertEqual(payload["query_mode"], "fts")
 
+    def test_collect_cli_passes_scheduler_options(self):
+        original_collect = cli.thread_recall.collect
+        cli.thread_recall.collect = lambda **kwargs: {
+            "ok": True,
+            "collector": {
+                "thread_source": {"applied": kwargs["thread_source"]},
+                "max_threads": kwargs["max_threads"],
+                "updated_within_hours": kwargs["updated_within_hours"],
+                "max_run_seconds": kwargs["max_run_seconds"],
+                "json_log": kwargs["json_log"],
+            },
+        }
+        try:
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                exit_code = cli.main(
+                    [
+                        "collect",
+                        "--thread-source",
+                        "recent",
+                        "--max-threads",
+                        "7",
+                        "--updated-within-hours",
+                        "24",
+                        "--max-run-seconds",
+                        "30",
+                        "--json-log",
+                        "collector.jsonl",
+                    ]
+                )
+                payload = json.loads(buffer.getvalue())
+        finally:
+            cli.thread_recall.collect = original_collect
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["collector"]["thread_source"]["applied"], "recent")
+        self.assertEqual(payload["collector"]["max_threads"], 7)
+        self.assertEqual(payload["collector"]["updated_within_hours"], 24)
+        self.assertEqual(payload["collector"]["max_run_seconds"], 30)
+        self.assertEqual(payload["collector"]["json_log"], "collector.jsonl")
+
     def test_memory_cli_routes_export_import_and_search(self):
         calls: list[tuple[str, dict]] = []
         original_export = cli.thread_recall.memory_export
@@ -2260,6 +2477,64 @@ class ThreadRecallRuntimeTests(unittest.TestCase):
                 os.environ.update(original_env)
 
         self.assertEqual(resolved, repo_root.resolve())
+
+    def test_runtime_bootstrap_runtime_mode_terminates_child_tree_on_keyboard_interrupt(self):
+        module = load_skill_script_module("runtime_bootstrap.py")
+        calls: list[tuple[str, int]] = []
+
+        class FakeProcess:
+            pid = 4242
+            returncode = None
+
+            def wait(self):
+                raise KeyboardInterrupt()
+
+        original_popen = module.subprocess.Popen
+        original_terminate = module.terminate_process_tree
+        module.subprocess.Popen = lambda *_args, **_kwargs: FakeProcess()
+        module.terminate_process_tree = lambda process: calls.append(("terminate", process.pid))
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                module.execute_cli(
+                    {"mode": "runtime", "runtime_python": "C:/Python/python.exe"},
+                    ["status"],
+                )
+        finally:
+            module.subprocess.Popen = original_popen
+            module.terminate_process_tree = original_terminate
+
+        self.assertEqual(calls, [("terminate", 4242)])
+
+    def test_runtime_bootstrap_runtime_mode_returns_structured_timeout_when_configured(self):
+        module = load_skill_script_module("runtime_bootstrap.py")
+        calls: list[tuple[str, int]] = []
+
+        class FakeProcess:
+            pid = 4243
+            returncode = None
+
+            def wait(self, timeout=None):
+                raise module.subprocess.TimeoutExpired(["python"], timeout)
+
+        original_popen = module.subprocess.Popen
+        original_terminate = module.terminate_process_tree
+        module.subprocess.Popen = lambda *_args, **_kwargs: FakeProcess()
+        module.terminate_process_tree = lambda process: calls.append(("terminate", process.pid))
+        try:
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                exit_code = module.execute_cli(
+                    {"mode": "runtime", "runtime_python": "C:/Python/python.exe"},
+                    ["status"],
+                    env={"CODEX_THREAD_RECALL_WRAPPER_TIMEOUT_SEC": "1"},
+                )
+                payload = json.loads(buffer.getvalue())
+        finally:
+            module.subprocess.Popen = original_popen
+            module.terminate_process_tree = original_terminate
+
+        self.assertEqual(exit_code, 124)
+        self.assertEqual(payload["error"], "wrapper_timeout")
+        self.assertEqual(calls, [("terminate", 4243)])
 
 
 if __name__ == "__main__":

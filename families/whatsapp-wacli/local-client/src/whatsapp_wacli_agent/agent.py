@@ -871,6 +871,26 @@ def iso_timestamp(value: Any) -> str | None:
     return datetime.fromtimestamp(numeric, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def int_timestamp(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return int(parsed.timestamp())
+
+
 def message_time_bounds_for_chat(config: Config, jid: str) -> dict[str, Any]:
     bounds: dict[str, Any] = {
         "jid": jid,
@@ -1678,17 +1698,124 @@ def nested_key_container(payload: Any, key: str) -> dict[str, Any] | None:
     return None
 
 
-def response_has_null_messages(response: dict[str, Any]) -> bool:
-    container = nested_key_container(response.get("result", {}).get("payload"), "messages")
-    return container is not None and container.get("messages") is None
-
-
 def normalize_null_messages(response: dict[str, Any]) -> bool:
     container = nested_key_container(response.get("result", {}).get("payload"), "messages")
     if container is None or container.get("messages") is not None:
         return False
     container["messages"] = []
     return True
+
+
+def replace_response_messages(response: dict[str, Any], messages: list[dict[str, Any]]) -> None:
+    container = nested_key_container(response.get("result", {}).get("payload"), "messages")
+    if container is not None:
+        container["messages"] = messages
+
+
+def message_timestamp_value(message: dict[str, Any]) -> float:
+    value = message_value(message, "Timestamp", "timestamp", "ts")
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        text = str(value).strip()
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return 0.0
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+
+
+def message_jid(message: dict[str, Any]) -> str:
+    return str(message_value(message, "ChatJID", "chat_jid") or "").strip()
+
+
+def message_dedupe_key(message: dict[str, Any]) -> tuple[str, str]:
+    message_id = str(message_value(message, "MsgID", "msg_id", "ID", "id") or "").strip()
+    if message_id:
+        return ("id", message_id)
+    fallback = "|".join(
+        [
+            message_jid(message),
+            str(message_timestamp_value(message)),
+            str(message_value(message, "Text", "text", "DisplayText", "display_text") or ""),
+        ]
+    )
+    return ("fallback", fallback)
+
+
+def dedupe_and_sort_messages(messages: list[dict[str, Any]], *, limit: int | None = None) -> list[dict[str, Any]]:
+    keyed: dict[tuple[str, str], tuple[int, dict[str, Any]]] = {}
+    for index, message in enumerate(messages):
+        key = message_dedupe_key(message)
+        if key not in keyed:
+            keyed[key] = (index, message)
+    ordered = list(keyed.values())
+    ordered.sort(
+        key=lambda item: (
+            -message_timestamp_value(item[1]),
+            item[0],
+        )
+    )
+    sorted_messages = [message for _, message in ordered]
+    if limit is not None:
+        return sorted_messages[:limit]
+    return sorted_messages
+
+
+def successful_history_read_jids(jids: list[str], config: Config) -> tuple[list[str], dict[str, int | None]]:
+    counts = {jid: message_count_for_chat(config, jid) for jid in jids}
+    seeded = [jid for jid in jids if (counts.get(jid) or 0) > 0]
+    return (seeded or list(jids)), counts
+
+
+def history_selection_metadata(
+    *,
+    candidate_jids: list[str],
+    read_jids: list[str],
+    returned_messages: list[dict[str, Any]],
+    message_sources: dict[tuple[str, str], str],
+    counts: dict[str, int | None],
+    config: Config,
+) -> dict[str, Any]:
+    used_jids = unique_jids(*read_jids)
+    returned_jids = unique_jids(
+        *(
+            message_jid(message)
+            or message_sources.get(message_dedupe_key(message))
+            for message in returned_messages
+        )
+    )
+    per_jid = {}
+    for jid in candidate_jids:
+        bounds = message_time_bounds_for_chat(config, jid)
+        per_jid[jid] = {
+            "message_count": counts.get(jid),
+            "oldest_message_ts": bounds.get("oldest_message_ts"),
+            "oldest_message_at": bounds.get("oldest_message_at"),
+            "latest_message_ts": bounds.get("latest_message_ts"),
+            "latest_message_at": bounds.get("latest_message_at"),
+            "read_attempted": jid in read_jids,
+            "returned_count": sum(
+                1
+                for message in returned_messages
+                if (message_jid(message) or message_sources.get(message_dedupe_key(message))) == jid
+            ),
+        }
+    return {
+        "strategy": "merge_readable_jid_shards" if len(read_jids) > 1 else "single_readable_jid",
+        "split_history_detected": sum(1 for jid in candidate_jids if (counts.get(jid) or 0) > 0) > 1,
+        "candidate_jids": candidate_jids,
+        "read_jids": read_jids,
+        "used_jids": used_jids,
+        "returned_jids": returned_jids,
+        "per_jid": per_jid,
+    }
 
 
 def history_jid_candidates(
@@ -1706,9 +1833,89 @@ def history_jid_candidates(
         return candidates, counts
 
     seeded = [jid for jid in candidates if (counts.get(jid) or 0) > 0]
-    seeded.sort(key=lambda jid: (-(counts.get(jid) or 0), candidates.index(jid)))
     unseeded = [jid for jid in candidates if jid not in seeded]
     return seeded + unseeded, counts
+
+
+def chat_metadata_selection(
+    *,
+    chat_info: dict[str, Any],
+    config: Config,
+) -> dict[str, Any]:
+    resolution = resolution_summary(chat_info)
+    candidate_jids, counts = history_jid_candidates(resolution=resolution, config=config)
+    source_jid = str(chat_info.get("jid") or "").strip()
+    source_ts = int_timestamp(chat_info.get("last_message_ts") or chat_info.get("LastMessageTS"))
+    latest_ts: int | None = None
+    latest_jid: str | None = None
+    per_jid: dict[str, Any] = {}
+    for jid in candidate_jids:
+        bounds = message_time_bounds_for_chat(config, jid)
+        chat_last_ts = chat_last_message_ts_for_jid(config, jid)
+        timestamp_candidates = [
+            int_timestamp(bounds.get("latest_message_ts")),
+            int_timestamp(chat_last_ts),
+        ]
+        if jid == source_jid:
+            timestamp_candidates.append(source_ts)
+        jid_latest_ts = max((ts for ts in timestamp_candidates if ts is not None), default=None)
+        if jid_latest_ts is not None and (latest_ts is None or jid_latest_ts > latest_ts):
+            latest_ts = jid_latest_ts
+            latest_jid = jid
+        per_jid[jid] = {
+            "message_count": bounds.get("message_count") if bounds.get("message_count") is not None else counts.get(jid),
+            "message_latest_ts": bounds.get("latest_message_ts"),
+            "message_latest_at": bounds.get("latest_message_at"),
+            "chat_last_message_ts": chat_last_ts,
+            "chat_last_message_at": iso_timestamp(chat_last_ts),
+            "source_last_message_ts": source_ts if jid == source_jid else None,
+            "source_last_message_at": iso_timestamp(source_ts) if jid == source_jid else None,
+            "effective_last_message_ts": jid_latest_ts,
+            "effective_last_message_at": iso_timestamp(jid_latest_ts),
+        }
+    active_shards = [
+        jid
+        for jid, meta in per_jid.items()
+        if meta.get("message_count") or meta.get("chat_last_message_ts") is not None or meta.get("source_last_message_ts") is not None
+    ]
+    return {
+        "strategy": "merge_readable_jid_shard_metadata" if len(candidate_jids) > 1 else "single_jid_metadata",
+        "split_history_detected": len(active_shards) > 1,
+        "candidate_jids": candidate_jids,
+        "active_jids": active_shards,
+        "latest_jid": latest_jid,
+        "latest_message_ts": latest_ts,
+        "latest_message_at": iso_timestamp(latest_ts),
+        "per_jid": per_jid,
+    }
+
+
+def enrich_chat_metadata_summary(chat_info: dict[str, Any], config: Config) -> dict[str, Any]:
+    enriched = dict(chat_info)
+    selection = chat_metadata_selection(chat_info=enriched, config=config)
+    latest_ts = selection.get("latest_message_ts")
+    if latest_ts is not None:
+        enriched["last_message_ts"] = latest_ts
+        enriched["last_message_at"] = selection.get("latest_message_at")
+        enriched["LastMessageTS"] = latest_ts
+        enriched["LastMessageAt"] = selection.get("latest_message_at")
+    enriched["chat_metadata_selection"] = selection
+    return enriched
+
+
+def enrich_find_chat_matches(
+    query: str,
+    matches: list[dict[str, Any]],
+    *,
+    config: Config,
+) -> list[dict[str, Any]]:
+    return [
+        enrich_chat_metadata_summary(
+            add_resolution_metadata(requested_chat=query, chat_info=match, config=config),
+            config,
+        )
+        for match in matches
+    ]
 
 
 def enrich_history_resolution(
@@ -1717,6 +1924,7 @@ def enrich_history_resolution(
     config: Config,
     used_jid: str | None = None,
     attempted_jids: list[str] | None = None,
+    history_selection: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     candidates, counts = history_jid_candidates(resolution=resolution, config=config)
     enriched = dict(resolution)
@@ -1724,6 +1932,9 @@ def enrich_history_resolution(
     enriched["history_jid_message_counts"] = counts
     if used_jid:
         enriched["used_jid"] = used_jid
+    if history_selection:
+        enriched["used_jids"] = history_selection.get("used_jids") or []
+        enriched["history_selection"] = history_selection
     if attempted_jids:
         enriched["attempted_jids"] = attempted_jids
     return enriched
@@ -1739,9 +1950,14 @@ def invoke_history_read(
     timeout_sec: int,
 ) -> tuple[dict[str, Any], str | None, list[str]]:
     attempted: list[str] = []
+    read_jids, counts = successful_history_read_jids(jids, config)
     last_response: dict[str, Any] | None = None
+    first_response: dict[str, Any] | None = None
+    collected_messages: list[dict[str, Any]] = []
+    message_sources: dict[tuple[str, str], str] = {}
+    warnings: list[str] = []
 
-    for jid in jids:
+    for jid in read_jids:
         response = invoke_wacli(
             operation,
             command_builder(jid),
@@ -1754,15 +1970,56 @@ def invoke_history_read(
         last_response = response
         if not response["ok"]:
             return response, jid, attempted
-        if response_has_null_messages(response) and len(attempted) < len(jids):
-            continue
         if normalize_null_messages(response):
-            response["warnings"] = [*response.get("warnings", []), "messages_null_normalized"]
-        if len(attempted) > 1:
-            response["warnings"] = [*response.get("warnings", []), "jid_fallback_used"]
-        return response, jid, attempted
+            warnings.append("messages_null_normalized")
+        if first_response is None:
+            first_response = response
+        for warning in response.get("warnings", []):
+            if warning not in warnings:
+                warnings.append(warning)
+        response_messages = message_items_from_response(response)
+        for message in response_messages:
+            message_sources.setdefault(message_dedupe_key(message), jid)
+        collected_messages.extend(response_messages)
 
-    return last_response or make_result(ok=False, operation=operation, exit_code=1), None, attempted
+    if first_response is None:
+        return last_response or make_result(ok=False, operation=operation, exit_code=1), None, attempted
+
+    limit = None
+    for part in reversed(command_builder(read_jids[0] if read_jids else "")):
+        try:
+            limit = int(part)
+            break
+        except (TypeError, ValueError):
+            continue
+    merged_messages = dedupe_and_sort_messages(collected_messages, limit=limit)
+    replace_response_messages(first_response, merged_messages)
+
+    history_selection = history_selection_metadata(
+        candidate_jids=jids,
+        read_jids=attempted,
+        returned_messages=merged_messages,
+        message_sources=message_sources,
+        counts=counts,
+        config=config,
+    )
+    used_jid = (
+        message_jid(merged_messages[0])
+        or message_sources.get(message_dedupe_key(merged_messages[0]))
+        if merged_messages
+        else (attempted[0] if attempted else None)
+    )
+    if len(attempted) > 1:
+        warnings.append("jid_fallback_used")
+    if len(history_selection["returned_jids"]) > 1:
+        warnings.append("split_history_merged")
+    existing_warnings = first_response.get("warnings", [])
+    first_response["warnings"] = [
+        *existing_warnings,
+        *[warning for warning in warnings if warning not in existing_warnings],
+    ]
+    first_response.setdefault("result", {})["history_selection"] = history_selection
+    return first_response, used_jid, attempted
 
 
 def is_jid(value: str) -> bool:
@@ -1776,6 +2033,7 @@ def find_chat(
     runner: Callable[..., ProcessResult] = default_runner,
     config: Config | None = None,
     timeout_sec: int = DEFAULT_TIMEOUT_SEC,
+    enrich_metadata: bool = True,
 ) -> dict[str, Any]:
     config = config or resolve_config()
     response = invoke_wacli(
@@ -1793,8 +2051,12 @@ def find_chat(
         normalize_chat(chat)
         for chat in payload_items(response["result"].get("payload"), ("data", "chats", "items", "results"))
     ]
+    if enrich_metadata:
+        chats = enrich_find_chat_matches(query, chats, config=config)
+    else:
+        chats = [add_resolution_metadata(requested_chat=query, chat_info=chat, config=config) for chat in chats]
     if len(chats) == 1:
-        chat = add_resolution_metadata(requested_chat=query, chat_info=chats[0], config=config)
+        chat = chats[0]
         response["result"] = {"chat": chat, "matches": chats}
         return response
 
@@ -1804,7 +2066,7 @@ def find_chat(
         if str(chat.get("name", "")).strip().lower() == query.strip().lower()
     ]
     if len(exact) == 1:
-        chat = add_resolution_metadata(requested_chat=query, chat_info=exact[0], config=config)
+        chat = exact[0]
         response["result"] = {"chat": chat, "matches": chats}
         return response
     if chats:
@@ -1817,8 +2079,12 @@ def find_chat(
         )
 
     local_matches = local_chat_metadata_matches(query, config=config, limit=limit)
+    if enrich_metadata:
+        local_matches = enrich_find_chat_matches(query, local_matches, config=config)
+    else:
+        local_matches = [add_resolution_metadata(requested_chat=query, chat_info=match, config=config) for match in local_matches]
     if len(local_matches) == 1:
-        chat = add_resolution_metadata(requested_chat=query, chat_info=local_matches[0], config=config)
+        chat = local_matches[0]
         response["result"] = {"chat": chat, "matches": local_matches}
         return response
 
@@ -1831,7 +2097,7 @@ def find_chat(
         or normalize_lookup_text(match.get("jid")) == normalize_lookup_text(query)
     ]
     if len(exact_local_matches) == 1:
-        chat = add_resolution_metadata(requested_chat=query, chat_info=exact_local_matches[0], config=config)
+        chat = exact_local_matches[0]
         response["result"] = {"chat": chat, "matches": local_matches}
         return response
     if local_matches:
@@ -1844,8 +2110,12 @@ def find_chat(
         )
 
     live_session_matches = live_session_metadata_matches(query, config=config, limit=limit)
+    if enrich_metadata:
+        live_session_matches = enrich_find_chat_matches(query, live_session_matches, config=config)
+    else:
+        live_session_matches = [add_resolution_metadata(requested_chat=query, chat_info=match, config=config) for match in live_session_matches]
     if len(live_session_matches) == 1:
-        chat = add_resolution_metadata(requested_chat=query, chat_info=live_session_matches[0], config=config)
+        chat = live_session_matches[0]
         response["result"] = {"chat": chat, "matches": live_session_matches}
         return response
 
@@ -1858,7 +2128,7 @@ def find_chat(
         or phone_metadata_matches_query(match, query)
     ]
     if len(exact_live_session_matches) == 1:
-        chat = add_resolution_metadata(requested_chat=query, chat_info=exact_live_session_matches[0], config=config)
+        chat = exact_live_session_matches[0]
         response["result"] = {"chat": chat, "matches": live_session_matches}
         return response
     if live_session_matches:
@@ -1880,9 +2150,13 @@ def find_chat(
     if not contacts_response["ok"]:
         return contacts_response
     contacts = contacts_response["result"]["contacts"]
+    if enrich_metadata:
+        contacts = enrich_find_chat_matches(query, contacts, config=config)
+    else:
+        contacts = [add_resolution_metadata(requested_chat=query, chat_info=contact, config=config) for contact in contacts]
     if len(contacts) == 1:
         contacts_response["operation"] = "find-chat"
-        chat = add_resolution_metadata(requested_chat=query, chat_info=contacts[0], config=config)
+        chat = contacts[0]
         contacts_response["result"] = {"chat": chat, "matches": contacts}
         return contacts_response
 
@@ -1895,14 +2169,21 @@ def find_chat(
     ]
     if len(exact_contacts) == 1:
         contacts_response["operation"] = "find-chat"
-        chat = add_resolution_metadata(requested_chat=query, chat_info=exact_contacts[0], config=config)
+        chat = exact_contacts[0]
         contacts_response["result"] = {"chat": chat, "matches": contacts}
         return contacts_response
 
     archived_matches = archived_chat_metadata_matches(query, config=config, limit=limit)
+    if enrich_metadata:
+        archived_matches = enrich_find_chat_matches(query, archived_matches, config=config)
+    else:
+        archived_matches = [
+            add_resolution_metadata(requested_chat=query, chat_info=match, config=config)
+            for match in archived_matches
+        ]
     if len(archived_matches) == 1:
         contacts_response["operation"] = "find-chat"
-        chat = add_resolution_metadata(requested_chat=query, chat_info=archived_matches[0], config=config)
+        chat = archived_matches[0]
         contacts_response["result"] = {"chat": chat, "matches": archived_matches}
         contacts_response["warnings"] = [*contacts_response.get("warnings", []), "resolved_from_archived_store_alias"]
         return contacts_response
@@ -1916,7 +2197,7 @@ def find_chat(
     ]
     if len(exact_archived_matches) == 1:
         contacts_response["operation"] = "find-chat"
-        chat = add_resolution_metadata(requested_chat=query, chat_info=exact_archived_matches[0], config=config)
+        chat = exact_archived_matches[0]
         contacts_response["result"] = {"chat": chat, "matches": archived_matches}
         contacts_response["warnings"] = [*contacts_response.get("warnings", []), "resolved_from_archived_store_alias"]
         return contacts_response
@@ -1961,6 +2242,7 @@ def resolve_chat_details(
         runner=runner,
         config=config,
         timeout_sec=timeout_sec,
+        enrich_metadata=False,
     )
     if not resolved["ok"]:
         return None, resolved
@@ -2038,11 +2320,13 @@ def latest(
     )
     if not response["ok"]:
         return response
+    history_selection = response.get("result", {}).pop("history_selection", None)
     response["result"]["resolution"] = enrich_history_resolution(
         resolution=resolution,
         config=config,
         used_jid=jid,
         attempted_jids=attempted_jids,
+        history_selection=history_selection,
     )
     response = enrich_message_presentations(response, config=config, resolution=response["result"]["resolution"])
     freshness = message_store_freshness(
@@ -2119,11 +2403,13 @@ def latest(
         read_only_env=True,
     )
     if refreshed["ok"]:
+        history_selection = refreshed.get("result", {}).pop("history_selection", None)
         refreshed["result"]["resolution"] = enrich_history_resolution(
             resolution=resolution,
             config=config,
             used_jid=jid,
             attempted_jids=attempted_jids,
+            history_selection=history_selection,
         )
         refreshed = enrich_message_presentations(refreshed, config=config, resolution=refreshed["result"]["resolution"])
         refreshed = enrich_media_artifacts(
@@ -2276,11 +2562,13 @@ def search_messages(
             timeout_sec=timeout_sec,
         )
         if response["ok"]:
+            history_selection = response.get("result", {}).pop("history_selection", None)
             response["result"]["resolution"] = enrich_history_resolution(
                 resolution=resolution,
                 config=resolved_config,
                 used_jid=jid,
                 attempted_jids=attempted_jids,
+                history_selection=history_selection,
             )
             response = enrich_message_presentations(response, config=resolved_config, resolution=response["result"]["resolution"])
             response = enrich_media_artifacts(

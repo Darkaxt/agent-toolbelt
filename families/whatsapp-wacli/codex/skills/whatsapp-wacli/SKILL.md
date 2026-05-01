@@ -24,7 +24,7 @@ WhatsApp context rather than direct terminal passthrough:
   drafts, and visible-action safety failures.
 - It exposes phone-number JID versus LID ambiguity through fields such as
   `chat_jid`, `contact_jid`, `resolved_jid`, `resolution_source`, `used_jid`,
-  and `attempted_jids`.
+  `used_jids`, `attempted_jids`, and `history_selection`.
 - It keeps history expansion bounded and reports `backfill_seed_missing` when
   the local store lacks the anchor needed for targeted history backfill.
 - It fails closed with `message_store_lag` when chat metadata is newer than
@@ -70,11 +70,13 @@ For "latest conversation with X":
 
 1. Run `auth-status`.
 2. If authenticated but stale or empty, run `sync-once`.
-3. Run `find-chat --query "<name-or-phone>"`; it searches chats first, then local chat/message metadata, then live WhatsApp session profile/phone metadata, then contact metadata/profile names. For non-contact chats, it can resolve live `whatsmeow_contacts` profile labels and PN/LID phone fragments such as `99041717` or `041717`; archived store aliases are fallback only when the same JID exists in the current fresh store. Check `chat_jid`, `resolved_jid`, and `resolution_source`, but let the adapter choose the actual history JID. The adapter now uses a fallback chain instead of blindly preferring the mapped LID.
-4. Run `latest --chat "<name-or-jid>" --limit <n>` and allow bounded auto-backfill unless the user asks for current synced data only.
-5. Prefer `message.presentation.chat_display_name` and `message.presentation.text` for summaries. Raw `ChatName`, `Text`, and `DisplayText` remain provenance/debug fields.
-6. If returned rows contain media that matters for the task, rerun the same read with `--include-media --media-limit <n>` and inspect `message.presentation.media.available`, `artifact_source`, and `artifact_path` for OCR or visual analysis. `available=true` is usable even when `downloaded=false`; use `download_attempt_error` only as diagnostic context.
-7. Answer only from structured JSON and state the observed sync scope when relevant. If `backfill_seed_missing` is returned, report that the local store lacks the anchor needed for targeted history backfill instead of implying there are no messages. If `message_store_lag` is returned, report that normal sync/backfill did not recover message bodies and the next recovery step is recreating or relinking the `wacli` session into a fresh store.
+3. Run `find-chat --query "<name-or-phone>"`; it searches chats first, then local chat/message metadata, then live WhatsApp session profile/phone metadata, then contact metadata/profile names. For non-contact chats, it can resolve live `whatsmeow_contacts` profile labels and PN/LID phone fragments such as `99041717` or `041717`; archived store aliases are fallback only when the same JID exists in the current fresh store. Check `chat_jid`, `resolved_jid`, and `resolution_source`, but let the adapter choose the actual history shards.
+4. Treat `find-chat` `LastMessageTS`/`last_message_ts` as shard-aware helper metadata. If `chat_metadata_selection.split_history_detected` is true, the timestamp may come from a linked PN/LID shard rather than the raw chat-list row.
+5. Run `latest --chat "<name-or-jid>" --limit <n>` and allow bounded auto-backfill unless the user asks for current synced data only.
+6. If `resolution.used_jids` contains multiple JIDs or warnings include `split_history_merged`, treat the result as a merged PN/LID conversation shard. Use `history_selection.per_jid` only as diagnostics; summarize the merged returned messages in timestamp order.
+7. Prefer `message.presentation.chat_display_name` and `message.presentation.text` for summaries. Raw `ChatName`, `Text`, and `DisplayText` remain provenance/debug fields.
+8. If returned rows contain media that matters for the task, rerun the same read with `--include-media --media-limit <n>` and inspect `message.presentation.media.available`, `artifact_source`, and `artifact_path` for OCR or visual analysis. `available=true` is usable even when `downloaded=false`; use `download_attempt_error` only as diagnostic context.
+9. Answer only from structured JSON and state the observed sync scope when relevant. If `backfill_seed_missing` is returned, report that the local store lacks the anchor needed for targeted history backfill instead of implying there are no messages. If `message_store_lag` is returned, report that normal sync/backfill did not recover message bodies and the next recovery step is recreating or relinking the `wacli` session into a fresh store.
 
 For reply drafting:
 
@@ -115,4 +117,4 @@ python scripts/invoke_whatsapp_wacli.py presence --chat "<jid-or-query>" --state
 - This uses an unofficial WhatsApp Web multi-device backend. Treat it as a local personal automation tradeoff.
 - Do not expose raw `wacli` commands through the skill.
 - Do not assume full chat history is present unless sync/backfill scope proves it.
-- One-to-one chats may use phone-number JIDs for contact lookup and LID JIDs for stored history. Do not hard-code either one in the skill. Let the adapter fall back across `chat_jid`, `resolved_jid`, and `contact_jid`, and pay attention to `used_jid`, `attempted_jids`, and `messages_null_normalized` when reads look suspicious.
+- One-to-one chats may use phone-number JIDs for contact lookup and LID JIDs for stored history. Do not hard-code either one in the skill. Let the adapter aggregate readable shards across `chat_jid`, `resolved_jid`, and `contact_jid`, and pay attention to `used_jid`, `used_jids`, `attempted_jids`, `history_selection`, `split_history_merged`, and `messages_null_normalized` when reads look suspicious.

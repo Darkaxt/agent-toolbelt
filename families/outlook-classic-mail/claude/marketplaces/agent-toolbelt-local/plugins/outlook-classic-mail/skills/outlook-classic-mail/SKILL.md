@@ -31,7 +31,11 @@ Use `scripts/invoke_outlook_mail.py` for local mailbox access through Outlook Cl
 - For "find my response/reply" tasks tied to a received message, use `find-response` before manual Sent/Drafts searches.
 - For domain age or blocklist evidence, use `inspect-domains` for one message or `scan-domain-refs` for a bounded folder scan; these commands are read-only.
 - Use `blocklists status` to inspect the local DNS blocklist cache and `blocklists refresh` only when cache maintenance is explicitly needed.
-- For reply or forward drafts, `--account` resolves the original message. Add `--send-using-account` when the outgoing draft should use another configured Outlook account.
+- For reply or forward drafts, prefer `draft-reply` or `draft-forward`; do not use generic `apply-action --action create-draft` for replies because it has no original thread anchor to quote.
+- For threaded drafts, `--account` resolves the original message. Add `--send-using-account` when the outgoing draft should use another configured Outlook account.
+- After creating a reply/forward draft, inspect `draft_content.thread_content_included`, `draft_content.thread_content_source`, `draft_placement.actual_send_using_account`, and `draft_placement.placement_verified` before telling the user the draft is correctly threaded and using the intended sender.
+- If `draft_content.warnings` contains `thread_quote_fallback_used`, mention that Outlook did not provide a usable native quote and the helper added a manual quoted block from the anchor message. If it contains `thread_content_missing`, warn that the thread content could not be included.
+- Use generic `apply-action --action create-draft` only for standalone new drafts; it saves in the selected account's Drafts folder but does not include reply/forward thread content.
 - For "move/file/put this email in folder X" tasks, run `find-folders` when the target is ambiguous, then run `move-message` without `--confirm` as a preview.
 - Run `move-message --confirm` only after explicit confirmation from the user.
 

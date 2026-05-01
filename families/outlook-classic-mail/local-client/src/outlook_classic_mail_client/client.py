@@ -1801,6 +1801,157 @@ def prepend_draft_body(item: Any, suggested_body: str) -> str:
     return "plain"
 
 
+def html_body_content(html_body: str) -> str:
+    body_match = re.search(r"<body\b[^>]*>(?P<body>.*)</body>", html_body, flags=re.IGNORECASE | re.DOTALL)
+    if body_match:
+        return body_match.group("body")
+    return html_body
+
+
+def text_from_html(html_body: str) -> str:
+    text = re.sub(r"(?is)<(script|style)\b[^>]*>.*?</\1>", " ", html_body)
+    text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+    text = re.sub(r"(?i)</p\s*>", "\n", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return html.unescape(text)
+
+
+def normalize_body_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip().lower()
+
+
+def source_thread_text(message: Any) -> str:
+    body = str(safe_get(message, "Body", "") or "")
+    html_body = safe_get(message, "HTMLBody", "")
+    html_text = text_from_html(html_body) if isinstance(html_body, str) and html_body.strip() else ""
+    return normalize_body_text("\n".join(part for part in (body, html_text) if part))
+
+
+def candidate_thread_snippets(source_text: str) -> list[str]:
+    if not source_text:
+        return []
+    snippets: list[str] = []
+    if len(source_text) <= 120:
+        snippets.append(source_text)
+    else:
+        snippets.append(source_text[:120])
+        midpoint = max(0, (len(source_text) // 2) - 60)
+        snippets.append(source_text[midpoint : midpoint + 120])
+        snippets.append(source_text[-120:])
+    return [snippet.strip() for snippet in snippets if len(snippet.strip()) >= 20]
+
+
+def draft_contains_thread_content(item: Any, source_message: Any) -> bool:
+    source_text = source_thread_text(source_message)
+    snippets = candidate_thread_snippets(source_text)
+    if not snippets:
+        return False
+    existing_html = safe_get(item, "HTMLBody", "")
+    existing_body = safe_get(item, "Body", "")
+    existing_parts = []
+    if isinstance(existing_html, str) and existing_html.strip():
+        existing_parts.append(text_from_html(existing_html))
+    if existing_body:
+        existing_parts.append(str(existing_body))
+    existing_text = normalize_body_text("\n".join(existing_parts))
+    return any(snippet in existing_text for snippet in snippets)
+
+
+def append_html_body(existing_html: str, html_fragment: str) -> str:
+    if not existing_html.strip():
+        return f"<html><body>{html_fragment}</body></html>"
+    body_close = re.search(r"</body\s*>", existing_html, flags=re.IGNORECASE)
+    if body_close:
+        return f"{existing_html[:body_close.start()]}{html_fragment}{existing_html[body_close.start():]}"
+    return f"{existing_html}{html_fragment}"
+
+
+def message_thread_html(message: Any) -> str:
+    html_body = safe_get(message, "HTMLBody", "")
+    if isinstance(html_body, str) and html_body.strip():
+        body_content = html_body_content(html_body)
+    else:
+        body_content = text_to_html_fragment(str(safe_get(message, "Body", "") or ""))
+    if not body_content.strip():
+        return ""
+
+    headers = [
+        ("From", safe_get(message, "SenderName", "") or safe_get(message, "SenderEmailAddress", "")),
+        ("Sent", safe_get(message, "ReceivedTime", "")),
+        ("To", safe_get(message, "To", "")),
+        ("Subject", safe_get(message, "Subject", "")),
+    ]
+    header_html = "".join(
+        f"<div><strong>{html.escape(label)}:</strong> {html.escape(str(value))}</div>"
+        for label, value in headers
+        if value
+    )
+    return (
+        '<div class="agent-toolbelt-quoted-thread">'
+        f"{header_html}"
+        '<div class="agent-toolbelt-quoted-body">'
+        f"{body_content}"
+        "</div>"
+        "</div>"
+    )
+
+
+def message_thread_plain(message: Any) -> str:
+    body = str(safe_get(message, "Body", "") or "").strip()
+    if not body:
+        return ""
+    headers = [
+        ("From", safe_get(message, "SenderName", "") or safe_get(message, "SenderEmailAddress", "")),
+        ("Sent", safe_get(message, "ReceivedTime", "")),
+        ("To", safe_get(message, "To", "")),
+        ("Subject", safe_get(message, "Subject", "")),
+    ]
+    header_text = "\r\n".join(f"{label}: {value}" for label, value in headers if value)
+    return "\r\n".join(part for part in (header_text, "", body) if part)
+
+
+def ensure_thread_content(item: Any, source_message: Any, mode: str) -> dict[str, Any]:
+    warnings: list[str] = []
+    existing_html = safe_get(item, "HTMLBody", "")
+    existing_body = safe_get(item, "Body", "")
+    if draft_contains_thread_content(item, source_message):
+        return {
+            "thread_content_included": True,
+            "thread_content_source": f"native_{mode}",
+            "warnings": warnings,
+        }
+
+    quote_html = message_thread_html(source_message)
+    quote_plain = message_thread_plain(source_message)
+    if quote_html:
+        item.HTMLBody = append_html_body(str(existing_html or ""), quote_html)
+        if quote_plain:
+            existing_plain = str(existing_body or "").strip()
+            item.Body = f"{existing_plain}\r\n\r\n{quote_plain}".strip()
+        add_unique_warning(warnings, "thread_quote_fallback_used")
+        return {
+            "thread_content_included": True,
+            "thread_content_source": "manual_quote_fallback",
+            "warnings": warnings,
+        }
+    if quote_plain:
+        existing_plain = str(existing_body or "").strip()
+        item.Body = f"{existing_plain}\r\n\r\n{quote_plain}".strip()
+        add_unique_warning(warnings, "thread_quote_fallback_used")
+        return {
+            "thread_content_included": True,
+            "thread_content_source": "manual_quote_fallback",
+            "warnings": warnings,
+        }
+
+    add_unique_warning(warnings, "thread_content_missing")
+    return {
+        "thread_content_included": False,
+        "thread_content_source": "missing",
+        "warnings": warnings,
+    }
+
+
 def account_store_matches(left: dict[str, Any], right: dict[str, Any]) -> bool:
     left_store_id = str(left.get("store_id") or "").strip().lower()
     right_store_id = str(right.get("store_id") or "").strip().lower()
@@ -1895,9 +2046,20 @@ def save_target_store_draft(
     template: Any,
     target_account_info: dict[str, Any],
     suggested_body: str,
-) -> tuple[Any, str, dict[str, Any]]:
-    warnings: list[str] = []
+    source_message: Any | None = None,
+    mode: str | None = None,
+    initial_warnings: list[str] | None = None,
+) -> tuple[Any, str, dict[str, Any], dict[str, Any]]:
+    warnings: list[str] = list(initial_warnings or [])
+    draft_content = {
+        "thread_content_included": False,
+        "thread_content_source": "missing",
+        "warnings": [],
+    }
+    if source_message is not None and mode is not None:
+        draft_content = ensure_thread_content(template, source_message, mode)
     body_format = prepend_draft_body(template, suggested_body)
+    draft_content["body_format"] = body_format
     target_folder = target_account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
     draft = create_mail_item_in_folder(target_folder)
     copy_draft_fields(template, draft)
@@ -1910,7 +2072,48 @@ def save_target_store_draft(
         draft=draft,
         warnings=warnings,
     )
-    return draft, body_format, placement
+    return draft, body_format, placement, draft_content
+
+
+def create_target_store_draft(
+    account_info: dict[str, Any],
+    *,
+    subject: str | None,
+    to: str | None,
+    body: str | None,
+) -> dict[str, Any]:
+    warnings: list[str] = []
+    target_folder = account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
+    draft = create_mail_item_in_folder(target_folder)
+    if to:
+        draft.To = to
+    if subject:
+        draft.Subject = subject
+    if body:
+        draft.Body = body
+    set_send_using_account(draft, account_info, warnings)
+    draft.Save()
+    placement = draft_placement_summary(
+        strategy="target_store_drafts",
+        target_account_info=account_info,
+        target_folder=target_folder,
+        draft=draft,
+        warnings=warnings,
+    )
+    return {
+        "created": True,
+        "draft_entry_id": safe_get(draft, "EntryID", None),
+        "subject": safe_get(draft, "Subject", ""),
+        "to": safe_get(draft, "To", ""),
+        "send_using_account": account_info.get("smtp_address"),
+        "draft_placement": placement,
+        "draft_content": {
+            "thread_content_included": False,
+            "thread_content_source": "missing",
+            "body_format": "plain" if body else "empty",
+            "warnings": [],
+        },
+    }
 
 
 def resolve_send_using_account(
@@ -1952,6 +2155,12 @@ def draft_reply(
     draft_entry_id = None
     body_format = "preview"
     draft_placement: dict[str, Any] = {"strategy": "preview"}
+    draft_content: dict[str, Any] = {
+        "thread_content_included": False,
+        "thread_content_source": "missing",
+        "body_format": "preview",
+        "warnings": [],
+    }
     send_account_info = resolve_send_using_account(
         session,
         anchor_account_info=account_info,
@@ -1959,24 +2168,39 @@ def draft_reply(
     )
     if create_draft:
         if send_using_account_selector and not account_store_matches(account_info, send_account_info):
-            reply, body_format, draft_placement = save_target_store_draft(
+            reply, body_format, draft_placement, draft_content = save_target_store_draft(
                 template=reply,
                 target_account_info=send_account_info,
                 suggested_body=suggested_body,
+                source_message=message,
+                mode="reply",
             )
         else:
             warnings: list[str] = []
-            set_send_using_account(reply, send_account_info, warnings)
-            body_format = prepend_draft_body(reply, suggested_body)
-            reply.Save()
-            target_folder = account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
-            draft_placement = draft_placement_summary(
-                strategy="native_reply",
-                target_account_info=send_account_info,
-                target_folder=target_folder,
-                draft=reply,
-                warnings=warnings,
-            )
+            actual_sender = set_send_using_account(reply, send_account_info, warnings)
+            if not actual_sender or warnings:
+                fallback_warnings = ["native_send_using_account_unverified"]
+                reply, body_format, draft_placement, draft_content = save_target_store_draft(
+                    template=reply,
+                    target_account_info=send_account_info,
+                    suggested_body=suggested_body,
+                    source_message=message,
+                    mode="reply",
+                    initial_warnings=fallback_warnings,
+                )
+            else:
+                draft_content = ensure_thread_content(reply, message, "reply")
+                body_format = prepend_draft_body(reply, suggested_body)
+                draft_content["body_format"] = body_format
+                reply.Save()
+                target_folder = account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
+                draft_placement = draft_placement_summary(
+                    strategy="native_reply",
+                    target_account_info=send_account_info,
+                    target_folder=target_folder,
+                    draft=reply,
+                    warnings=warnings,
+                )
         created = True
         draft_entry_id = safe_get(reply, "EntryID", None)
 
@@ -1992,6 +2216,7 @@ def draft_reply(
         "created": created,
         "draft_entry_id": draft_entry_id,
         "draft_placement": draft_placement,
+        "draft_content": draft_content,
     }
 
 
@@ -2024,6 +2249,12 @@ def draft_forward(
     draft_entry_id = None
     body_format = "preview"
     draft_placement: dict[str, Any] = {"strategy": "preview"}
+    draft_content: dict[str, Any] = {
+        "thread_content_included": False,
+        "thread_content_source": "missing",
+        "body_format": "preview",
+        "warnings": [],
+    }
     send_account_info = resolve_send_using_account(
         session,
         anchor_account_info=account_info,
@@ -2032,24 +2263,39 @@ def draft_forward(
     forward.To = to
     if create_draft:
         if send_using_account_selector and not account_store_matches(account_info, send_account_info):
-            forward, body_format, draft_placement = save_target_store_draft(
+            forward, body_format, draft_placement, draft_content = save_target_store_draft(
                 template=forward,
                 target_account_info=send_account_info,
                 suggested_body=suggested_body,
+                source_message=message,
+                mode="forward",
             )
         else:
             warnings: list[str] = []
-            set_send_using_account(forward, send_account_info, warnings)
-            body_format = prepend_draft_body(forward, suggested_body)
-            forward.Save()
-            target_folder = account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
-            draft_placement = draft_placement_summary(
-                strategy="native_forward",
-                target_account_info=send_account_info,
-                target_folder=target_folder,
-                draft=forward,
-                warnings=warnings,
-            )
+            actual_sender = set_send_using_account(forward, send_account_info, warnings)
+            if not actual_sender or warnings:
+                fallback_warnings = ["native_send_using_account_unverified"]
+                forward, body_format, draft_placement, draft_content = save_target_store_draft(
+                    template=forward,
+                    target_account_info=send_account_info,
+                    suggested_body=suggested_body,
+                    source_message=message,
+                    mode="forward",
+                    initial_warnings=fallback_warnings,
+                )
+            else:
+                draft_content = ensure_thread_content(forward, message, "forward")
+                body_format = prepend_draft_body(forward, suggested_body)
+                draft_content["body_format"] = body_format
+                forward.Save()
+                target_folder = account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
+                draft_placement = draft_placement_summary(
+                    strategy="native_forward",
+                    target_account_info=send_account_info,
+                    target_folder=target_folder,
+                    draft=forward,
+                    warnings=warnings,
+                )
         created = True
         draft_entry_id = safe_get(forward, "EntryID", None)
 
@@ -2065,6 +2311,7 @@ def draft_forward(
         "created": created,
         "draft_entry_id": draft_entry_id,
         "draft_placement": draft_placement,
+        "draft_content": draft_content,
     }
 
 
@@ -2117,24 +2364,12 @@ def create_generic_draft(
     to: str | None,
     body: str | None,
 ) -> dict[str, Any]:
-    draft = application.CreateItem(OL_MAIL_ITEM)
-    try:
-        draft.SendUsingAccount = account_info["account"]
-    except Exception:
-        pass
-    if to:
-        draft.To = to
-    if subject:
-        draft.Subject = subject
-    if body:
-        draft.Body = body
-    draft.Save()
-    return {
-        "created": True,
-        "draft_entry_id": safe_get(draft, "EntryID", None),
-        "subject": safe_get(draft, "Subject", ""),
-        "to": safe_get(draft, "To", ""),
-    }
+    return create_target_store_draft(
+        account_info,
+        subject=subject,
+        to=to,
+        body=body,
+    )
 
 
 def apply_action(
@@ -2157,8 +2392,6 @@ def apply_action(
 
     account_info = resolve_account(session, account_selector)
     if action == "create-draft":
-        if application is None:
-            raise ValueError("Create-draft requires an Outlook application context.")
         return {
             "account": account_info["smtp_address"],
             "store": account_info["delivery_store"],

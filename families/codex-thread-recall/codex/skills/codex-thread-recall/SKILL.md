@@ -13,15 +13,16 @@ Use `scripts/invoke_codex_thread_recall.py` when long-running or resumed work ri
 
 ## Workflow
 
-1. Run `status` first to confirm the exact current thread resolves through `CODEX_THREAD_ID`.
-2. Check the episode diagnostics in `status` before broad exploration. `recall` and `timeline` default to the current active episode when the thread has multiple work slices.
-3. If the question is about prior shipped or merged work, run `timeline --kind shipped --group entity` first.
-4. Run `recall --profile general|shipping|debug` to get a bounded brief with decisions, known facts, touched paths, commands, blockers, open questions, and evidence pointers into the rollout JSONL.
-5. If one detail is still missing, run `grep --pattern <term>` with structured filters against this same thread before looking elsewhere.
-6. If the question is “when did we work on X?” or “what was the first/last span for X?”, use `worklog --pattern <term>` instead of hand-assembling a grep span.
-7. If you need broader operational context from the same workspace, opt into `--thread-source workspace --max-threads <n>`; this only includes threads whose normalized `cwd` exactly matches the current one.
-8. If you need to carry distilled context elsewhere, explicitly use the `memory` subcommands. Imported memory bundles are not searched by default and are not source-of-truth rollout recall.
-9. Only do broad repo or web exploration after current-thread recall fails to answer it.
+1. For normal resumed work, run `recall --profile general --scope current` directly. Do not chain `status; recall` in one shell command.
+2. Run `status` only when you need diagnostics, or after `recall` returns `index_busy`, `thread_unavailable`, or `rollout_missing`.
+3. Check `status.cache.freshness`, `status.cache.lock_state`, and `status.cache.collector` when deciding whether the collector has already warmed the cache.
+4. If the question is about prior shipped or merged work, run `timeline --kind shipped --group entity` first.
+5. Run `recall --profile general|shipping|debug` to get a bounded brief with decisions, known facts, touched paths, commands, blockers, open questions, and evidence pointers into the rollout JSONL.
+6. If one detail is still missing, run `grep --pattern <term>` with structured filters against this same thread before looking elsewhere.
+7. If the question is “when did we work on X?” or “what was the first/last span for X?”, use `worklog --pattern <term>` instead of hand-assembling a grep span.
+8. If you need broader operational context from the same workspace, opt into `--thread-source workspace --max-threads <n>`; this only includes threads whose normalized `cwd` exactly matches the current one.
+9. If you need to carry distilled context elsewhere, explicitly use the `memory` subcommands. Imported memory bundles are not searched by default and are not source-of-truth rollout recall.
+10. Only do broad repo or web exploration after current-thread recall fails to answer it.
 
 Default scope behavior:
 
@@ -56,6 +57,13 @@ index newly appended committed JSONL lines. Cache mutation is protected by a
 per-thread lock file in that same cache directory, so concurrent callers wait
 briefly, reclaim stale locks, and fail closed with `index_busy` instead of
 hanging indefinitely.
+`status` is fast and non-mutating by default. It reports cache freshness and
+collector diagnostics but does not build or append the index. Use `collect` to
+warm caches explicitly, or let the command you actually need (`recall`, `grep`,
+`timeline`, or `worklog`) ensure freshness.
+The optional Windows scheduled collector runs `collect --thread-source recent`
+every few minutes so large active threads stay warm outside foreground agent
+calls.
 The installed skill now prefers a staged private local runtime selected by
 `CODEX_HOME/tools/codex-thread-recall/active.json`. The old direct `.venv`
 under `CODEX_HOME/tools/codex-thread-recall/.venv` is only a legacy fallback
@@ -67,6 +75,7 @@ runtime.
 
 ```powershell
 python scripts/invoke_codex_thread_recall.py status
+python scripts/invoke_codex_thread_recall.py collect --thread-source recent --max-threads 10 --updated-within-hours 48 --max-run-seconds 90
 python scripts/invoke_codex_thread_recall.py recall --profile general --scope current
 python scripts/invoke_codex_thread_recall.py timeline --kind shipped --group entity --scope current
 python scripts/invoke_codex_thread_recall.py grep --pattern "CODEX_THREAD_ID" --scope thread
@@ -87,6 +96,7 @@ python scripts/invoke_codex_thread_recall.py grep --pattern "PR" --role assistan
 python scripts/invoke_codex_thread_recall.py grep --pattern '"audit search" AND artifact*' --query-mode fts --context 2
 python scripts/invoke_codex_thread_recall.py worklog --pattern '"audit search" AND artifact*' --query-mode fts
 python scripts/invoke_codex_thread_recall.py worklog --pattern "codex-thread-recall" --thread-source workspace --max-threads 5
+python scripts/invoke_codex_thread_recall.py collect --thread-source workspace --max-threads 5
 python scripts/invoke_codex_thread_recall.py memory import --path recall.bundle.json
 python scripts/invoke_codex_thread_recall.py memory list
 python scripts/invoke_codex_thread_recall.py memory show --bundle-id <bundle-id>
@@ -111,9 +121,21 @@ $env:AGENT_TOOLBELT_HOME='D:\path\to\agent-toolbelt'
 python scripts/install_codex_thread_recall_runtime.py
 ```
 
+Install or remove the optional scheduled warm-cache collector:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install_codex_thread_recall_collector_task.ps1
+powershell -ExecutionPolicy Bypass -File scripts/uninstall_codex_thread_recall_collector_task.ps1
+```
+
+The scheduled collector should report `no_console: true`; it uses `pythonw.exe`
+from the staged runtime to avoid opening console windows. If it reports
+`no_console: false`, refresh the runtime before enabling the task.
+
 ## Rules
 
 - Current thread first. Only use `--thread-source workspace` when broader same-`cwd` context is explicitly useful.
+- Do not chain `status; recall`; run `recall` directly for normal resumed work.
 - Fail closed if `CODEX_THREAD_ID`, the thread row, or the rollout file cannot be resolved exactly.
 - Treat `thread_unavailable` or `rollout_missing` as recall unavailable; do not guess from cwd or title.
 - Use the evidence pointers for recall, not raw transcript dumping.
@@ -124,7 +146,7 @@ python scripts/install_codex_thread_recall_runtime.py
 - Do not treat memory bundles as implicit recall. They are opt-in portable summaries and must be queried through `memory search` or inspected through `memory show`.
 - Use `status` when you need runtime and cache diagnostics such as
   `runtime.mode`, `runtime.release_root`, `cache.last_rebuild_reason`,
-  `cache.lock_state`, `cache.health`, `search.fts_available`,
+  `cache.lock_state`, `cache.health`, `cache.freshness`, `cache.collector`, `search.fts_available`,
   `episodes.total`, `episodes.current.selection_reason`, or
   `episodes.current.substantive_entry_count`.
 - Treat timeline/entity extraction as generic helper logic based on explicit identifiers, paths, repos, PRs, commits, and event verbs. Do not assume local repo layouts or marketplace names.

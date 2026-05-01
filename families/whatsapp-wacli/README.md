@@ -21,8 +21,9 @@ details or safety policy from raw terminal output.
 - JSON-first responses make chat lookup, latest-message reads, context windows,
   and draft generation easier to audit.
 - Chat resolution returns `chat_jid`, `contact_jid`, `resolved_jid`,
-  `resolution_source`, `used_jid`, and `attempted_jids` where applicable, so
-  phone-number JID versus LID ambiguity is visible instead of hidden.
+  `resolution_source`, `used_jid`, `used_jids`, `attempted_jids`, and
+  `history_selection` where applicable, so phone-number JID versus LID
+  split-history ambiguity is visible instead of hidden.
 - `latest` uses bounded, explicit backfill behavior and reports
   `backfill_seed_missing` when the local store lacks an anchor for older
   history.
@@ -88,7 +89,13 @@ labels and PN/LID mappings, including phone fragments such as `99041717` or
 metadata is missing, the resolver can use read-only archived store chat names
 as aliases, but only when that JID also exists in the current fresh store.
 
-WhatsApp can store direct-message history under either phone-number JIDs or LID JIDs. The local adapter reads the `wacli` session store read-only, returns `contact_jid`, `resolved_jid`, and `resolution_source` metadata, and then uses a store-aware fallback chain for `latest`, `search`, and `backfill` instead of blindly preferring the mapped LID. If the local store already has messages under the phone JID, reads prefer that chat JID first; if `wacli` returns `messages:null` or a seed-missing backfill result, the adapter retries alternate JIDs automatically. If no local anchor message or mapping exists, `latest` reports `backfill_seed_missing` rather than silently treating the empty result as complete.
+WhatsApp can store direct-message history under either phone-number JIDs or LID JIDs, and sometimes both shards contain different readable rows for the same conversation. The local adapter reads the `wacli` session store read-only, returns `contact_jid`, `resolved_jid`, and `resolution_source` metadata, and for `latest` plus chat-scoped `search` it reads every seeded PN/LID candidate shard, merges the rows, dedupes by message id where possible, sorts by message timestamp, and only then applies the requested limit. `used_jid` remains the newest returned row's JID for compatibility; `used_jids`, `history_selection.candidate_jids`, `history_selection.per_jid`, and the `split_history_merged` warning expose when multiple shards contributed. `backfill` keeps bounded fallback behavior and is not converted into an all-shard mutation. If no local anchor message or mapping exists, `latest` reports `backfill_seed_missing` rather than silently treating the empty result as complete.
+
+`find-chat` also enriches chat summary metadata from the same PN/LID shard set.
+When a raw chat-list row reports an older phone-JID `LastMessageTS` but the
+linked LID shard has newer local activity, the helper updates
+`LastMessageTS`/`last_message_ts` and adds `chat_metadata_selection` diagnostics
+without opening message bodies.
 
 If `latest` returns `message_store_lag`, the chat table has newer activity than
 the readable message rows. Normal sync/backfill did not recover the message

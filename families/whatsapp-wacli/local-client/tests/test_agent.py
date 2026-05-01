@@ -130,6 +130,29 @@ class WhatsAppWacliAgentTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def write_split_chat_message_times(self, store_dir, *, messages_by_jid, chat_last_by_jid):
+        conn = sqlite3.connect(store_dir / "wacli.db")
+        try:
+            conn.execute(
+                "create table messages (chat_jid text not null, ts integer not null)"
+            )
+            conn.execute(
+                "create table chats (jid text primary key, kind text not null, name text, last_message_ts integer)"
+            )
+            for jid, timestamps in messages_by_jid.items():
+                conn.executemany(
+                    "insert into messages (chat_jid, ts) values (?, ?)",
+                    [(jid, ts) for ts in timestamps],
+                )
+            for jid, last_message_ts in chat_last_by_jid.items():
+                conn.execute(
+                    "insert into chats (jid, kind, name, last_message_ts) values (?, ?, ?, ?)",
+                    (jid, "contact", "Split Chat", last_message_ts),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
     def write_media_message_metadata(
         self,
         store_dir,
@@ -303,6 +326,53 @@ class WhatsAppWacliAgentTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["result"]["chat"]["jid"], "15557654321@s.whatsapp.net")
         self.assertEqual(result["result"]["chat"]["name"], "Demo Contact")
+
+    def test_find_chat_enriches_last_message_ts_from_split_phone_and_lid_metadata(self):
+        runner = FakeRunner(
+            [
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": [
+                            {
+                                "JID": "15551234567@s.whatsapp.net",
+                                "Name": "Split Chat",
+                                "LastMessageTS": 1777399851,
+                            }
+                        ],
+                    }
+                }
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            self.write_lid_mapping(cfg.store_dir, lid="900001234567", pn="15551234567")
+            self.write_split_chat_message_times(
+                cfg.store_dir,
+                messages_by_jid={
+                    "15551234567@s.whatsapp.net": [1777399851],
+                    "900001234567@lid": [1777401151],
+                },
+                chat_last_by_jid={
+                    "15551234567@s.whatsapp.net": 1777399851,
+                    "900001234567@lid": 1777401151,
+                },
+            )
+
+            result = agent.find_chat("Split Chat", runner=runner, config=cfg)
+
+        self.assertTrue(result["ok"])
+        chat = result["result"]["chat"]
+        self.assertEqual(chat["jid"], "15551234567@s.whatsapp.net")
+        self.assertEqual(chat["resolved_jid"], "900001234567@lid")
+        self.assertEqual(chat["last_message_ts"], 1777401151)
+        self.assertEqual(chat["LastMessageTS"], 1777401151)
+        self.assertEqual(chat["last_message_at"], "2026-04-28T18:32:31Z")
+        self.assertEqual(result["result"]["matches"][0]["LastMessageTS"], 1777401151)
+        selection = chat["chat_metadata_selection"]
+        self.assertEqual(selection["strategy"], "merge_readable_jid_shard_metadata")
+        self.assertTrue(selection["split_history_detected"])
+        self.assertEqual(selection["latest_jid"], "900001234567@lid")
 
     def test_latest_uses_normalized_jid_from_chat_resolution(self):
         runner = FakeRunner(
@@ -619,6 +689,163 @@ class WhatsAppWacliAgentTests(unittest.TestCase):
         self.assertEqual(result["result"]["resolution"]["resolved_jid"], "900001234567@lid")
         self.assertEqual(result["result"]["resolution"]["resolution_source"], "pn_lid_map")
 
+    def test_latest_merges_split_phone_and_lid_history_by_newest_timestamp(self):
+        runner = FakeRunner(
+            [
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": [
+                            {
+                                "JID": "15551234567@s.whatsapp.net",
+                                "Name": "Split Chat",
+                            }
+                        ],
+                    }
+                },
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {
+                            "messages": [
+                                {
+                                    "MsgID": "pn-newer",
+                                    "ChatJID": "15551234567@s.whatsapp.net",
+                                    "Timestamp": 1777399851,
+                                    "Text": "older pn row",
+                                },
+                                {
+                                    "MsgID": "pn-older",
+                                    "ChatJID": "15551234567@s.whatsapp.net",
+                                    "Timestamp": 1777399800,
+                                    "Text": "older pn row 2",
+                                },
+                            ]
+                        },
+                    }
+                },
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {
+                            "messages": [
+                                {
+                                    "MsgID": "lid-newest",
+                                    "ChatJID": "900001234567@lid",
+                                    "Timestamp": 1777401151,
+                                    "DisplayText": "newer lid row",
+                                }
+                            ]
+                        },
+                    }
+                },
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            self.write_lid_mapping(cfg.store_dir, lid="900001234567", pn="15551234567")
+            self.write_split_chat_message_times(
+                cfg.store_dir,
+                messages_by_jid={
+                    "15551234567@s.whatsapp.net": [1777399800, 1777399851],
+                    "900001234567@lid": [1777401151],
+                },
+                chat_last_by_jid={
+                    "15551234567@s.whatsapp.net": 1777399851,
+                    "900001234567@lid": 1777401151,
+                },
+            )
+
+            result = agent.latest(
+                "Split Chat",
+                limit=3,
+                runner=runner,
+                config=cfg,
+                auto_backfill=False,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            [command[-4:] for command in runner.commands[1:]],
+            [
+                ["--chat", "15551234567@s.whatsapp.net", "--limit", "3"],
+                ["--chat", "900001234567@lid", "--limit", "3"],
+            ],
+        )
+        messages = result["result"]["payload"]["data"]["messages"]
+        self.assertEqual([message["MsgID"] for message in messages], ["lid-newest", "pn-newer", "pn-older"])
+        resolution = result["result"]["resolution"]
+        self.assertEqual(resolution["used_jid"], "900001234567@lid")
+        self.assertEqual(resolution["used_jids"], ["15551234567@s.whatsapp.net", "900001234567@lid"])
+        self.assertEqual(resolution["history_selection"]["strategy"], "merge_readable_jid_shards")
+        self.assertTrue(resolution["history_selection"]["split_history_detected"])
+        self.assertIn("split_history_merged", result["warnings"])
+        self.assertFalse(result["result"]["message_store_freshness"]["stale"])
+
+    def test_latest_explicit_lid_includes_lid_shard_instead_of_remapping_away(self):
+        runner = FakeRunner(
+            [
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {
+                            "messages": [
+                                {
+                                    "MsgID": "pn-newer",
+                                    "ChatJID": "15551234567@s.whatsapp.net",
+                                    "Timestamp": 1777399851,
+                                    "Text": "older pn row",
+                                }
+                            ]
+                        },
+                    }
+                },
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {
+                            "messages": [
+                                {
+                                    "MsgID": "lid-newest",
+                                    "ChatJID": "900001234567@lid",
+                                    "Timestamp": 1777401151,
+                                    "DisplayText": "newer lid row",
+                                }
+                            ]
+                        },
+                    }
+                },
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            self.write_lid_mapping(cfg.store_dir, lid="900001234567", pn="15551234567")
+            self.write_split_chat_message_times(
+                cfg.store_dir,
+                messages_by_jid={
+                    "15551234567@s.whatsapp.net": [1777399851],
+                    "900001234567@lid": [1777401151],
+                },
+                chat_last_by_jid={
+                    "15551234567@s.whatsapp.net": 1777399851,
+                    "900001234567@lid": 1777401151,
+                },
+            )
+
+            result = agent.latest(
+                "900001234567@lid",
+                limit=2,
+                runner=runner,
+                config=cfg,
+                auto_backfill=False,
+            )
+
+        self.assertTrue(result["ok"])
+        messages = result["result"]["payload"]["data"]["messages"]
+        self.assertEqual([message["MsgID"] for message in messages], ["lid-newest", "pn-newer"])
+        self.assertEqual(result["result"]["resolution"]["used_jid"], "900001234567@lid")
+        self.assertIn("900001234567@lid", result["result"]["resolution"]["used_jids"])
+
     def test_invoke_history_read_retries_alternate_jid_when_messages_are_null(self):
         runner = FakeRunner(
             [
@@ -848,6 +1075,81 @@ class WhatsAppWacliAgentTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(runner.commands[2][-4:], ["--limit", "5", "--chat", "15551234567@s.whatsapp.net"])
         self.assertEqual(result["result"]["resolution"]["used_jid"], "15551234567@s.whatsapp.net")
+
+    def test_search_merges_split_phone_and_lid_history(self):
+        runner = FakeRunner(
+            [
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": [
+                            {
+                                "JID": "15551234567@s.whatsapp.net",
+                                "Name": "Split Chat",
+                            }
+                        ],
+                    }
+                },
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {
+                            "messages": [
+                                {
+                                    "MsgID": "shared",
+                                    "ChatJID": "15551234567@s.whatsapp.net",
+                                    "Timestamp": 1777399851,
+                                    "Text": "query result",
+                                }
+                            ]
+                        },
+                    }
+                },
+                {
+                    "stdout": {
+                        "success": True,
+                        "data": {
+                            "messages": [
+                                {
+                                    "MsgID": "lid-newest",
+                                    "ChatJID": "900001234567@lid",
+                                    "Timestamp": 1777401151,
+                                    "DisplayText": "query result newer",
+                                },
+                                {
+                                    "MsgID": "shared",
+                                    "ChatJID": "900001234567@lid",
+                                    "Timestamp": 1777399851,
+                                    "Text": "duplicate result",
+                                },
+                            ]
+                        },
+                    }
+                },
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = self.make_config(temp_dir)
+            self.write_lid_mapping(cfg.store_dir, lid="900001234567", pn="15551234567")
+            self.write_split_chat_message_times(
+                cfg.store_dir,
+                messages_by_jid={
+                    "15551234567@s.whatsapp.net": [1777399851],
+                    "900001234567@lid": [1777399851, 1777401151],
+                },
+                chat_last_by_jid={
+                    "15551234567@s.whatsapp.net": 1777399851,
+                    "900001234567@lid": 1777401151,
+                },
+            )
+
+            result = agent.search_messages("query", chat="Split Chat", limit=5, runner=runner, config=cfg)
+
+        self.assertTrue(result["ok"])
+        messages = result["result"]["payload"]["data"]["messages"]
+        self.assertEqual([message["MsgID"] for message in messages], ["lid-newest", "shared"])
+        self.assertEqual(result["result"]["resolution"]["used_jids"], ["15551234567@s.whatsapp.net", "900001234567@lid"])
+        self.assertIn("split_history_merged", result["warnings"])
 
     def test_latest_reports_seed_missing_when_backfill_has_no_anchor(self):
         runner = FakeRunner(
