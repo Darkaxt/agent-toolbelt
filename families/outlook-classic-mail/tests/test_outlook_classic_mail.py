@@ -597,6 +597,9 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("draft_placement.actual_send_using_account", skill_text)
         self.assertIn("thread_quote_fallback_used", skill_text)
         self.assertIn("standalone new drafts", skill_text)
+        self.assertIn("Treat `--instruction` as guidance only", skill_text)
+        self.assertIn("draft_status: needs_body", skill_text)
+        self.assertIn("--body \"<final draft text>\" --create-draft --confirm", skill_text)
 
     def test_codex_skill_documents_cache_and_sync_workflows(self):
         skill_path = (

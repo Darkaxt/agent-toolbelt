@@ -834,7 +834,11 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         )
 
         self.assertFalse(preview["created"])
-        self.assertIn("review it this afternoon", preview["suggested_body"])
+        self.assertEqual(preview["suggested_body"], "")
+        self.assertEqual(preview["instruction"], "Confirm I will review it this afternoon.")
+        self.assertEqual(preview["draft_status"], "needs_body")
+        self.assertEqual(preview["draft_body_source"], "missing")
+        self.assertIn("draft_body_missing", preview["warnings"])
 
     def test_draft_reply_requires_confirmation_to_create_draft(self):
         with self.assertRaisesRegex(ValueError, "requires --confirm"):
@@ -847,6 +851,39 @@ class OutlookClassicMailClientTests(unittest.TestCase):
                 create_draft=True,
                 confirm=False,
             )
+
+    def test_draft_reply_requires_body_to_create_draft(self):
+        message = self.session.GetItemFromID("msg-1")
+
+        with self.assertRaisesRegex(ValueError, "--body with the final draft text"):
+            client.draft_reply(
+                self.session,
+                account_selector="demo@example.com",
+                message_id="msg-1",
+                instruction="Reply with this exact-sounding instruction.",
+                body=None,
+                create_draft=True,
+                confirm=True,
+            )
+
+        self.assertIsNone(message.last_reply)
+
+    def test_draft_forward_requires_body_to_create_draft(self):
+        message = self.session.GetItemFromID("msg-1")
+
+        with self.assertRaisesRegex(ValueError, "--body with the final draft text"):
+            client.draft_forward(
+                self.session,
+                account_selector="demo@example.com",
+                message_id="msg-1",
+                to="forward@example.com",
+                instruction="Forward with this exact-sounding instruction.",
+                body=" ",
+                create_draft=True,
+                confirm=True,
+            )
+
+        self.assertIsNone(message.last_forward)
 
     def test_draft_reply_create_preserves_existing_html_body(self):
         message = self.session.GetItemFromID("msg-1")
@@ -884,6 +921,8 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         self.assertIn("Need approval today for the contract.", draft.Body)
         self.assertEqual(result["draft_placement"]["strategy"], "native_reply")
         self.assertEqual(result["draft_content"]["thread_content_source"], "native_reply")
+        self.assertEqual(result["draft_status"], "created")
+        self.assertEqual(result["draft_body_source"], "body")
 
     def test_draft_reply_reconstructs_thread_when_native_reply_is_empty(self):
         message = self.session.GetItemFromID("msg-1")
