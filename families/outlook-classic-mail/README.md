@@ -48,8 +48,8 @@ agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 find-response --acco
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 move-message --account demo@example.com --message-id <entry-id> --target-folder custom:Inbox/Projects
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 move-message --account demo@example.com --message-id <entry-id> --target-folder custom:Inbox/Projects --confirm
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 triage --all-accounts --days 7 --limit 20
-agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 draft-reply --account demo@example.com --message-id <entry-id> --instruction "Confirm Tuesday works."
-agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 draft-reply --account anchor@example.com --send-using-account reply@example.com --message-id <entry-id> --instruction "Confirm Tuesday works."
+agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 draft-reply --account demo@example.com --message-id <entry-id> --instruction "Draft a concise confirmation." --body "Tuesday works for me." --create-draft --confirm
+agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 draft-reply --account anchor@example.com --send-using-account reply@example.com --message-id <entry-id> --instruction "Draft from reply@example.com." --body "Tuesday works for me." --create-draft --confirm
 ```
 
 The family bridge uses the external client root in this order:
@@ -92,6 +92,12 @@ generic `apply-action --action create-draft`; the threaded commands use the
 anchor message as the quote source. `--account` resolves the original message.
 Use `--send-using-account` when the outgoing draft should be sent from a
 different configured Outlook account.
+
+`--instruction` is guidance for the agent and diagnostics only; it is never used
+as the saved draft body. To create a draft, pass the final reply/forward text in
+`--body` together with `--create-draft --confirm`. Without `--body`, the helper
+returns `draft_status: needs_body` in preview mode and fails closed if draft
+creation is requested.
 
 Created reply/forward payloads include `draft_content` and `draft_placement`.
 Check `draft_content.thread_content_included`,

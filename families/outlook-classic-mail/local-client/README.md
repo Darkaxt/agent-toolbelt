@@ -52,8 +52,8 @@ uv run --project families/outlook-classic-mail/local-client outlook-classic-mail
 uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 find-response --account demo@example.com --message-id <entry-id>
 uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 move-message --account demo@example.com --message-id <entry-id> --target-folder custom:Inbox/Projects
 uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 move-message --account demo@example.com --message-id <entry-id> --target-folder custom:Inbox/Projects --confirm
-uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 draft-reply --account demo@example.com --message-id <entry-id> --instruction "Confirm Tuesday works."
-uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 draft-reply --account anchor@example.com --send-using-account reply@example.com --message-id <entry-id> --instruction "Confirm Tuesday works."
+uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 draft-reply --account demo@example.com --message-id <entry-id> --instruction "Draft a concise confirmation." --body "Tuesday works for me." --create-draft --confirm
+uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 draft-reply --account anchor@example.com --send-using-account reply@example.com --message-id <entry-id> --instruction "Draft from reply@example.com." --body "Tuesday works for me." --create-draft --confirm
 ```
 
 Folder hints are stored locally in `folder_hints.json` after successful discovery. They are used only as accelerators; discovery still runs so stale hints do not hide moved folders.
@@ -80,6 +80,12 @@ Outlook returns an empty or signature-only draft body. Created draft payloads
 include `draft_content.thread_content_included`,
 `draft_content.thread_content_source`, and warnings such as
 `thread_quote_fallback_used` or `thread_content_missing`.
+
+`--instruction` is guidance only. It is preserved in the payload for audit/debug
+context, but it is never written into the saved draft body. Use `--body` for the
+final text that should be inserted into the draft. `--create-draft --confirm`
+without a non-empty `--body` fails closed instead of creating an instruction
+echo.
 
 Sender placement is account-store first. If the requested sender cannot be
 verified on Outlook's native reply/forward item, or if `--send-using-account`

@@ -173,6 +173,34 @@ class OutlookDiagnosticsTests(unittest.TestCase):
             self.assertEqual(payload["operation"], "diagnostics-log")
             self.assertEqual(payload["result"]["events"][0]["invocation_id"], "new")
 
+    def test_draft_create_missing_body_fails_before_com_queue(self):
+        def fail_queue(*args, **kwargs):
+            raise AssertionError("queue should not be used for malformed draft creation")
+
+        original_queue = client.outlook_operation_queue
+        client.outlook_operation_queue = fail_queue
+        try:
+            exit_code, payload = self.run_cli(
+                [
+                    "draft-reply",
+                    "--account",
+                    "demo@example.com",
+                    "--message-id",
+                    "msg-1",
+                    "--instruction",
+                    "Use this as guidance, not body.",
+                    "--create-draft",
+                    "--confirm",
+                ]
+            )
+        finally:
+            client.outlook_operation_queue = original_queue
+
+        self.assertEqual(exit_code, 2)
+        self.assertFalse(payload["ok"])
+        self.assertIn("--body with the final draft text", payload["stderr"])
+        self.assertIsNone(payload["queue"])
+
     def test_invocation_diagnostics_include_session_and_desktop_fields(self):
         diagnostics = client.build_client_diagnostics(operation="accounts")
 

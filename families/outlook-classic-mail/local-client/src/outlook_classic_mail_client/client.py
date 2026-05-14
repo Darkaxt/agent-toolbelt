@@ -1754,17 +1754,43 @@ def compose_draft_body(
     body: str | None,
     mode: str,
 ) -> str:
-    if body:
+    del instruction, message, mode
+    if body is not None and body.strip():
         return body
+    return ""
 
-    sender_name = str(safe_get(message, "SenderName", "")).strip() or "there"
-    greeting = f"Hi {sender_name.split()[0]},"
-    lead_in = (
-        "Forwarding this with context:"
-        if mode == "forward"
-        else "Thanks for the note."
+
+def require_final_draft_body(*, body: str | None, mode: str) -> None:
+    if body is not None and body.strip():
+        return
+    raise ValueError(
+        f"Creating a {mode} draft requires --body with the final draft text. "
+        "--instruction is guidance/context only and is never used as the draft body."
     )
-    return "\r\n".join([greeting, "", lead_in, instruction.strip(), "", "Best,"])
+
+
+def draft_body_state(*, suggested_body: str, created: bool) -> dict[str, Any]:
+    if suggested_body:
+        return {
+            "draft_status": "created" if created else "ready_to_create",
+            "draft_body_source": "body",
+            "warnings": [],
+        }
+    return {
+        "draft_status": "needs_body",
+        "draft_body_source": "missing",
+        "warnings": ["draft_body_missing"],
+    }
+
+
+def validate_operation_args(args: argparse.Namespace) -> None:
+    operation = getattr(args, "operation", "")
+    if operation not in {"draft-reply", "draft-forward"} or not getattr(args, "create_draft", False):
+        return
+    mode = "reply" if operation == "draft-reply" else "forward"
+    if not getattr(args, "confirm", False):
+        raise ValueError(f"Creating a {mode} draft requires --confirm.")
+    require_final_draft_body(body=getattr(args, "body", None), mode=mode)
 
 
 def text_to_html_fragment(text: str) -> str:
@@ -2140,6 +2166,8 @@ def draft_reply(
 ) -> dict[str, Any]:
     if create_draft and not confirm:
         raise ValueError("Creating a reply draft requires --confirm.")
+    if create_draft:
+        require_final_draft_body(body=body, mode="reply")
 
     account_info = resolve_account(session, account_selector)
     message = resolve_message(session, account_info, message_id)
@@ -2203,6 +2231,7 @@ def draft_reply(
                 )
         created = True
         draft_entry_id = safe_get(reply, "EntryID", None)
+    body_state = draft_body_state(suggested_body=suggested_body, created=created)
 
     return {
         "account": account_info["smtp_address"],
@@ -2211,6 +2240,10 @@ def draft_reply(
         "to": safe_get(reply, "To", ""),
         "subject": safe_get(reply, "Subject", ""),
         "suggested_body": suggested_body,
+        "instruction": instruction,
+        "draft_status": body_state["draft_status"],
+        "draft_body_source": body_state["draft_body_source"],
+        "warnings": body_state["warnings"],
         "send_using_account": send_account_info["smtp_address"],
         "body_format": body_format,
         "created": created,
@@ -2234,6 +2267,8 @@ def draft_forward(
 ) -> dict[str, Any]:
     if create_draft and not confirm:
         raise ValueError("Creating a forward draft requires --confirm.")
+    if create_draft:
+        require_final_draft_body(body=body, mode="forward")
 
     account_info = resolve_account(session, account_selector)
     message = resolve_message(session, account_info, message_id)
@@ -2298,6 +2333,7 @@ def draft_forward(
                 )
         created = True
         draft_entry_id = safe_get(forward, "EntryID", None)
+    body_state = draft_body_state(suggested_body=suggested_body, created=created)
 
     return {
         "account": account_info["smtp_address"],
@@ -2306,6 +2342,10 @@ def draft_forward(
         "to": safe_get(forward, "To", ""),
         "subject": safe_get(forward, "Subject", ""),
         "suggested_body": suggested_body,
+        "instruction": instruction,
+        "draft_status": body_state["draft_status"],
+        "draft_body_source": body_state["draft_body_source"],
+        "warnings": body_state["warnings"],
         "send_using_account": send_account_info["smtp_address"],
         "body_format": body_format,
         "created": created,

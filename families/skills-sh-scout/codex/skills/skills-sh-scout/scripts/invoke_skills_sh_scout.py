@@ -1,12 +1,24 @@
+import os
 import sys
 from pathlib import Path
 
 
+def candidate_repo_roots(current: Path) -> list[Path]:
+    candidates: list[Path] = []
+    env_home = os.getenv("AGENT_TOOLBELT_HOME")
+    if env_home:
+        candidates.append(Path(env_home).expanduser())
+    candidates.append(Path(r"D:\Downloads\Public\agent-toolbelt"))
+    candidates.extend(current.parents)
+    return candidates
+
+
 def bootstrap_family_package() -> None:
     current = Path(__file__).resolve()
-    for parent in current.parents:
-        pyproject = parent / "pyproject.toml"
-        family_src = parent / "families" / "skills-sh-scout" / "src"
+    for candidate in candidate_repo_roots(current):
+        repo_root = candidate.resolve()
+        pyproject = repo_root / "pyproject.toml"
+        family_src = repo_root / "families" / "skills-sh-scout" / "src"
         if pyproject.is_file() and "[tool.uv.workspace]" in pyproject.read_text(encoding="utf-8"):
             if str(family_src) not in sys.path:
                 sys.path.insert(0, str(family_src))

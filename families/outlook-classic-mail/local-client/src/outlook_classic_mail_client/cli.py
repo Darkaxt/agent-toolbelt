@@ -11,6 +11,7 @@ def main(argv: list[str] | None = None) -> int:
     operation = getattr(args, "operation", "unknown")
     diagnostics = client.build_client_diagnostics(operation=operation)
     try:
+        client.validate_operation_args(args)
         if operation == "diagnostics-log":
             diagnostics = client.finish_client_diagnostics(diagnostics)
             result = client.make_result(
