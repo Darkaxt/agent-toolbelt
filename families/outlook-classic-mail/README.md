@@ -49,6 +49,7 @@ agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 move-message --accou
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 move-message --account demo@example.com --message-id <entry-id> --target-folder custom:Inbox/Projects --confirm
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 triage --all-accounts --days 7 --limit 20
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 draft-reply --account demo@example.com --message-id <entry-id> --instruction "Draft a concise confirmation." --body "Tuesday works for me." --create-draft --confirm
+agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 draft-reply --account demo@example.com --message-id <entry-id> --reply-mode all --to "one@example.com; two@example.com" --cc copy@example.com --attach C:\path\to\transfer.pdf --instruction "Draft with the requested recipients and attachment." --body "Please find the transfer attached." --create-draft --confirm
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 draft-reply --account anchor@example.com --send-using-account reply@example.com --message-id <entry-id> --instruction "Draft from reply@example.com." --body "Tuesday works for me." --create-draft --confirm
 ```
 
@@ -93,17 +94,26 @@ anchor message as the quote source. `--account` resolves the original message.
 Use `--send-using-account` when the outgoing draft should be sent from a
 different configured Outlook account.
 
+Use `--reply-mode all` when Outlook should preserve the full native reply-all
+recipient set. Use explicit `--to/--cc/--bcc` when the user names a precise
+recipient set; each supplied field replaces only that field after Outlook
+builds the native reply or forward template. Use repeated `--attach` values for
+explicit local files. Attachment paths are validated before draft creation, so a
+missing file fails closed without saving a partial draft.
+
 `--instruction` is guidance for the agent and diagnostics only; it is never used
 as the saved draft body. To create a draft, pass the final reply/forward text in
 `--body` together with `--create-draft --confirm`. Without `--body`, the helper
 returns `draft_status: needs_body` in preview mode and fails closed if draft
 creation is requested.
 
-Created reply/forward payloads include `draft_content` and `draft_placement`.
+Created reply/forward payloads include `draft_content`, `draft_placement`,
+`draft_recipients`, and `draft_attachments`.
 Check `draft_content.thread_content_included`,
 `draft_content.thread_content_source`, `draft_placement.actual_send_using_account`,
-and `draft_placement.placement_verified` before reporting that a draft is
-correctly threaded and sender-safe. If Outlook does not materialize the quoted
+`draft_placement.placement_verified`, recipient metadata, and attachment
+metadata before reporting that a draft is correctly threaded, sender-safe, and
+complete. If Outlook does not materialize the quoted
 thread, the client adds a manual quoted block from the anchor message and
 reports `thread_quote_fallback_used`.
 

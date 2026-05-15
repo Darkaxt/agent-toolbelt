@@ -390,6 +390,11 @@ def build_parser() -> argparse.ArgumentParser:
     draft_reply.add_argument("--message-id", required=True)
     draft_reply.add_argument("--instruction", required=True)
     draft_reply.add_argument("--body")
+    draft_reply.add_argument("--reply-mode", choices=("sender", "all"), default="sender")
+    draft_reply.add_argument("--to")
+    draft_reply.add_argument("--cc")
+    draft_reply.add_argument("--bcc")
+    draft_reply.add_argument("--attach", dest="attachments", action="append", default=[])
     draft_reply.add_argument("--send-using-account")
     draft_reply.add_argument("--create-draft", action="store_true")
     draft_reply.add_argument("--confirm", action="store_true")
@@ -398,8 +403,11 @@ def build_parser() -> argparse.ArgumentParser:
     draft_forward.add_argument("--account", required=True)
     draft_forward.add_argument("--message-id", required=True)
     draft_forward.add_argument("--to", required=True)
+    draft_forward.add_argument("--cc")
+    draft_forward.add_argument("--bcc")
     draft_forward.add_argument("--instruction", required=True)
     draft_forward.add_argument("--body")
+    draft_forward.add_argument("--attach", dest="attachments", action="append", default=[])
     draft_forward.add_argument("--send-using-account")
     draft_forward.add_argument("--create-draft", action="store_true")
     draft_forward.add_argument("--confirm", action="store_true")
@@ -424,7 +432,10 @@ def build_parser() -> argparse.ArgumentParser:
     apply_action.add_argument("--read-state", choices=("read", "unread"))
     apply_action.add_argument("--subject")
     apply_action.add_argument("--to")
+    apply_action.add_argument("--cc")
+    apply_action.add_argument("--bcc")
     apply_action.add_argument("--body")
+    apply_action.add_argument("--attach", dest="attachments", action="append", default=[])
 
     return parser
 
@@ -597,8 +608,16 @@ def build_operation_args(args: argparse.Namespace) -> list[str]:
 
     if args.operation in {"draft-reply", "draft-forward"}:
         parts.extend(["--account", args.account, "--message-id", args.message_id, "--instruction", args.instruction])
+        if args.operation == "draft-reply":
+            if args.reply_mode == "all":
+                parts.extend(["--reply-mode", args.reply_mode])
+            append_optional_arg(parts, "--to", args.to)
         if args.operation == "draft-forward":
             parts.extend(["--to", args.to])
+        append_optional_arg(parts, "--cc", args.cc)
+        append_optional_arg(parts, "--bcc", args.bcc)
+        for attachment in args.attachments or []:
+            parts.extend(["--attach", attachment])
         append_optional_arg(parts, "--send-using-account", args.send_using_account)
         append_optional_arg(parts, "--body", args.body)
         if args.create_draft:
@@ -629,7 +648,11 @@ def build_operation_args(args: argparse.Namespace) -> list[str]:
     append_optional_arg(parts, "--read-state", args.read_state)
     append_optional_arg(parts, "--subject", args.subject)
     append_optional_arg(parts, "--to", args.to)
+    append_optional_arg(parts, "--cc", args.cc)
+    append_optional_arg(parts, "--bcc", args.bcc)
     append_optional_arg(parts, "--body", args.body)
+    for attachment in args.attachments or []:
+        parts.extend(["--attach", attachment])
     if args.confirm:
         parts.append("--confirm")
     return parts

@@ -53,6 +53,7 @@ uv run --project families/outlook-classic-mail/local-client outlook-classic-mail
 uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 move-message --account demo@example.com --message-id <entry-id> --target-folder custom:Inbox/Projects
 uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 move-message --account demo@example.com --message-id <entry-id> --target-folder custom:Inbox/Projects --confirm
 uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 draft-reply --account demo@example.com --message-id <entry-id> --instruction "Draft a concise confirmation." --body "Tuesday works for me." --create-draft --confirm
+uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 draft-reply --account demo@example.com --message-id <entry-id> --reply-mode all --to "one@example.com; two@example.com" --cc copy@example.com --attach C:\path\to\transfer.pdf --instruction "Draft with the requested recipients and attachment." --body "Please find the transfer attached." --create-draft --confirm
 uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 draft-reply --account anchor@example.com --send-using-account reply@example.com --message-id <entry-id> --instruction "Draft from reply@example.com." --body "Tuesday works for me." --create-draft --confirm
 ```
 
@@ -80,6 +81,13 @@ Outlook returns an empty or signature-only draft body. Created draft payloads
 include `draft_content.thread_content_included`,
 `draft_content.thread_content_source`, and warnings such as
 `thread_quote_fallback_used` or `thread_content_missing`.
+
+Use `--reply-mode all` when the reply should preserve Outlook's native
+reply-all recipient set. Use explicit `--to/--cc/--bcc` when the user provides a
+precise recipient set; each supplied field replaces only that field. Use
+repeated `--attach` values for explicit local files. Attachment paths are
+validated before draft creation, and created payloads report `draft_recipients`
+and `draft_attachments`.
 
 `--instruction` is guidance only. It is preserved in the payload for audit/debug
 context, but it is never written into the saved draft body. Use `--body` for the

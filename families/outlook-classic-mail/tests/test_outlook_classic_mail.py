@@ -471,6 +471,122 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
             ],
         )
 
+    def test_build_operation_args_routes_draft_recipients_and_attachments(self):
+        parser = outlook_classic_mail.build_parser()
+        args = parser.parse_args(
+            [
+                "draft-reply",
+                "--account",
+                "anchor@example.com",
+                "--send-using-account",
+                "reply@example.com",
+                "--message-id",
+                "anchor-1",
+                "--instruction",
+                "Reply to the Streff recipients.",
+                "--body",
+                "Please find the transfer attached.",
+                "--reply-mode",
+                "all",
+                "--to",
+                "streff-one@example.com; streff-two@example.com",
+                "--cc",
+                "ops@example.com",
+                "--bcc",
+                "audit@example.com",
+                "--attach",
+                "C:\\Temp\\transfer.pdf",
+                "--attach",
+                "C:\\Temp\\cover.pdf",
+                "--create-draft",
+                "--confirm",
+            ]
+        )
+
+        operation_args = outlook_classic_mail.build_operation_args(args)
+
+        self.assertEqual(
+            operation_args,
+            [
+                "draft-reply",
+                "--account",
+                "anchor@example.com",
+                "--message-id",
+                "anchor-1",
+                "--instruction",
+                "Reply to the Streff recipients.",
+                "--reply-mode",
+                "all",
+                "--to",
+                "streff-one@example.com; streff-two@example.com",
+                "--cc",
+                "ops@example.com",
+                "--bcc",
+                "audit@example.com",
+                "--attach",
+                "C:\\Temp\\transfer.pdf",
+                "--attach",
+                "C:\\Temp\\cover.pdf",
+                "--send-using-account",
+                "reply@example.com",
+                "--body",
+                "Please find the transfer attached.",
+                "--create-draft",
+                "--confirm",
+            ],
+        )
+
+    def test_build_operation_args_routes_generic_draft_cc_bcc_and_attachments(self):
+        parser = outlook_classic_mail.build_parser()
+        args = parser.parse_args(
+            [
+                "apply-action",
+                "--account",
+                "reply@example.com",
+                "--action",
+                "create-draft",
+                "--subject",
+                "Transfer",
+                "--to",
+                "streff-one@example.com",
+                "--cc",
+                "ops@example.com",
+                "--bcc",
+                "audit@example.com",
+                "--body",
+                "Attached.",
+                "--attach",
+                "C:\\Temp\\transfer.pdf",
+                "--confirm",
+            ]
+        )
+
+        operation_args = outlook_classic_mail.build_operation_args(args)
+
+        self.assertEqual(
+            operation_args,
+            [
+                "apply-action",
+                "--account",
+                "reply@example.com",
+                "--action",
+                "create-draft",
+                "--subject",
+                "Transfer",
+                "--to",
+                "streff-one@example.com",
+                "--cc",
+                "ops@example.com",
+                "--bcc",
+                "audit@example.com",
+                "--body",
+                "Attached.",
+                "--attach",
+                "C:\\Temp\\transfer.pdf",
+                "--confirm",
+            ],
+        )
+
     def test_build_operation_args_routes_domain_inspection_with_blocklists(self):
         parser = outlook_classic_mail.build_parser()
         args = parser.parse_args(
@@ -600,6 +716,11 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("Treat `--instruction` as guidance only", skill_text)
         self.assertIn("draft_status: needs_body", skill_text)
         self.assertIn("--body \"<final draft text>\" --create-draft --confirm", skill_text)
+        self.assertIn("--reply-mode all", skill_text)
+        self.assertIn("--to/--cc/--bcc", skill_text)
+        self.assertIn("--attach", skill_text)
+        self.assertIn("draft_recipients", skill_text)
+        self.assertIn("draft_attachments", skill_text)
 
     def test_codex_skill_documents_cache_and_sync_workflows(self):
         skill_path = (
@@ -701,6 +822,8 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("draft_content.thread_content_included", skill_text)
         self.assertIn("draft_placement.actual_send_using_account", skill_text)
         self.assertIn("thread_quote_fallback_used", skill_text)
+        self.assertIn("--reply-mode all", skill_text)
+        self.assertIn("--attach", skill_text)
 
 
 if __name__ == "__main__":
