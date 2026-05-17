@@ -3,6 +3,7 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $ExpectedSkills = @(
   @{ Name = "amazon-cli"; Path = "families/amazon-cli/codex/skills/amazon-cli/SKILL.md" },
+  @{ Name = "skroutz-cli"; Path = "families/skroutz-cli/codex/skills/skroutz-cli/SKILL.md" },
   @{ Name = "codex-thread-recall"; Path = "families/codex-thread-recall/codex/skills/codex-thread-recall/SKILL.md" },
   @{ Name = "everything-search"; Path = "families/everything/codex/skills/everything-search/SKILL.md" },
   @{ Name = "gemini-cli"; Path = "families/gemini/codex/skills/gemini-cli/SKILL.md" },

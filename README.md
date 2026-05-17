@@ -7,6 +7,7 @@ Start by choosing the one family you actually need:
 | Family | Use it for | Folder | Primary CLI |
 | --- | --- | --- | --- |
 | Amazon CLI | Amazon product search, specs, reviews, offers, and managed session workflows through a bundled Amazon CLI client | `families/amazon-cli` | `agent-toolbelt-amazon-cli` |
+| Skroutz CLI | Skroutz.cy product search, offers, reviews, comparisons, and safe cart workflows | `families/skroutz-cli` | `agent-toolbelt-skroutz-cli` |
 | Codex Thread Recall | bounded self-recall from the current Codex thread's own raw rollout history before broad exploration | `families/codex-thread-recall` | `agent-toolbelt-codex-thread-recall` |
 | Everything | global filename and path lookup | `families/everything` | `agent-toolbelt-everything` |
 | Gemini | public URL inspection and Codex research cross-checks | `families/gemini` | `agent-toolbelt-gemini` |
@@ -31,6 +32,7 @@ npx skills add Darkaxt/agent-toolbelt --all
 Public skill names:
 
 - `amazon-cli`
+- `skroutz-cli`
 - `codex-thread-recall`
 - `everything-search`
 - `gemini-cli`

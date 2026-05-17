@@ -1,0 +1,6 @@
+interface:
+  display_name: "Skroutz CLI"
+  short_description: "Use the local Skroutz CLI for Skroutz.cy search, offers, reviews, comparisons, and safe cart workflows."
+  default_prompt: "Use $skroutz-cli for Skroutz.cy product search, product detail lookup, offers, reviews, comparisons, managed login, cart listing, and confirmed cart add/remove."
+policy:
+  allow_implicit_invocation: true

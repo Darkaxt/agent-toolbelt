@@ -30,6 +30,10 @@ FAMILY_IMPORTS = {
         REPO_ROOT / "families" / "amazon-cli" / "src",
         "agent_toolbelt_amazon_cli.cli",
     ),
+    "skroutz-cli": (
+        REPO_ROOT / "families" / "skroutz-cli" / "src",
+        "agent_toolbelt_skroutz_cli.cli",
+    ),
     "linkedin-cv": (
         REPO_ROOT / "families" / "linkedin-cv" / "src",
         "agent_toolbelt_linkedin_cv.cli",
@@ -200,6 +204,29 @@ class FamilyCLITests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["operation"], "offers")
         self.assertEqual(payload["result"]["best_offer"]["marketplace"], "de")
+
+    def test_skroutz_cli_routes_pass_through_command(self):
+        cli = import_family_cli("skroutz-cli")
+
+        original_invoke = cli.skroutz_cli.invoke_client
+        cli.skroutz_cli.invoke_client = lambda **kwargs: {
+            "ok": True,
+            "operation": "offers",
+            "result": {"product_id": "62956505", "offers": []},
+            "warnings": [],
+            "stderr": "",
+            "exit_code": 0,
+        }
+        try:
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                exit_code = cli.main(["--", "offers", "62956505"])
+                payload = json.loads(buffer.getvalue())
+        finally:
+            cli.skroutz_cli.invoke_client = original_invoke
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["operation"], "offers")
+        self.assertEqual(payload["result"]["product_id"], "62956505")
 
     def test_linkedin_cv_cli_routes_profile_capture(self):
         cli = import_family_cli("linkedin-cv")

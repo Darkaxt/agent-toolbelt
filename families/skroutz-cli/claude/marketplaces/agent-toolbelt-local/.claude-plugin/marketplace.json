@@ -1,0 +1,24 @@
+{
+  "name": "agent-toolbelt-local",
+  "metadata": {
+    "description": "Local marketplace for the agent-toolbelt Skroutz CLI Claude plugin."
+  },
+  "owner": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "plugins": [
+    {
+      "name": "skroutz-cli",
+      "description": "Uses the local Skroutz CLI for Skroutz.cy search, offers, reviews, comparisons, and safe cart workflows.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Darkaxt",
+        "email": "opensource@users.noreply.github.com"
+      },
+      "source": "./plugins/skroutz-cli",
+      "category": "productivity",
+      "strict": false
+    }
+  ]
+}
