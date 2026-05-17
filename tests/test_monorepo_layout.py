@@ -41,6 +41,12 @@ EXPECTED_FAMILIES = {
         "script_name": "agent-toolbelt-amazon-cli",
         "package_dir": "agent_toolbelt_amazon_cli",
     },
+    "skroutz-cli": {
+        "project_name": "agent-toolbelt-skroutz-cli",
+        "script_name": "agent-toolbelt-skroutz-cli",
+        "package_dir": "agent_toolbelt_skroutz_cli",
+        "has_claude": True,
+    },
     "linkedin-cv": {
         "project_name": "agent-toolbelt-linkedin-cv",
         "script_name": "agent-toolbelt-linkedin-cv",
@@ -91,6 +97,7 @@ class MonorepoLayoutTests(unittest.TestCase):
                 "families/observable-reputation",
                 "families/mail-domain-quarantine",
                 "families/amazon-cli",
+                "families/skroutz-cli",
                 "families/linkedin-cv",
                 "families/codex-thread-recall",
                 "families/whatsapp-wacli",

@@ -1,0 +1,17 @@
+{
+  "name": "skroutz-cli",
+  "version": "0.1.0",
+  "description": "Uses the local Skroutz CLI for Skroutz.cy search, offers, reviews, comparisons, and safe cart workflows.",
+  "author": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "skroutz",
+    "shopping",
+    "reviews",
+    "offers",
+    "cart"
+  ]
+}

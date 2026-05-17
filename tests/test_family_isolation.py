@@ -11,6 +11,7 @@ FAMILY_NAMES = (
     "media",
     "outlook-classic-mail",
     "amazon-cli",
+    "skroutz-cli",
     "linkedin-cv",
     "codex-thread-recall",
     "whatsapp-wacli",
