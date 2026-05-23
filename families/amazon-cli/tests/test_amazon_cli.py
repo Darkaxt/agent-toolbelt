@@ -5,6 +5,7 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -139,7 +140,7 @@ class AmazonCLIBridgeTests(unittest.TestCase):
         self.assertFalse(any("uv.lock" in pattern for pattern in package_data))
         self.assertFalse(any(".venv" in pattern for pattern in package_data))
 
-    def test_build_client_command_uses_uv_run_project_and_amazon_cli_entrypoint(self):
+    def test_build_client_command_uses_isolated_uv_run_and_amazon_cli_entrypoint(self):
         client_home = Path(r"C:\Temp\Tools\amazon-intent-cli")
         command = amazon_cli.build_client_command(
             client_home=client_home,
@@ -147,8 +148,9 @@ class AmazonCLIBridgeTests(unittest.TestCase):
             uv_executable="uv.exe",
         )
 
-        self.assertEqual(command[:5], ["uv.exe", "run", "--no-project", "--with-editable", str(client_home)])
+        self.assertEqual(command[:5], ["uv.exe", "run", "--quiet", "--with-editable", str(client_home)])
         self.assertEqual(command[5], "amazon-cli")
+        self.assertNotIn("--no-project", command)
         self.assertEqual(command[-4:], ["offers", "B0F2JCZPB4", "--marketplace", "de"])
 
     def test_runtime_venv_dir_is_outside_bundled_client_source(self):
@@ -159,18 +161,32 @@ class AmazonCLIBridgeTests(unittest.TestCase):
         self.assertIn("agent-toolbelt", runtime_dir.parts)
         self.assertEqual(runtime_dir.name, "uv-env")
 
+    def test_runtime_work_dir_is_outside_bundled_client_source(self):
+        runtime_dir = amazon_cli.runtime_work_dir()
+        bundled_home = SOURCE_BUNDLED_CLIENT_ROOT.resolve()
+
+        self.assertFalse(runtime_dir.resolve().is_relative_to(bundled_home))
+        self.assertIn("agent-toolbelt", runtime_dir.parts)
+        self.assertEqual(runtime_dir.name, "uv-work")
+
     def test_invoke_client_normalizes_json_success(self):
         original_run = amazon_cli.run_process
         original_uv = amazon_cli.resolve_uv_executable
         original_home = amazon_cli.resolve_client_home
         amazon_cli.resolve_uv_executable = lambda: "uv.exe"
         amazon_cli.resolve_client_home = lambda explicit_home=None: Path(r"C:\Tools\amazon-intent-cli")
-        amazon_cli.run_process = lambda command, **kwargs: amazon_cli.subprocess.CompletedProcess(
-            command,
-            0,
-            stdout=json.dumps({"best_offer": {"marketplace": "de"}, "offers": []}),
-            stderr="",
-        )
+        captured: dict[str, Any] = {}
+
+        def fake_run_process(command, **kwargs):
+            captured["cwd"] = kwargs.get("cwd")
+            return amazon_cli.subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps({"best_offer": {"marketplace": "de"}, "offers": []}),
+                stderr="",
+            )
+
+        amazon_cli.run_process = fake_run_process
         try:
             result = amazon_cli.invoke_client(operation_args=["offers", "B0F2JCZPB4"])
         finally:
@@ -181,6 +197,7 @@ class AmazonCLIBridgeTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["operation"], "offers")
         self.assertEqual(result["result"]["best_offer"]["marketplace"], "de")
+        self.assertEqual(captured["cwd"], str(amazon_cli.runtime_work_dir()))
         self.assertEqual(result["warnings"], [])
         self.assertEqual(result["exit_code"], 0)
 

@@ -32,6 +32,15 @@ def runtime_venv_dir() -> Path:
     return root / "agent-toolbelt" / "amazon-cli" / "uv-env"
 
 
+def runtime_work_dir() -> Path:
+    local_appdata = os.getenv("LOCALAPPDATA")
+    if local_appdata:
+        return Path(local_appdata) / "agent-toolbelt" / "amazon-cli" / "uv-work"
+    cache_home = os.getenv("XDG_CACHE_HOME")
+    root = Path(cache_home).expanduser() if cache_home else Path.home() / ".cache"
+    return root / "agent-toolbelt" / "amazon-cli" / "uv-work"
+
+
 def make_result(
     *,
     ok: bool,
@@ -90,7 +99,7 @@ def build_client_command(
     return [
         uv_executable,
         "run",
-        "--no-project",
+        "--quiet",
         "--with-editable",
         str(client_home),
         CLIENT_ENTRYPOINT,
@@ -283,8 +292,10 @@ def invoke_client(
         operation_args=operation_args,
         uv_executable=uv_executable,
     )
+    work_dir = runtime_work_dir()
+    work_dir.mkdir(parents=True, exist_ok=True)
     try:
-        completed = run_process(command, timeout_sec=timeout_sec, env=build_client_env())
+        completed = run_process(command, cwd=str(work_dir), timeout_sec=timeout_sec, env=build_client_env())
     except FileNotFoundError as exc:
         return make_result(
             ok=False,
