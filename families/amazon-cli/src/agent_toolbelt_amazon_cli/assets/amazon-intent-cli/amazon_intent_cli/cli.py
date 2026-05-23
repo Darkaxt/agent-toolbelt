@@ -98,6 +98,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     cart_parser = subparsers.add_parser("cart")
     cart_subparsers = cart_parser.add_subparsers(dest="cart_command", required=True)
+    cart_list_parser = cart_subparsers.add_parser("list")
+    cart_list_parser.add_argument("--portal", default="retail", choices=sorted(SUPPORTED_PORTALS))
+    add_common_flags(cart_list_parser)
     cart_add_parser = cart_subparsers.add_parser("add")
     cart_add_parser.add_argument("identifier")
     cart_add_parser.add_argument("--portal", default="retail", choices=sorted(SUPPORTED_PORTALS))
@@ -192,6 +195,8 @@ def _validate_managed_session_args(parser: argparse.ArgumentParser, args: argpar
 
 
 def _validate_cart_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if getattr(args, "cart_command", None) == "list":
+        return
     if getattr(args, "quantity", 1) < 1 or getattr(args, "quantity", 1) > 99:
         parser.error("--quantity must be between 1 and 99")
     if getattr(args, "cart_command", None) == "add" and not getattr(args, "confirm_cart_add", False):
@@ -289,7 +294,12 @@ def main(argv: list[str] | None = None) -> int:
                 reference_marketplace=args.reference_marketplace,
             )
         elif args.command == "cart":
-            if args.cart_command == "add":
+            if args.cart_command == "list":
+                payload = service.cart_list(
+                    args.marketplace,
+                    portal=args.portal,
+                )
+            elif args.cart_command == "add":
                 payload = service.cart_add(
                     args.identifier,
                     args.marketplace,

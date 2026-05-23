@@ -6,6 +6,7 @@ import re
 import time
 import unicodedata
 from pathlib import Path
+from urllib.parse import urljoin
 
 try:
     from playwright.sync_api import sync_playwright
@@ -441,6 +442,35 @@ class BrowserSessionBootstrapper:
             quantity=quantity,
         )
 
+    def list_cart(
+        self,
+        marketplace: str,
+        *,
+        portal: str = DEFAULT_PORTAL,
+    ) -> dict:
+        session_key = make_session_key(marketplace, portal)
+        market = get_marketplace(marketplace)
+        session = self.store.load(market.code, portal=portal)
+        if session is None or session.session_source != "managed_profile":
+            raise BrowserSessionError(
+                f"Managed {portal} session is missing. "
+                f"Run `amazon-cli session login --marketplace {market.code} --portal {portal}`."
+            )
+
+        resolved_executable = _resolve_browser_executable(session.browser_executable)
+        profile_dir = Path(session.profile_dir or (self.profile_root / session_key.replace(":", "__")))
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        url = f"https://{market.domain}/-/en/gp/cart/view.html"
+        return self._list_cart_with_managed_profile(
+            market,
+            session,
+            target_url=url,
+            browser_executable=resolved_executable,
+            profile_dir=profile_dir,
+            portal=portal,
+            session_key=session_key,
+        )
+
     def _capture_managed_session(
         self,
         marketplace: Marketplace,
@@ -840,6 +870,93 @@ class BrowserSessionBootstrapper:
             quantity_select_method=quantity_select_method,
         )
 
+    def _list_cart_with_managed_profile(
+        self,
+        marketplace: Marketplace,
+        session: BrowserSession,
+        *,
+        target_url: str,
+        browser_executable: str,
+        profile_dir: Path,
+        portal: str,
+        session_key: str,
+    ) -> dict:
+        warnings: list[str] = []
+        items: list[dict] = []
+        final_url = target_url
+        started = time.perf_counter()
+
+        with self.playwright_factory() as playwright:
+            context = playwright.chromium.launch_persistent_context(
+                user_data_dir=str(profile_dir),
+                executable_path=browser_executable,
+                headless=False,
+                args=[
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                ],
+            )
+            page = None
+            try:
+                if hasattr(context, "add_cookies"):
+                    try:
+                        context.add_cookies(session.cookies)
+                    except Exception:  # noqa: BLE001
+                        warnings.append("session_cookie_seed_failed")
+                pages = getattr(context, "pages", [])
+                page = pages[0] if pages else context.new_page()
+                page.goto(target_url, wait_until="domcontentloaded", timeout=45_000)
+                self._dismiss_cookie_banner(page)
+
+                initial_html = self._page_content(page)
+                early_failure = self._cart_remove_page_failure(initial_html)
+                if early_failure is not None:
+                    warnings.append(early_failure)
+                    return self._cart_list_receipt(
+                        status="failed",
+                        marketplace=marketplace.code,
+                        portal=portal,
+                        url=target_url,
+                        final_url=self._page_url(page, target_url),
+                        session_key=session_key,
+                        items=[],
+                        warnings=warnings,
+                        action_timing_ms=_monotonic_ms(started),
+                        wait_strategy="targeted",
+                    )
+
+                items = self._cart_page_items(page, marketplace)
+                final_url = self._page_url(page, target_url)
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(str(exc))
+                return self._cart_list_receipt(
+                    status="failed",
+                    marketplace=marketplace.code,
+                    portal=portal,
+                    url=target_url,
+                    final_url=final_url,
+                    session_key=session_key,
+                    items=items,
+                    warnings=warnings,
+                    action_timing_ms=_monotonic_ms(started),
+                    wait_strategy="targeted",
+                )
+            finally:
+                self._close_visible_page_then_context(context, page)
+
+        return self._cart_list_receipt(
+            status="ok",
+            marketplace=marketplace.code,
+            portal=portal,
+            url=target_url,
+            final_url=final_url,
+            session_key=session_key,
+            items=items,
+            warnings=warnings,
+            action_timing_ms=_monotonic_ms(started),
+            wait_strategy="targeted",
+        )
+
     def _remove_from_cart_with_managed_profile(
         self,
         marketplace: Marketplace,
@@ -1210,6 +1327,205 @@ class BrowserSessionBootstrapper:
             return "sign_in_required"
         return None
 
+    def _cart_page_items(self, page, marketplace: Marketplace) -> list[dict]:
+        items: list[dict] = []
+        seen: set[tuple[str, str, str]] = set()
+        for row in self._cart_visible_rows(page):
+            item = self._cart_row_item(row, marketplace)
+            if not item["asin"] and not item["title"] and not item["row_text_excerpt"]:
+                continue
+            key = (
+                item["asin"] or "",
+                item["product_url"] or "",
+                item["row_text_excerpt"][:160],
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(item)
+        return items
+
+    def _cart_visible_rows(self, page) -> list:
+        if not hasattr(page, "locator"):
+            return []
+        selectors = (
+            "[data-asin], [data-itemid], [data-item-id], .sc-list-item, .sc-product",
+            "[data-asin]",
+            "[data-itemid]",
+            "[data-item-id]",
+            ".sc-list-item",
+            ".sc-product",
+        )
+        for selector in selectors:
+            try:
+                locator = page.locator(selector)
+                count = locator.count()
+            except Exception:  # noqa: BLE001
+                continue
+            if count < 1:
+                continue
+            rows = []
+            for index in range(min(count, 200)):
+                try:
+                    row = locator.nth(index) if hasattr(locator, "nth") else getattr(locator, "first", locator)
+                except Exception:  # noqa: BLE001
+                    continue
+                rows.append(row)
+                if not hasattr(locator, "nth"):
+                    break
+            return rows
+        return []
+
+    def _cart_row_item(self, row, marketplace: Marketplace) -> dict:
+        row_text = self._cart_row_text_excerpt(row)
+        product_url = self._cart_row_product_url(row, marketplace)
+        asin = self._cart_row_asin(row, product_url, row_text)
+        title = self._cart_row_product_title(row, asin, row_text)
+        return {
+            "asin": asin,
+            "title": title,
+            "quantity": self._cart_row_quantity(row),
+            "price_text": self._cart_row_first_text(
+                row,
+                (
+                    ".sc-product-price",
+                    "[data-a-color='price']",
+                    '[data-a-color="price"]',
+                    ".a-price",
+                    ".sc-price",
+                    "[class*='price']",
+                ),
+            ),
+            "seller": self._cart_row_first_text(
+                row,
+                (
+                    "[class*='seller']",
+                    "[data-feature-id*='seller']",
+                    "[data-a-word-break*='seller']",
+                ),
+            ),
+            "availability": self._cart_row_first_text(
+                row,
+                (
+                    "[class*='availability']",
+                    "[id*='availability']",
+                    "[data-feature-id*='availability']",
+                    "[class*='avail']",
+                ),
+            ),
+            "image_url": self._cart_row_first_attribute(row, ("img[src]", "img"), "src"),
+            "product_url": product_url,
+            "row_text_excerpt": row_text,
+        }
+
+    def _cart_row_text_excerpt(self, row, *, max_chars: int = 500) -> str:
+        try:
+            text = row.inner_text(timeout=500)
+        except Exception:  # noqa: BLE001
+            return ""
+        lines = [" ".join(line.split()) for line in str(text).splitlines()]
+        excerpt = "\n".join(line for line in lines if line)
+        return excerpt[:max_chars]
+
+    def _cart_row_asin(self, row, product_url: str, row_text: str) -> str:
+        for attribute in ("data-asin", "data-itemid", "data-item-id"):
+            try:
+                value = row.get_attribute(attribute, timeout=500)
+            except Exception:  # noqa: BLE001
+                value = None
+            normalized = self._normalize_asin(value)
+            if normalized:
+                return normalized
+        for value in (product_url, row_text):
+            normalized = self._extract_asin_from_text(value)
+            if normalized:
+                return normalized
+        return ""
+
+    def _normalize_asin(self, value: str | None) -> str:
+        value = str(value or "").strip().upper()
+        return value if re.fullmatch(r"[A-Z0-9]{10}", value) else ""
+
+    def _extract_asin_from_text(self, value: str) -> str:
+        text = str(value or "")
+        for pattern in (
+            r"(?i)/(?:dp|gp/product|product|gp/aw/d)/([A-Z0-9]{10})(?:[/?#]|$)",
+            r"\b([A-Z0-9]{10})\b",
+        ):
+            match = re.search(pattern, text)
+            if match:
+                normalized = self._normalize_asin(match.group(1))
+                if normalized:
+                    return normalized
+        return ""
+
+    def _cart_row_product_url(self, row, marketplace: Marketplace) -> str:
+        href = self._cart_row_first_attribute(
+            row,
+            (
+                "a[href*='/dp/']",
+                "a[href*='/gp/product/']",
+                "a[href*='/product/']",
+                "a[href*='/gp/aw/d/']",
+                "a[href*='ref=ox_sc_act_title']",
+                "a[href]",
+            ),
+            "href",
+        )
+        if not href:
+            return ""
+        return urljoin(f"https://{marketplace.domain}/", href)
+
+    def _cart_row_product_title(self, row, asin: str, row_text: str) -> str:
+        selectors = []
+        if asin:
+            selectors.extend(
+                [
+                    f"a[href*='{asin}']",
+                    f"a[href*='/dp/{asin}']",
+                    f"a[href*='/gp/product/{asin}']",
+                ]
+            )
+        selectors.extend(
+            [
+                "a[href*='/dp/']",
+                "a[href*='/gp/product/']",
+                "a[href*='ref=ox_sc_act_title']",
+            ]
+        )
+        title = self._cart_row_first_text(row, tuple(selectors))
+        if title:
+            return title
+        return row_text.splitlines()[0] if row_text else ""
+
+    def _cart_row_first_text(self, row, selectors: tuple[str, ...]) -> str:
+        for selector in selectors:
+            try:
+                locator = row.locator(selector)
+                if locator.count() < 1:
+                    continue
+                target = getattr(locator, "first", locator)
+                text = target.inner_text(timeout=500).strip()
+                if text:
+                    return " ".join(text.split())
+            except Exception:  # noqa: BLE001
+                continue
+        return ""
+
+    def _cart_row_first_attribute(self, row, selectors: tuple[str, ...], attribute: str) -> str:
+        for selector in selectors:
+            try:
+                locator = row.locator(selector)
+                if locator.count() < 1:
+                    continue
+                target = getattr(locator, "first", locator)
+                value = target.get_attribute(attribute, timeout=500)
+                if value:
+                    return str(value).strip()
+            except Exception:  # noqa: BLE001
+                continue
+        return ""
+
     def _wait_for_cart_row(self, page, asin: str, *, timeout_sec: float):
         return self._wait_for_value(lambda: self._cart_row_locator(page, asin), timeout_sec=timeout_sec)
 
@@ -1541,6 +1857,40 @@ class BrowserSessionBootstrapper:
             "safety": {
                 "checkout_performed": False,
                 "buy_now_clicked": False,
+            },
+        }
+
+    def _cart_list_receipt(
+        self,
+        *,
+        status: str,
+        marketplace: str,
+        portal: str,
+        url: str,
+        final_url: str,
+        session_key: str,
+        items: list[dict],
+        warnings: list[str],
+        action_timing_ms: int | None = None,
+        wait_strategy: str | None = None,
+    ) -> dict:
+        return {
+            "marketplace": marketplace,
+            "portal": portal,
+            "url": url,
+            "final_url": final_url,
+            "session_key": session_key,
+            "session_source": "managed_profile",
+            "status": status,
+            "items": items,
+            "item_count": len(items),
+            "warnings": warnings,
+            "action_timing_ms": action_timing_ms,
+            "wait_strategy": wait_strategy,
+            "safety": {
+                "checkout_performed": False,
+                "buy_now_clicked": False,
+                "cart_mutation_performed": False,
             },
         }
 
