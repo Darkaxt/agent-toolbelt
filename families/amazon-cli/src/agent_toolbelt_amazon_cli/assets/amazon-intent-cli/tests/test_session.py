@@ -1322,6 +1322,280 @@ def _cart_remove_bootstrapper(tmp_path: Path, *, starting_quantity: int, asin: s
     return bootstrapper, clicked_actions, load_states, timeouts, launch_kwargs
 
 
+def test_list_cart_parses_visible_rows_without_mutation(tmp_path: Path) -> None:
+    clicked_selectors: list[str] = []
+
+    rows = [
+        {
+            "asin": "B0TEST1234",
+            "title": "Pilexil Forte Max",
+            "quantity": "2",
+            "price": "€18.99",
+            "seller": "Sold by Amazon",
+            "availability": "In stock",
+            "image": "https://m.media-amazon.com/images/I/test.jpg",
+            "href": "/dp/B0TEST1234/ref=ox_sc_act_title_1",
+        },
+        {
+            "asin": "B0OTHER456",
+            "title": "Spare blades",
+            "quantity": "1",
+            "price": "€7.50",
+            "seller": "",
+            "availability": "Temporarily unavailable",
+            "image": "",
+            "href": "/gp/product/B0OTHER456",
+        },
+    ]
+
+    class FakeElementLocator:
+        def __init__(self, text: str = "", attrs: dict[str, str] | None = None) -> None:
+            self.text = text
+            self.attrs = attrs or {}
+            self.first = self
+
+        def count(self) -> int:
+            return 1 if self.text or self.attrs else 0
+
+        def inner_text(self, timeout: int | None = None) -> str:
+            return self.text
+
+        def get_attribute(self, name: str, timeout: int | None = None) -> str | None:
+            return self.attrs.get(name)
+
+        def is_visible(self, timeout: int | None = None) -> bool:
+            return self.count() > 0
+
+        def click(self, timeout: int | None = None) -> None:
+            clicked_selectors.append("unexpected_element_click")
+
+    class FakeRowLocator:
+        def __init__(self, item: dict[str, str]) -> None:
+            self.item = item
+            self.first = self
+
+        def count(self) -> int:
+            return 1
+
+        def inner_text(self, timeout: int | None = None) -> str:
+            return "\n".join(
+                value
+                for value in (
+                    self.item["title"],
+                    f"Quantity: {self.item['quantity']}",
+                    self.item["price"],
+                    self.item["seller"],
+                    self.item["availability"],
+                )
+                if value
+            )
+
+        def get_attribute(self, name: str, timeout: int | None = None) -> str | None:
+            if name in {"data-asin", "data-itemid", "data-item-id"}:
+                return self.item["asin"]
+            return None
+
+        def locator(self, selector: str):
+            lowered = selector.casefold()
+            if "href" in lowered:
+                return FakeElementLocator(self.item["title"], {"href": self.item["href"]})
+            if "img" in lowered:
+                return FakeElementLocator("", {"src": self.item["image"]} if self.item["image"] else {})
+            if "price" in lowered:
+                return FakeElementLocator(self.item["price"])
+            if "seller" in lowered:
+                return FakeElementLocator(self.item["seller"])
+            if "availability" in lowered or "avail" in lowered:
+                return FakeElementLocator(self.item["availability"])
+            if "quantity" in lowered or "data-a-selector" in lowered or "dropdown-prompt" in lowered:
+                return FakeElementLocator(self.item["quantity"], {"value": self.item["quantity"]})
+            return FakeElementLocator()
+
+        def is_visible(self, timeout: int | None = None) -> bool:
+            return True
+
+        def click(self, timeout: int | None = None) -> None:
+            clicked_selectors.append("unexpected_row_click")
+
+    class FakeRowsLocator:
+        def __init__(self, items: list[dict[str, str]]) -> None:
+            self.items = items
+            self.first = FakeRowLocator(items[0])
+
+        def count(self) -> int:
+            return len(self.items)
+
+        def nth(self, index: int) -> FakeRowLocator:
+            return FakeRowLocator(self.items[index])
+
+    class MissingLocator:
+        first = None
+
+        def __init__(self) -> None:
+            self.first = self
+
+        def count(self) -> int:
+            return 0
+
+        def click(self, timeout: int | None = None) -> None:
+            clicked_selectors.append("unexpected_missing_click")
+
+    class FakePage:
+        url = ""
+
+        def goto(self, url: str, wait_until: str, timeout: int) -> None:
+            self.url = url
+
+        def locator(self, selector: str):
+            lowered = selector.casefold()
+            if "checkout" in lowered or "buy" in lowered or "remove" in lowered or "delete" in lowered:
+                clicked_selectors.append(f"mutation_selector_requested:{selector}")
+                return MissingLocator()
+            if "sc-list-item" in lowered or "sc-product" in lowered or "data-asin" in lowered:
+                return FakeRowsLocator(rows)
+            return MissingLocator()
+
+        def content(self) -> str:
+            return "<html><body><div data-asin='B0TEST1234'></div><div data-asin='B0OTHER456'></div></body></html>"
+
+    class FakeContext:
+        def __init__(self) -> None:
+            self.pages = [FakePage()]
+
+        def add_cookies(self, cookies) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    class FakeChromium:
+        def launch_persistent_context(self, **kwargs):
+            return FakeContext()
+
+    class FakePlaywright:
+        def __init__(self) -> None:
+            self.chromium = FakeChromium()
+
+    class FakeManager:
+        def __init__(self) -> None:
+            self.playwright = FakePlaywright()
+
+        def __enter__(self):
+            return self.playwright
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    bootstrapper = BrowserSessionBootstrapper(
+        _managed_cart_session_store(tmp_path),
+        profile_root=tmp_path / "profiles",
+        playwright_factory=lambda: FakeManager(),
+    )
+
+    payload = bootstrapper.list_cart("es", portal="business")
+
+    assert clicked_selectors == []
+    assert payload["status"] == "ok"
+    assert payload["url"] == "https://www.amazon.es/-/en/gp/cart/view.html"
+    assert payload["final_url"] == "https://www.amazon.es/-/en/gp/cart/view.html"
+    assert payload["session_key"] == "es:business"
+    assert payload["item_count"] == 2
+    assert payload["items"][0] == {
+        "asin": "B0TEST1234",
+        "title": "Pilexil Forte Max",
+        "quantity": 2,
+        "price_text": "€18.99",
+        "seller": "Sold by Amazon",
+        "availability": "In stock",
+        "image_url": "https://m.media-amazon.com/images/I/test.jpg",
+        "product_url": "https://www.amazon.es/dp/B0TEST1234/ref=ox_sc_act_title_1",
+        "row_text_excerpt": "Pilexil Forte Max\nQuantity: 2\n€18.99\nSold by Amazon\nIn stock",
+    }
+    assert payload["items"][1]["asin"] == "B0OTHER456"
+    assert payload["items"][1]["availability"] == "Temporarily unavailable"
+    assert payload["safety"] == {
+        "checkout_performed": False,
+        "buy_now_clicked": False,
+        "cart_mutation_performed": False,
+    }
+
+
+def test_list_cart_fails_without_mutation_on_sign_in_page(tmp_path: Path) -> None:
+    clicked_selectors: list[str] = []
+
+    class FakeLocator:
+        first = None
+
+        def __init__(self) -> None:
+            self.first = self
+
+        def count(self) -> int:
+            return 0
+
+        def click(self, timeout: int | None = None) -> None:
+            clicked_selectors.append("unexpected")
+
+    class FakePage:
+        url = ""
+
+        def goto(self, url: str, wait_until: str, timeout: int) -> None:
+            self.url = url
+
+        def wait_for_load_state(self, state: str, timeout: int) -> None:
+            raise AssertionError("cart list must not wait for networkidle")
+
+        def wait_for_timeout(self, timeout: int) -> None:
+            raise AssertionError("cart list must not use fixed sleeps")
+
+        def locator(self, selector: str) -> FakeLocator:
+            return FakeLocator()
+
+        def content(self) -> str:
+            return '<html><body><form id="ap_signin_form"></form></body></html>'
+
+    class FakeContext:
+        pages = [FakePage()]
+
+        def add_cookies(self, cookies) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    class FakeChromium:
+        def launch_persistent_context(self, **kwargs):
+            return FakeContext()
+
+    class FakePlaywright:
+        def __init__(self) -> None:
+            self.chromium = FakeChromium()
+
+    class FakeManager:
+        def __init__(self) -> None:
+            self.playwright = FakePlaywright()
+
+        def __enter__(self):
+            return self.playwright
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    bootstrapper = BrowserSessionBootstrapper(
+        _managed_cart_session_store(tmp_path),
+        profile_root=tmp_path / "profiles",
+        playwright_factory=lambda: FakeManager(),
+    )
+
+    payload = bootstrapper.list_cart("es", portal="business")
+
+    assert clicked_selectors == []
+    assert payload["status"] == "failed"
+    assert payload["item_count"] == 0
+    assert payload["items"] == []
+    assert "sign_in_required" in payload["warnings"]
+    assert payload["safety"]["cart_mutation_performed"] is False
+
+
 def test_remove_from_cart_decrements_quantity_with_item_scoped_minus(tmp_path: Path) -> None:
     bootstrapper, clicked_actions, load_states, timeouts, launch_kwargs = _cart_remove_bootstrapper(
         tmp_path,

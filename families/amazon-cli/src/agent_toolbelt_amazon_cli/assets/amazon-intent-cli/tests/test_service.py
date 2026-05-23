@@ -1098,6 +1098,103 @@ def test_cart_remove_rejects_missing_confirmation() -> None:
         raise AssertionError("Expected cart remove confirmation to be required")
 
 
+def test_cart_list_requires_managed_session() -> None:
+    service = AmazonService(resolver=FailingResolver(), session_store=MemorySessionStore())
+
+    try:
+        service.cart_list("es", portal="business")
+    except BrowserSessionError as exc:
+        assert "amazon-cli session login --marketplace es --portal business" in str(exc)
+    else:
+        raise AssertionError("Expected missing managed session to be rejected")
+
+
+def test_cart_list_uses_managed_session_http_without_browser_action(monkeypatch) -> None:
+    store = MemorySessionStore()
+    store.save(managed_session("es", portal="business"))
+    service = AmazonService(resolver=FailingResolver(), session_store=store)
+    captured: dict[str, object] = {}
+
+    class FakeBootstrapper:
+        def list_cart(self, marketplace: str, *, portal: str) -> dict:
+            raise AssertionError("cart list must not launch the managed browser by default")
+
+    service.bootstrapper = FakeBootstrapper()
+
+    class FakeHttpClient:
+        def __init__(self, marketplace, session=None) -> None:
+            captured["marketplace"] = marketplace.code
+            captured["session_key"] = session.session_key if session is not None else None
+
+        def fetch_url_details(self, url: str) -> tuple[str, str]:
+            captured["url"] = url
+            return (
+                """
+                <html>
+                  <body>
+                    <div class="sc-list-item" data-asin="B0TEST1234">
+                      <a href="/dp/B0TEST1234/ref=ox_sc_act_title_1">Pilexil Forte Max</a>
+                      <span data-a-selector="value">2</span>
+                      <span class="sc-product-price">€18.99</span>
+                      <span class="sc-seller">Sold by Amazon</span>
+                      <span class="sc-product-availability">In stock</span>
+                      <img src="https://m.media-amazon.com/images/I/test.jpg">
+                    </div>
+                  </body>
+                </html>
+                """,
+                "https://www.amazon.es/-/en/gp/cart/view.html",
+            )
+
+    monkeypatch.setattr("amazon_intent_cli.service.AmazonHttpClient", FakeHttpClient)
+
+    result = service.cart_list("es", portal="business")
+
+    assert result["command"] == "cart.list"
+    assert result["status"] == "ok"
+    assert result["item_count"] == 1
+    assert result["wait_strategy"] == "http_session"
+    assert result["items"][0]["asin"] == "B0TEST1234"
+    assert result["items"][0]["quantity"] == 2
+    assert result["items"][0]["price_text"] == "€18.99"
+    assert result["safety"]["cart_mutation_performed"] is False
+    assert captured == {
+        "marketplace": "es",
+        "session_key": "es:business",
+        "url": "https://www.amazon.es/-/en/gp/cart/view.html",
+    }
+
+
+def test_cart_list_reports_sign_in_required_without_browser_fallback(monkeypatch) -> None:
+    store = MemorySessionStore()
+    store.save(managed_session("es", portal="business"))
+    service = AmazonService(resolver=FailingResolver(), session_store=store)
+
+    class FakeBootstrapper:
+        def list_cart(self, marketplace: str, *, portal: str) -> dict:
+            raise AssertionError("cart list must not launch the managed browser by default")
+
+    service.bootstrapper = FakeBootstrapper()
+
+    class FakeHttpClient:
+        def __init__(self, marketplace, session=None) -> None:
+            return None
+
+        def fetch_url_details(self, url: str) -> tuple[str, str]:
+            return '<html><body><form id="ap_signin_form"></form></body></html>', url
+
+    monkeypatch.setattr("amazon_intent_cli.service.AmazonHttpClient", FakeHttpClient)
+
+    result = service.cart_list("es", portal="business")
+
+    assert result["command"] == "cart.list"
+    assert result["status"] == "failed"
+    assert result["items"] == []
+    assert result["item_count"] == 0
+    assert "sign_in_required" in result["warnings"]
+    assert result["wait_strategy"] == "http_session"
+
+
 def test_pagination_returns_partial_results_when_later_page_fails() -> None:
     service = DummyService(
         resolver=FailingResolver(),

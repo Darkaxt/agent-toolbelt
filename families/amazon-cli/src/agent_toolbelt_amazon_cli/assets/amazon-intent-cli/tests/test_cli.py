@@ -190,6 +190,33 @@ class FakeService:
             },
         }
 
+    def cart_list(
+        self,
+        marketplace: str,
+        *,
+        portal: str = "retail",
+    ) -> dict:
+        self.calls.append(("cart_list", marketplace, portal))
+        return {
+            "command": "cart.list",
+            "marketplace": marketplace,
+            "portal": portal,
+            "url": f"https://www.amazon.{marketplace}/-/en/gp/cart/view.html",
+            "final_url": f"https://www.amazon.{marketplace}/-/en/gp/cart/view.html",
+            "session_key": f"{marketplace}:{portal}",
+            "status": "ok",
+            "items": [{"asin": "B0TEST0001", "title": "Pilexil Forte Max", "quantity": 2}],
+            "item_count": 1,
+            "warnings": [],
+            "action_timing_ms": 12,
+            "wait_strategy": "targeted",
+            "safety": {
+                "checkout_performed": False,
+                "buy_now_clicked": False,
+                "cart_mutation_performed": False,
+            },
+        }
+
     def bootstrap_session(
         self,
         marketplace: str,
@@ -578,6 +605,22 @@ def test_cart_remove_outputs_json_after_explicit_confirmation(monkeypatch, capsy
     assert payload["safety"]["checkout_performed"] is False
     assert payload["safety"]["buy_now_clicked"] is False
     assert service.calls[0] == ("cart_remove", "B0TEST0001", "es", "business", 2, True)
+
+
+def test_cart_list_outputs_json_without_confirmation(monkeypatch, capsys) -> None:
+    service = FakeService()
+    monkeypatch.setattr(cli, "build_service", lambda: service)
+
+    cli.main(["cart", "list", "--marketplace", "de", "--portal", "business"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["command"] == "cart.list"
+    assert payload["marketplace"] == "de"
+    assert payload["portal"] == "business"
+    assert payload["status"] == "ok"
+    assert payload["item_count"] == 1
+    assert payload["safety"]["cart_mutation_performed"] is False
+    assert service.calls[0] == ("cart_list", "de", "business")
 
 
 def test_reviews_outputs_json_without_default_limit(monkeypatch, capsys) -> None:
