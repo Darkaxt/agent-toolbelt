@@ -471,6 +471,71 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
             ],
         )
 
+    def test_build_operation_args_routes_draft_recipients_and_attachments(self):
+        parser = outlook_classic_mail.build_parser()
+        args = parser.parse_args(
+            [
+                "draft-reply",
+                "--account",
+                "anchor@example.com",
+                "--send-using-account",
+                "reply@example.com",
+                "--message-id",
+                "anchor-1",
+                "--reply-mode",
+                "all",
+                "--to",
+                "primary@example.com",
+                "--cc",
+                "copy@example.com",
+                "--bcc",
+                "audit@example.com",
+                "--attach",
+                r"C:\tmp\one.pdf",
+                "--attach",
+                r"C:\tmp\two.pdf",
+                "--instruction",
+                "Reply with the signed documents.",
+                "--body",
+                "Please find them attached.",
+                "--create-draft",
+                "--confirm",
+            ]
+        )
+
+        operation_args = outlook_classic_mail.build_operation_args(args)
+
+        self.assertEqual(
+            operation_args,
+            [
+                "draft-reply",
+                "--account",
+                "anchor@example.com",
+                "--message-id",
+                "anchor-1",
+                "--instruction",
+                "Reply with the signed documents.",
+                "--reply-mode",
+                "all",
+                "--to",
+                "primary@example.com",
+                "--cc",
+                "copy@example.com",
+                "--bcc",
+                "audit@example.com",
+                "--attach",
+                r"C:\tmp\one.pdf",
+                "--attach",
+                r"C:\tmp\two.pdf",
+                "--send-using-account",
+                "reply@example.com",
+                "--body",
+                "Please find them attached.",
+                "--create-draft",
+                "--confirm",
+            ],
+        )
+
     def test_build_operation_args_routes_domain_inspection_with_blocklists(self):
         parser = outlook_classic_mail.build_parser()
         args = parser.parse_args(

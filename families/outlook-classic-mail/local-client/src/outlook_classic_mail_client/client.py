@@ -2013,7 +2013,7 @@ def set_send_using_account(item: Any, account_info: dict[str, Any], warnings: li
 
 
 def copy_draft_fields(source: Any, target: Any) -> None:
-    for attribute in ("To", "CC", "Subject"):
+    for attribute in ("To", "CC", "BCC", "Subject"):
         value = safe_get(source, attribute, "")
         if value:
             try:
@@ -2026,6 +2026,70 @@ def copy_draft_fields(source: Any, target: Any) -> None:
         target.HTMLBody = html_body
     elif body:
         target.Body = body
+
+
+def normalize_attachment_paths(attachments: Iterable[str] | None) -> list[Path]:
+    normalized: list[Path] = []
+    for attachment in attachments or []:
+        path = Path(str(attachment)).expanduser()
+        if not path.exists():
+            raise ValueError(f"Attachment path does not exist: {attachment}")
+        normalized.append(path.resolve())
+    return normalized
+
+
+def attachment_count(draft: Any) -> int:
+    attachments = safe_get(draft, "Attachments")
+    count = safe_get(attachments, "Count", 0) if attachments is not None else 0
+    try:
+        return int(count or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def draft_recipients_summary(draft: Any) -> dict[str, str]:
+    return {
+        "to": str(safe_get(draft, "To", "") or ""),
+        "cc": str(safe_get(draft, "CC", "") or ""),
+        "bcc": str(safe_get(draft, "BCC", "") or ""),
+    }
+
+
+def apply_draft_overrides(
+    draft: Any,
+    *,
+    to: str | None = None,
+    cc: str | None = None,
+    bcc: str | None = None,
+    attachments: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    if to is not None:
+        draft.To = to
+    if cc is not None:
+        draft.CC = cc
+    if bcc is not None:
+        draft.BCC = bcc
+
+    added: list[dict[str, str]] = []
+    attachment_collection = safe_get(draft, "Attachments")
+    normalized_paths = normalize_attachment_paths(attachments)
+    if normalized_paths and attachment_collection is None:
+        raise ValueError("Draft does not expose an Attachments collection.")
+    for path in normalized_paths:
+        add_attachment = safe_get(attachment_collection, "Add")
+        if not callable(add_attachment):
+            raise ValueError("Draft Attachments collection does not expose Add.")
+        add_attachment(str(path))
+        added.append({"path": str(path), "filename": path.name})
+
+    return {
+        "recipients": draft_recipients_summary(draft),
+        "attachments": {
+            "count": attachment_count(draft),
+            "added_count": len(added),
+            "items": added,
+        },
+    }
 
 
 def create_mail_item_in_folder(folder: Any) -> Any:
@@ -2159,6 +2223,11 @@ def draft_reply(
     account_selector: str,
     send_using_account_selector: str | None = None,
     message_id: str,
+    reply_mode: str = "sender",
+    to: str | None = None,
+    cc: str | None = None,
+    bcc: str | None = None,
+    attachments: Iterable[str] | None = None,
     instruction: str,
     body: str | None,
     create_draft: bool,
@@ -2171,7 +2240,13 @@ def draft_reply(
 
     account_info = resolve_account(session, account_selector)
     message = resolve_message(session, account_info, message_id)
-    reply = message.Reply()
+    if reply_mode == "all":
+        reply_all = safe_get(message, "ReplyAll")
+        if not callable(reply_all):
+            raise ValueError("Message does not support ReplyAll.")
+        reply = reply_all()
+    else:
+        reply = message.Reply()
     suggested_body = compose_draft_body(
         instruction=instruction,
         message=message,
@@ -2229,8 +2304,30 @@ def draft_reply(
                     draft=reply,
                     warnings=warnings,
                 )
+        override_summary = apply_draft_overrides(
+            reply,
+            to=to,
+            cc=cc,
+            bcc=bcc,
+            attachments=attachments,
+        )
+        if (
+            to is not None
+            or cc is not None
+            or bcc is not None
+            or override_summary["attachments"]["added_count"]
+        ):
+            reply.Save()
         created = True
         draft_entry_id = safe_get(reply, "EntryID", None)
+    else:
+        override_summary = apply_draft_overrides(
+            reply,
+            to=to,
+            cc=cc,
+            bcc=bcc,
+            attachments=attachments,
+        )
     body_state = draft_body_state(suggested_body=suggested_body, created=created)
 
     return {
@@ -2238,6 +2335,8 @@ def draft_reply(
         "store": account_info["delivery_store"],
         "message": message_summary(message),
         "to": safe_get(reply, "To", ""),
+        "cc": safe_get(reply, "CC", ""),
+        "bcc": safe_get(reply, "BCC", ""),
         "subject": safe_get(reply, "Subject", ""),
         "suggested_body": suggested_body,
         "instruction": instruction,
@@ -2250,6 +2349,8 @@ def draft_reply(
         "draft_entry_id": draft_entry_id,
         "draft_placement": draft_placement,
         "draft_content": draft_content,
+        "draft_recipients": override_summary["recipients"],
+        "draft_attachments": override_summary["attachments"],
     }
 
 
@@ -2260,6 +2361,9 @@ def draft_forward(
     send_using_account_selector: str | None = None,
     message_id: str,
     to: str,
+    cc: str | None = None,
+    bcc: str | None = None,
+    attachments: Iterable[str] | None = None,
     instruction: str,
     body: str | None,
     create_draft: bool,
@@ -2331,8 +2435,30 @@ def draft_forward(
                     draft=forward,
                     warnings=warnings,
                 )
+        override_summary = apply_draft_overrides(
+            forward,
+            to=to,
+            cc=cc,
+            bcc=bcc,
+            attachments=attachments,
+        )
+        if (
+            to is not None
+            or cc is not None
+            or bcc is not None
+            or override_summary["attachments"]["added_count"]
+        ):
+            forward.Save()
         created = True
         draft_entry_id = safe_get(forward, "EntryID", None)
+    else:
+        override_summary = apply_draft_overrides(
+            forward,
+            to=to,
+            cc=cc,
+            bcc=bcc,
+            attachments=attachments,
+        )
     body_state = draft_body_state(suggested_body=suggested_body, created=created)
 
     return {
@@ -2340,6 +2466,8 @@ def draft_forward(
         "store": account_info["delivery_store"],
         "message": message_summary(message),
         "to": safe_get(forward, "To", ""),
+        "cc": safe_get(forward, "CC", ""),
+        "bcc": safe_get(forward, "BCC", ""),
         "subject": safe_get(forward, "Subject", ""),
         "suggested_body": suggested_body,
         "instruction": instruction,
@@ -2352,6 +2480,8 @@ def draft_forward(
         "draft_entry_id": draft_entry_id,
         "draft_placement": draft_placement,
         "draft_content": draft_content,
+        "draft_recipients": override_summary["recipients"],
+        "draft_attachments": override_summary["attachments"],
     }
 
 
@@ -2765,6 +2895,11 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
             account_selector=args.account,
             send_using_account_selector=args.send_using_account,
             message_id=args.message_id,
+            reply_mode=args.reply_mode,
+            to=args.to,
+            cc=args.cc,
+            bcc=args.bcc,
+            attachments=args.attach,
             instruction=args.instruction,
             body=args.body,
             create_draft=args.create_draft,
@@ -2785,6 +2920,9 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
             send_using_account_selector=args.send_using_account,
             message_id=args.message_id,
             to=args.to,
+            cc=args.cc,
+            bcc=args.bcc,
+            attachments=args.attach,
             instruction=args.instruction,
             body=args.body,
             create_draft=args.create_draft,
@@ -2976,6 +3114,11 @@ def build_parser() -> argparse.ArgumentParser:
     draft_reply_parser.add_argument("--instruction", required=True)
     draft_reply_parser.add_argument("--body")
     draft_reply_parser.add_argument("--send-using-account")
+    draft_reply_parser.add_argument("--reply-mode", choices=("sender", "all"), default="sender")
+    draft_reply_parser.add_argument("--to")
+    draft_reply_parser.add_argument("--cc")
+    draft_reply_parser.add_argument("--bcc")
+    draft_reply_parser.add_argument("--attach", action="append", default=[])
     draft_reply_parser.add_argument("--create-draft", action="store_true")
     draft_reply_parser.add_argument("--confirm", action="store_true")
 
@@ -2986,6 +3129,9 @@ def build_parser() -> argparse.ArgumentParser:
     draft_forward_parser.add_argument("--instruction", required=True)
     draft_forward_parser.add_argument("--body")
     draft_forward_parser.add_argument("--send-using-account")
+    draft_forward_parser.add_argument("--cc")
+    draft_forward_parser.add_argument("--bcc")
+    draft_forward_parser.add_argument("--attach", action="append", default=[])
     draft_forward_parser.add_argument("--create-draft", action="store_true")
     draft_forward_parser.add_argument("--confirm", action="store_true")
 

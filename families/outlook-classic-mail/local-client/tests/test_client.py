@@ -36,17 +36,29 @@ class FakeItems(list):
         return draft
 
 
+class FakeAttachments(list):
+    def Add(self, path):
+        self.append(str(path))
+        return str(path)
+
+    @property
+    def Count(self):
+        return len(self)
+
+
 @dataclass
 class FakeReply:
     Subject: str
     To: str
     CC: str = ""
+    BCC: str = ""
     Body: str = "Quoted original"
     HTMLBody: str = "<html><body><table><tr><td>Quoted original</td></tr></table></body></html>"
     SendUsingAccount: object | None = None
     Parent: object | None = None
     reject_send_using: bool = False
     saved: bool = False
+    Attachments: FakeAttachments = field(default_factory=FakeAttachments)
 
     def __setattr__(self, name, value):
         if name == "SendUsingAccount" and getattr(self, "reject_send_using", False):
@@ -90,6 +102,14 @@ class FakeMessage:
 
     def Reply(self) -> FakeReply:
         self.last_reply = FakeReply(Subject=f"RE: {self.Subject}", To=self.SenderEmailAddress)
+        return self.last_reply
+
+    def ReplyAll(self) -> FakeReply:
+        self.last_reply = FakeReply(
+            Subject=f"RE: {self.Subject}",
+            To=f"{self.SenderEmailAddress}; {self.To}",
+            CC=self.CC,
+        )
         return self.last_reply
 
     def Forward(self) -> FakeForward:
@@ -1054,6 +1074,42 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         self.assertEqual(draft.To, "clientservices@example.com")
         self.assertIn("<p>Thanks.</p>", draft.HTMLBody)
 
+    def test_draft_reply_cross_account_applies_recipients_and_attachments(self):
+        response_session = make_response_session()
+        reply_account = client.resolve_account(response_session, "reply@example.com")
+        reply_drafts = client.resolve_folder(reply_account, "drafts")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            attachment = Path(tmp_dir) / "certificate.pdf"
+            attachment.write_text("certificate", encoding="utf-8")
+
+            result = client.draft_reply(
+                response_session,
+                account_selector="anchor@example.com",
+                send_using_account_selector="reply@example.com",
+                message_id="anchor-1",
+                reply_mode="all",
+                to="dellasiega@agencefoyer.lu",
+                cc="contact@foyer.lu",
+                bcc="audit@example.com",
+                attachments=[str(attachment)],
+                instruction="Reply with the certificate.",
+                body="Please find the certificate attached.",
+                create_draft=True,
+                confirm=True,
+            )
+
+        draft = reply_drafts.Items[-1]
+        self.assertTrue(result["created"])
+        self.assertEqual(draft.To, "dellasiega@agencefoyer.lu")
+        self.assertEqual(draft.CC, "contact@foyer.lu")
+        self.assertEqual(draft.BCC, "audit@example.com")
+        self.assertEqual(draft.Attachments.Count, 1)
+        self.assertEqual(result["draft_recipients"]["to"], "dellasiega@agencefoyer.lu")
+        self.assertEqual(result["draft_recipients"]["cc"], "contact@foyer.lu")
+        self.assertEqual(result["draft_recipients"]["bcc"], "audit@example.com")
+        self.assertEqual(result["draft_attachments"]["count"], 1)
+        self.assertEqual(result["draft_attachments"]["items"][0]["filename"], "certificate.pdf")
+
     def test_draft_forward_cross_account_creates_draft_in_target_store_drafts(self):
         response_session = make_response_session()
         reply_account = client.resolve_account(response_session, "reply@example.com")
@@ -1078,6 +1134,33 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         self.assertEqual(draft.To, "third@example.com")
         self.assertEqual(draft.SendUsingAccount.SmtpAddress, "reply@example.com")
         self.assertIn("<p>Forwarding.</p>", draft.HTMLBody)
+
+    def test_draft_forward_applies_cc_bcc_and_attachments(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            attachment = Path(tmp_dir) / "signed.pdf"
+            attachment.write_text("signed", encoding="utf-8")
+
+            result = client.draft_forward(
+                self.session,
+                account_selector="demo@example.com",
+                message_id="msg-1",
+                to="primary@example.com",
+                cc="copy@example.com",
+                bcc="audit@example.com",
+                attachments=[str(attachment)],
+                instruction="Forward with attachment.",
+                body="Forwarding the document.",
+                create_draft=True,
+                confirm=True,
+            )
+
+        draft = self.session.GetItemFromID("msg-1").last_forward
+        self.assertTrue(result["created"])
+        self.assertEqual(draft.To, "primary@example.com")
+        self.assertEqual(draft.CC, "copy@example.com")
+        self.assertEqual(draft.BCC, "audit@example.com")
+        self.assertEqual(draft.Attachments.Count, 1)
+        self.assertEqual(result["draft_attachments"]["items"][0]["filename"], "signed.pdf")
 
     def test_cross_account_draft_warns_when_send_using_account_cannot_be_set(self):
         response_session = make_response_session()
@@ -1134,6 +1217,63 @@ class OutlookClassicMailClientTests(unittest.TestCase):
 
         self.assertEqual(reply_args.send_using_account, "reply@example.com")
         self.assertEqual(forward_args.send_using_account, "reply@example.com")
+
+    def test_parser_accepts_draft_recipients_reply_mode_and_attachments(self):
+        parser = client.build_parser()
+
+        reply_args = parser.parse_args(
+            [
+                "draft-reply",
+                "--account",
+                "anchor@example.com",
+                "--send-using-account",
+                "reply@example.com",
+                "--message-id",
+                "anchor-1",
+                "--reply-mode",
+                "all",
+                "--to",
+                "primary@example.com",
+                "--cc",
+                "copy@example.com",
+                "--bcc",
+                "audit@example.com",
+                "--attach",
+                r"C:\tmp\one.pdf",
+                "--attach",
+                r"C:\tmp\two.pdf",
+                "--instruction",
+                "Confirm.",
+            ]
+        )
+        forward_args = parser.parse_args(
+            [
+                "draft-forward",
+                "--account",
+                "anchor@example.com",
+                "--message-id",
+                "anchor-1",
+                "--to",
+                "primary@example.com",
+                "--cc",
+                "copy@example.com",
+                "--bcc",
+                "audit@example.com",
+                "--attach",
+                r"C:\tmp\one.pdf",
+                "--instruction",
+                "Forward.",
+            ]
+        )
+
+        self.assertEqual(reply_args.reply_mode, "all")
+        self.assertEqual(reply_args.to, "primary@example.com")
+        self.assertEqual(reply_args.cc, "copy@example.com")
+        self.assertEqual(reply_args.bcc, "audit@example.com")
+        self.assertEqual(reply_args.attach, [r"C:\tmp\one.pdf", r"C:\tmp\two.pdf"])
+        self.assertEqual(forward_args.cc, "copy@example.com")
+        self.assertEqual(forward_args.bcc, "audit@example.com")
+        self.assertEqual(forward_args.attach, [r"C:\tmp\one.pdf"])
 
     def test_draft_forward_create_preserves_existing_html_body(self):
         message = self.session.GetItemFromID("msg-1")
