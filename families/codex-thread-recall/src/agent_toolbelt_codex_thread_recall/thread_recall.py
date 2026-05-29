@@ -142,6 +142,7 @@ EVIDENCE_SCAN_LIMIT = 200
 RAW_TEXT_STORE_LIMIT = 16000
 MAX_CONTEXT_ENTRIES = 5
 SQLITE_PARAM_CHUNK_SIZE = 500
+SQLITE_BUSY_TIMEOUT_MS = 30000
 INDEX_LOCK_POLL_SECONDS = 0.1
 INDEX_LOCK_WAIT_SECONDS = 5.0
 INDEX_LOCK_STALE_SECONDS = 300.0
@@ -1324,8 +1325,9 @@ def load_rollout_delta(
 def connect_cache(codex_home: Path) -> sqlite3.Connection:
     db_path = cache_db_path(codex_home)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=SQLITE_BUSY_TIMEOUT_MS / 1000)
     conn.row_factory = sqlite3.Row
+    conn.execute(f"pragma busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
     conn.execute("pragma foreign_keys = on")
     conn.execute("pragma journal_mode = wal")
     conn.execute("pragma synchronous = normal")
@@ -1336,8 +1338,9 @@ def connect_existing_cache(codex_home: Path) -> sqlite3.Connection | None:
     db_path = cache_db_path(codex_home)
     if not db_path.is_file():
         return None
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=SQLITE_BUSY_TIMEOUT_MS / 1000)
     conn.row_factory = sqlite3.Row
+    conn.execute(f"pragma busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
     return conn
 
 
@@ -3561,7 +3564,49 @@ def ensure_index_for_threads(
     index_meta: dict[str, Any] | None = None
     warnings: list[str] = []
     for position, thread in enumerate(threads):
-        item_meta, item_warnings = ensure_index(conn, thread=thread, codex_home=codex_home)
+        try:
+            item_meta, item_warnings = ensure_index(conn, thread=thread, codex_home=codex_home)
+        except IndexBusyError as exc:
+            existing = cache_metadata_row(conn, thread["id"]) if table_exists(conn, "rollout_indexes") else None
+            if existing is None:
+                raise
+            item_meta = index_meta_payload(
+                codex_home,
+                existing,
+                built=False,
+                stale=True,
+                appended_entries=0,
+                lock_state={**exc.lock_state, "state": "busy-using-stale-cache"},
+            )
+            item_warnings = [
+                (
+                    "Thread recall index is locked by another live process; "
+                    f"using existing stale cache for thread {thread['id']} instead of failing."
+                )
+            ]
+        except sqlite3.OperationalError as exc:
+            if "database is locked" not in str(exc).lower():
+                raise
+            existing = cache_metadata_row(conn, thread["id"]) if table_exists(conn, "rollout_indexes") else None
+            if existing is None:
+                raise
+            item_meta = index_meta_payload(
+                codex_home,
+                existing,
+                built=False,
+                stale=True,
+                appended_entries=0,
+                lock_state={
+                    **classify_lock_state(read_lock_metadata(thread_lock_path(codex_home, thread["id"]))),
+                    "state": "database-locked-using-stale-cache",
+                },
+            )
+            item_warnings = [
+                (
+                    "Thread recall SQLite cache is locked by another process; "
+                    f"using existing stale cache for thread {thread['id']} instead of failing."
+                )
+            ]
         warnings.extend(item_warnings)
         if position == 0:
             index_meta = item_meta

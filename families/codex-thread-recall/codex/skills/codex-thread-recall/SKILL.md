@@ -2,7 +2,6 @@
 name: codex-thread-recall
 description: Use `scripts/invoke_codex_thread_recall.py` to inspect the current Codex thread's own raw rollout history before broad repo or web exploration on long-running or resumed work.
 license: MIT
-compatibility: Codex only. Requires CODEX_THREAD_ID, local Codex state_5.sqlite, and readable rollout JSONL files.
 metadata:
   version: "0.1.0"
 ---
@@ -10,6 +9,8 @@ metadata:
 # Codex Thread Recall
 
 Use `scripts/invoke_codex_thread_recall.py` when long-running or resumed work risks re-researching things this same thread already knew before context compactions.
+
+Compatibility: Codex only. Requires `CODEX_THREAD_ID`, local Codex `state_5.sqlite`, and readable rollout JSONL files.
 
 ## Workflow
 
@@ -55,8 +56,10 @@ The helper keeps an append-aware cache under `CODEX_HOME/cache/codex-thread-reca
 The first run may build or rebuild the index; later runs should be warm and only
 index newly appended committed JSONL lines. Cache mutation is protected by a
 per-thread lock file in that same cache directory, so concurrent callers wait
-briefly, reclaim stale locks, and fail closed with `index_busy` instead of
-hanging indefinitely.
+briefly, reclaim stale locks, and avoid hanging indefinitely. If a read command
+overlaps another live process and a prior cache exists, it uses that existing
+stale cache with a `busy-using-stale-cache` diagnostic instead of failing with
+`index_busy`. If no cache exists yet, it still fails closed with `index_busy`.
 `status` is fast and non-mutating by default. It reports cache freshness and
 collector diagnostics but does not build or append the index. Use `collect` to
 warm caches explicitly, or let the command you actually need (`recall`, `grep`,

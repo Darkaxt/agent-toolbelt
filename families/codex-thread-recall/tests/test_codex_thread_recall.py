@@ -1236,6 +1236,94 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertEqual(payload["error"], "index_busy")
         self.assertEqual(payload["cache"]["lock_state"]["state"], "busy")
 
+    def test_live_index_lock_uses_existing_stale_cache_instead_of_failing(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Remember artifact-alpha."}),
+            make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Decision: artifact-alpha is indexed."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, rollout_path = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                warmed = thread_recall.recall()
+            self.assertTrue(warmed["ok"], warmed)
+
+            with rollout_path.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(
+                        make_entry(
+                            "2026-04-25T08:02:00Z",
+                            "event_msg",
+                            {"type": "agent_message", "text": "Decision: appended while locked."},
+                        ),
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+            lock_path = thread_recall.thread_lock_path(codex_home, THREAD_ID)
+            lock_path.write_text(
+                json.dumps(
+                    {
+                        "thread_id": THREAD_ID,
+                        "rollout_path": str(rollout_path),
+                        "pid": os.getpid(),
+                        "started_at": datetime.now(tz=thread_recall.UTC).isoformat(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            original_wait = thread_recall.INDEX_LOCK_WAIT_SECONDS
+            original_poll = thread_recall.INDEX_LOCK_POLL_SECONDS
+            original_sleep = thread_recall.time.sleep
+            original_monotonic = thread_recall.time.monotonic
+            original_pid_is_running = thread_recall.pid_is_running
+            try:
+                thread_recall.INDEX_LOCK_WAIT_SECONDS = 0.15
+                thread_recall.INDEX_LOCK_POLL_SECONDS = 0.05
+                thread_recall.pid_is_running = lambda _pid: True
+                ticks = iter([0.0, 0.1, 0.2, 0.3])
+                thread_recall.time.monotonic = lambda: next(ticks)
+                thread_recall.time.sleep = lambda _seconds: None
+                with self.with_env(codex_home):
+                    payload = thread_recall.recall()
+            finally:
+                thread_recall.INDEX_LOCK_WAIT_SECONDS = original_wait
+                thread_recall.INDEX_LOCK_POLL_SECONDS = original_poll
+                thread_recall.time.sleep = original_sleep
+                thread_recall.time.monotonic = original_monotonic
+                thread_recall.pid_is_running = original_pid_is_running
+
+        self.assertTrue(payload["ok"], payload)
+        self.assertEqual(payload["index"]["lock_state"]["state"], "busy-using-stale-cache")
+        self.assertTrue(payload["index"]["stale"])
+        self.assertTrue(any("using existing stale cache" in warning for warning in payload["warnings"]))
+
+    def test_sqlite_database_lock_uses_existing_stale_cache_instead_of_traceback(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Remember artifact-alpha."}),
+            make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Decision: artifact-alpha is indexed."}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                warmed = thread_recall.recall()
+            self.assertTrue(warmed["ok"], warmed)
+
+            original_ensure_index = thread_recall.ensure_index
+            try:
+                thread_recall.ensure_index = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                    sqlite3.OperationalError("database is locked")
+                )
+                with self.with_env(codex_home):
+                    payload = thread_recall.recall()
+            finally:
+                thread_recall.ensure_index = original_ensure_index
+
+        self.assertTrue(payload["ok"], payload)
+        self.assertEqual(payload["index"]["lock_state"]["state"], "database-locked-using-stale-cache")
+        self.assertTrue(payload["index"]["stale"])
+        self.assertTrue(any("SQLite cache is locked" in warning for warning in payload["warnings"]))
+
     def test_timeline_groups_ship_events_by_entity_and_tracks_revisits_without_repo_specific_heuristics(self):
         entries = [
             make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Please ship `artifact-alpha`."}),
