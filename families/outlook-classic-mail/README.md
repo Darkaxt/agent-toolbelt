@@ -114,6 +114,8 @@ directly in that target store's default Drafts folder and returns
 under a localized anchor folder such as `Borradores` while leaving the sender
 account unset. Generic `apply-action --action create-draft` is for standalone
 new drafts only; it also creates in the selected account's Drafts folder but has
-no original thread to quote.
+no original thread to quote. Standalone drafts support explicit `--to`, `--cc`,
+`--bcc`, and repeated `--attach` local file paths; attachments are validated
+before a draft item is saved.
 
 Cache and folder-hint writes are best-effort. If the local state files are temporarily locked, the client returns the search results and reports the skipped update as a warning. Use `--no-update-cache` for repeated read-only direct-folder searches when cache freshness is not needed.

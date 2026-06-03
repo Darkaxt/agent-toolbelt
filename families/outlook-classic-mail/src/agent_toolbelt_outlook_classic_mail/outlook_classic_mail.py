@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from agent_toolbelt_core.common import merge_messages, run_process, windows_local_tools_dir
 
@@ -424,6 +424,9 @@ def build_parser() -> argparse.ArgumentParser:
     apply_action.add_argument("--read-state", choices=("read", "unread"))
     apply_action.add_argument("--subject")
     apply_action.add_argument("--to")
+    apply_action.add_argument("--cc")
+    apply_action.add_argument("--bcc")
+    apply_action.add_argument("--attach", action="append", default=[])
     apply_action.add_argument("--body")
 
     return parser
@@ -432,6 +435,11 @@ def build_parser() -> argparse.ArgumentParser:
 def append_optional_arg(parts: list[str], flag: str, value: Any) -> None:
     if value not in (None, False):
         parts.extend([flag, str(value)])
+
+
+def append_optional_args(parts: list[str], flag: str, values: Iterable[Any] | None) -> None:
+    for value in values or []:
+        append_optional_arg(parts, flag, value)
 
 
 def build_operation_args(args: argparse.Namespace) -> list[str]:
@@ -629,6 +637,9 @@ def build_operation_args(args: argparse.Namespace) -> list[str]:
     append_optional_arg(parts, "--read-state", args.read_state)
     append_optional_arg(parts, "--subject", args.subject)
     append_optional_arg(parts, "--to", args.to)
+    append_optional_arg(parts, "--cc", args.cc)
+    append_optional_arg(parts, "--bcc", args.bcc)
+    append_optional_args(parts, "--attach", args.attach)
     append_optional_arg(parts, "--body", args.body)
     if args.confirm:
         parts.append("--confirm")

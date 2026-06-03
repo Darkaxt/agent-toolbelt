@@ -2012,6 +2012,67 @@ def set_send_using_account(item: Any, account_info: dict[str, Any], warnings: li
     return actual
 
 
+def validate_attachment_paths(paths: Iterable[str] | None) -> list[Path]:
+    resolved: list[Path] = []
+    for raw_path in paths or []:
+        candidate = Path(raw_path).expanduser().resolve()
+        if not candidate.exists():
+            raise ValueError(f"Attachment path does not exist: {raw_path}")
+        if not candidate.is_file():
+            raise ValueError(f"Attachment path is not a file: {raw_path}")
+        resolved.append(candidate)
+    return resolved
+
+
+def apply_recipients(
+    item: Any,
+    *,
+    to: str | None,
+    cc: str | None,
+    bcc: str | None,
+) -> dict[str, Any]:
+    requested = {"to": to or "", "cc": cc or "", "bcc": bcc or ""}
+    if to is not None:
+        item.To = to
+    if cc is not None:
+        item.CC = cc
+    if bcc is not None:
+        item.BCC = bcc
+    return {
+        "requested": requested,
+        "actual": {
+            "to": str(safe_get(item, "To", "") or ""),
+            "cc": str(safe_get(item, "CC", "") or ""),
+            "bcc": str(safe_get(item, "BCC", "") or ""),
+        },
+        "warnings": [],
+    }
+
+
+def add_draft_attachments(item: Any, attachments: list[Path]) -> dict[str, Any]:
+    warnings: list[str] = []
+    attached_items: list[dict[str, Any]] = []
+    attachment_collection = safe_get(item, "Attachments")
+    add_attachment = safe_get(attachment_collection, "Add")
+    if attachments and not callable(add_attachment):
+        raise ValueError("Draft item does not expose Attachments.Add.")
+    for path in attachments:
+        add_attachment(str(path))
+        attached_items.append(
+            {
+                "filename": path.name,
+                "path": str(path),
+                "attached": True,
+                "warnings": [],
+            }
+        )
+    return {
+        "count": len(attached_items),
+        "items": attached_items,
+        "warnings": warnings,
+    }
+
+
 def copy_draft_fields(source: Any, target: Any) -> None:
     for attribute in ("To", "CC", "Subject"):
         value = safe_get(source, attribute, "")
@@ -2107,17 +2168,21 @@ def create_target_store_draft(
     subject: str | None,
     to: str | None,
     body: str | None,
+    cc: str | None = None,
+    bcc: str | None = None,
+    attachments: Iterable[str] | None = None,
 ) -> dict[str, Any]:
+    resolved_attachments = validate_attachment_paths(attachments)
     warnings: list[str] = []
     target_folder = account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
     draft = create_mail_item_in_folder(target_folder)
-    if to:
-        draft.To = to
+    recipients = apply_recipients(draft, to=to, cc=cc, bcc=bcc)
     if subject:
         draft.Subject = subject
     if body:
         draft.Body = body
     set_send_using_account(draft, account_info, warnings)
+    draft_attachments = add_draft_attachments(draft, resolved_attachments)
     draft.Save()
     placement = draft_placement_summary(
         strategy="target_store_drafts",
@@ -2131,8 +2196,12 @@ def create_target_store_draft(
         "draft_entry_id": safe_get(draft, "EntryID", None),
         "subject": safe_get(draft, "Subject", ""),
         "to": safe_get(draft, "To", ""),
+        "cc": safe_get(draft, "CC", ""),
+        "bcc": safe_get(draft, "BCC", ""),
         "send_using_account": account_info.get("smtp_address"),
         "draft_placement": placement,
+        "draft_recipients": recipients,
+        "draft_attachments": draft_attachments,
         "draft_content": {
             "thread_content_included": False,
             "thread_content_source": "missing",
@@ -2402,13 +2471,19 @@ def create_generic_draft(
     *,
     subject: str | None,
     to: str | None,
+    cc: str | None,
+    bcc: str | None,
     body: str | None,
+    attachments: Iterable[str] | None,
 ) -> dict[str, Any]:
     return create_target_store_draft(
         account_info,
         subject=subject,
         to=to,
+        cc=cc,
+        bcc=bcc,
         body=body,
+        attachments=attachments,
     )
 
 
@@ -2425,7 +2500,10 @@ def apply_action(
     read_state: str | None = None,
     subject: str | None = None,
     to: str | None = None,
+    cc: str | None = None,
+    bcc: str | None = None,
     body: str | None = None,
+    attachments: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     if action in MUTATING_ACTIONS and not confirm:
         raise ValueError(f"Action {action} requires --confirm.")
@@ -2440,7 +2518,10 @@ def apply_action(
                 account_info,
                 subject=subject,
                 to=to,
+                cc=cc,
+                bcc=bcc,
                 body=body,
+                attachments=attachments,
             ),
         }
 
@@ -2826,7 +2907,10 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
         read_state=args.read_state,
         subject=args.subject,
         to=args.to,
+        cc=args.cc,
+        bcc=args.bcc,
         body=args.body,
+        attachments=args.attach,
     )
     return make_result(
         ok=True,
@@ -3009,6 +3093,9 @@ def build_parser() -> argparse.ArgumentParser:
     apply_action.add_argument("--read-state", choices=("read", "unread"))
     apply_action.add_argument("--subject")
     apply_action.add_argument("--to")
+    apply_action.add_argument("--cc")
+    apply_action.add_argument("--bcc")
+    apply_action.add_argument("--attach", action="append", default=[])
     apply_action.add_argument("--body")
 
     return parser

@@ -471,6 +471,61 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
             ],
         )
 
+    def test_build_operation_args_routes_standalone_draft_recipients_and_attachments(self):
+        parser = outlook_classic_mail.build_parser()
+        args = parser.parse_args(
+            [
+                "apply-action",
+                "--account",
+                "demo@example.com",
+                "--action",
+                "create-draft",
+                "--subject",
+                "Manual follow-up",
+                "--to",
+                "to@example.com",
+                "--cc",
+                "cc@example.com",
+                "--bcc",
+                "bcc@example.com",
+                "--attach",
+                "C:\\Temp\\one.pdf",
+                "--attach",
+                "C:\\Temp\\two.pdf",
+                "--body",
+                "Draft body",
+                "--confirm",
+            ]
+        )
+
+        operation_args = outlook_classic_mail.build_operation_args(args)
+
+        self.assertEqual(
+            operation_args,
+            [
+                "apply-action",
+                "--account",
+                "demo@example.com",
+                "--action",
+                "create-draft",
+                "--subject",
+                "Manual follow-up",
+                "--to",
+                "to@example.com",
+                "--cc",
+                "cc@example.com",
+                "--bcc",
+                "bcc@example.com",
+                "--attach",
+                "C:\\Temp\\one.pdf",
+                "--attach",
+                "C:\\Temp\\two.pdf",
+                "--body",
+                "Draft body",
+                "--confirm",
+            ],
+        )
+
     def test_build_operation_args_routes_domain_inspection_with_blocklists(self):
         parser = outlook_classic_mail.build_parser()
         args = parser.parse_args(

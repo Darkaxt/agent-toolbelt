@@ -95,6 +95,9 @@ target account's default Drafts folder. Inspect `draft_placement.target_account`
 `placement_verified` before claiming the sender/folder is correct. Generic
 `apply-action --action create-draft` is only for standalone new drafts; it uses
 the selected account's Drafts folder but has no thread content to include.
+Standalone drafts support explicit `--to`, `--cc`, `--bcc`, and repeated
+`--attach` local file paths. Attachment paths are resolved and validated before
+any draft item is saved.
 
 Blocklist support is read-only. The `threat` profile uses threat-centered DNS
 lists; `debug-all` adds broader ad/tracking/adult/platform lists for exploratory

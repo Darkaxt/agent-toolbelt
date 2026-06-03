@@ -73,5 +73,5 @@ python scripts/invoke_outlook_mail.py move-message --account <smtp|store> --mess
 python scripts/invoke_outlook_mail.py triage [--account <smtp|store> | --all-accounts] [--days <n>] [--limit <n>]
 python scripts/invoke_outlook_mail.py draft-reply --account <smtp|store> [--send-using-account <smtp|store>] --message-id <entry-id> --instruction "<guidance>" [--body "<final draft text>" --create-draft --confirm]
 python scripts/invoke_outlook_mail.py draft-forward --account <smtp|store> [--send-using-account <smtp|store>] --message-id <entry-id> --to "<recipient>" --instruction "<guidance>" [--body "<final draft text>" --create-draft --confirm]
-python scripts/invoke_outlook_mail.py apply-action --account <smtp|store> --message-id <entry-id> --action <create-draft|send|move|delete|category|mark-read> --confirm
+python scripts/invoke_outlook_mail.py apply-action --account <smtp|store> [--message-id <entry-id>] --action <create-draft|send|move|delete|category|mark-read> [--subject "<subject>"] [--to "<recipients>"] [--cc "<recipients>"] [--bcc "<recipients>"] [--attach <path>] [--body "<draft text>"] --confirm
 ```

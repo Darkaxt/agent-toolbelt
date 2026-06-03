@@ -36,15 +36,23 @@ class FakeItems(list):
         return draft
 
 
+class FakeAttachments(list):
+    def Add(self, path):
+        self.append(str(path))
+        return path
+
+
 @dataclass
 class FakeReply:
     Subject: str
     To: str
     CC: str = ""
+    BCC: str = ""
     Body: str = "Quoted original"
     HTMLBody: str = "<html><body><table><tr><td>Quoted original</td></tr></table></body></html>"
     SendUsingAccount: object | None = None
     Parent: object | None = None
+    Attachments: FakeAttachments = field(default_factory=FakeAttachments)
     reject_send_using: bool = False
     saved: bool = False
 
@@ -1199,6 +1207,63 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         self.assertEqual(draft.Body, "Draft body")
         self.assertEqual(result["draft_placement"]["strategy"], "target_store_drafts")
         self.assertTrue(result["draft_placement"]["placement_verified"])
+
+    def test_apply_action_create_draft_applies_cc_bcc_and_attachments(self):
+        account = client.resolve_account(self.session, "demo@example.com")
+        drafts = client.resolve_folder(account, "drafts")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            first = Path(temp_dir) / "transfer.pdf"
+            second = Path(temp_dir) / "terms.txt"
+            first.write_text("pdf placeholder", encoding="utf-8")
+            second.write_text("terms", encoding="utf-8")
+
+            result = client.apply_action(
+                self.session,
+                account_selector="demo@example.com",
+                message_id=None,
+                action="create-draft",
+                confirm=True,
+                application=FailingCreateItemApplication(),
+                subject="Manual follow-up",
+                to="to@example.com",
+                cc="cc@example.com",
+                bcc="bcc@example.com",
+                body="Draft body",
+                attachments=[str(first), str(second)],
+            )
+
+        self.assertTrue(result["created"])
+        self.assertEqual(len(drafts.Items), 1)
+        draft = drafts.Items[-1]
+        self.assertTrue(draft.saved)
+        self.assertEqual(draft.CC, "cc@example.com")
+        self.assertEqual(draft.BCC, "bcc@example.com")
+        self.assertEqual(draft.Attachments, [str(first.resolve()), str(second.resolve())])
+        self.assertEqual(result["draft_recipients"]["actual"]["cc"], "cc@example.com")
+        self.assertEqual(result["draft_recipients"]["actual"]["bcc"], "bcc@example.com")
+        self.assertEqual(result["draft_attachments"]["count"], 2)
+        self.assertTrue(all(item["attached"] for item in result["draft_attachments"]["items"]))
+
+    def test_apply_action_create_draft_rejects_missing_attachment_before_save(self):
+        account = client.resolve_account(self.session, "demo@example.com")
+        drafts = client.resolve_folder(account, "drafts")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            missing = Path(temp_dir) / "missing.pdf"
+            with self.assertRaisesRegex(ValueError, "Attachment path does not exist"):
+                client.apply_action(
+                    self.session,
+                    account_selector="demo@example.com",
+                    message_id=None,
+                    action="create-draft",
+                    confirm=True,
+                    application=FailingCreateItemApplication(),
+                    subject="Manual follow-up",
+                    to="to@example.com",
+                    body="Draft body",
+                    attachments=[str(missing)],
+                )
+
+        self.assertEqual(len(drafts.Items), 0)
 
     def test_move_message_preview_does_not_mutate(self):
         account = client.resolve_account(self.session, "demo@example.com")

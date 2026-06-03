@@ -2,12 +2,13 @@
 name: outlook-classic-mail
 description: Use Outlook Classic on Windows as the default local mail path for inbox triage, mailbox search, thread reads, response lookup, folder moves, follow-up analysis, reply drafting, forwarding, and explicit mailbox actions.
 license: MIT
-compatibility: Windows Outlook Classic COM workflow. Mailbox actions require explicit user confirmation.
 metadata:
   version: "0.1.0"
 ---
 
 # Outlook Classic Mail
+
+Compatibility: Windows Outlook Classic COM workflow. Mailbox actions require explicit user confirmation.
 
 ## Overview
 
@@ -53,7 +54,7 @@ Do not use this skill when:
 - If `draft-reply` or `draft-forward` returns `draft_status: needs_body`, produce the final body text in chat or rerun with `--body`; do not claim a draft was created and do not reuse the instruction text as the body.
 - After creating a reply/forward draft, inspect `draft_content.thread_content_included`, `draft_content.thread_content_source`, `draft_placement.actual_send_using_account`, and `draft_placement.placement_verified` before telling the user the draft is correctly threaded and using the intended sender.
 - If `draft_content.warnings` contains `thread_quote_fallback_used`, mention that Outlook did not provide a usable native quote and the helper added a manual quoted block from the anchor message. If it contains `thread_content_missing`, warn that the thread content could not be included.
-- Use generic `apply-action --action create-draft` only for standalone new drafts; it saves in the selected account's Drafts folder but does not include reply/forward thread content.
+- Use generic `apply-action --action create-draft` only for standalone new drafts; it saves in the selected account's Drafts folder but does not include reply/forward thread content. Use explicit `--to`, `--cc`, `--bcc`, and repeated `--attach` local file paths when a standalone draft needs recipients or attachments.
 - For "move/file/put this email in folder X" tasks, use `find-folders` first when the target is ambiguous, run `move-message` without `--confirm` as a preview, and run `move-message --confirm` only after explicit user approval.
 - If folder discovery finds nothing, search Inbox and state that the scope was Inbox-only unless a bounded all-folder search is explicitly needed.
 - Use `search --all-folders` as a bounded fallback. It uses cache-guided folder candidates by default; add `--bypass-cache --broad-scan` when the user suspects the cache/rules missed something or explicitly asks to scan broadly.
@@ -85,5 +86,5 @@ python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] move-message --a
 python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] triage [--account <smtp|store> | --all-accounts] [--days <n>] [--limit <n>]
 python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] draft-reply --account <smtp|store> [--send-using-account <smtp|store>] --message-id <entry-id> --instruction "<guidance>" [--body "<final draft text>" --create-draft --confirm]
 python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] draft-forward --account <smtp|store> [--send-using-account <smtp|store>] --message-id <entry-id> --to "<recipient>" --instruction "<guidance>" [--body "<final draft text>" --create-draft --confirm]
-python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] apply-action --account <smtp|store> --message-id <entry-id> --action <create-draft|send|move|delete|category|mark-read> --confirm
+python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] apply-action --account <smtp|store> [--message-id <entry-id>] --action <create-draft|send|move|delete|category|mark-read> [--subject "<subject>"] [--to "<recipients>"] [--cc "<recipients>"] [--bcc "<recipients>"] [--attach <path>] [--body "<draft text>"] --confirm
 ```
