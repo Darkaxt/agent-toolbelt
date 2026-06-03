@@ -60,6 +60,11 @@ briefly, reclaim stale locks, and avoid hanging indefinitely. If a read command
 overlaps another live process and a prior cache exists, it uses that existing
 stale cache with a `busy-using-stale-cache` diagnostic instead of failing with
 `index_busy`. If no cache exists yet, it still fails closed with `index_busy`.
+When the scheduled collector has recently covered the current thread, foreground
+read commands may also return an existing stale cache with
+`refresh-deferred-using-stale-cache` instead of doing a slow append refresh in
+the agent command path. Treat that as usable recall evidence and let the
+collector catch up; do not abandon recall solely because that diagnostic appears.
 `status` is fast and non-mutating by default. It reports cache freshness and
 collector diagnostics but does not build or append the index. Use `collect` to
 warm caches explicitly, or let the command you actually need (`recall`, `grep`,

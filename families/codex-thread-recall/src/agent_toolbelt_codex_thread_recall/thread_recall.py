@@ -147,6 +147,14 @@ INDEX_LOCK_POLL_SECONDS = 0.1
 INDEX_LOCK_WAIT_SECONDS = 5.0
 INDEX_LOCK_STALE_SECONDS = 300.0
 COLLECTOR_LOCK_SKIP_STATES = {"locked", "busy"}
+FOREGROUND_STALE_CACHE_REASONS = {
+    "append-rollout-growth",
+    "rollout-path-changed",
+    "entry-count-mismatch",
+    "entry-index-mismatch",
+    "rollout-line-mismatch",
+}
+FOREGROUND_STALE_CACHE_COLLECTOR_MAX_AGE_SECONDS = 15 * 60
 DEFAULT_COLLECTOR_UPDATED_WITHIN_HOURS = 48
 DEFAULT_COLLECTOR_MAX_THREADS = 10
 DEFAULT_COLLECTOR_MAX_RUN_SECONDS = 90
@@ -3555,6 +3563,70 @@ def apply_thread_context(payload: dict[str, Any], *, thread_id: str, thread_map:
     return payload
 
 
+def collector_recently_covers_thread(codex_home: Path, *, thread_id: str) -> bool:
+    payload = read_collector_last_run(codex_home)
+    if not payload:
+        return False
+    finished_at = parse_iso_timestamp(payload.get("finished_at")) or parse_iso_timestamp(payload.get("started_at"))
+    if finished_at is None:
+        return False
+    age_seconds = (datetime.now(tz=UTC) - finished_at).total_seconds()
+    if age_seconds < 0 or age_seconds > FOREGROUND_STALE_CACHE_COLLECTOR_MAX_AGE_SECONDS:
+        return False
+    return any(item.get("thread_id") == thread_id for item in payload.get("threads") or [])
+
+
+def foreground_stale_cache_fallback(
+    conn: sqlite3.Connection,
+    *,
+    thread: dict[str, Any],
+    codex_home: Path,
+) -> tuple[dict[str, Any], list[str]] | None:
+    if not collector_recently_covers_thread(codex_home, thread_id=thread["id"]):
+        return None
+    if not table_exists(conn, "rollout_indexes"):
+        return None
+    existing = cache_metadata_row(conn, thread["id"])
+    if existing is None:
+        return None
+    health = safe_cache_health(conn, thread_id=thread["id"])
+    if health.get("rebuild_recommended"):
+        return None
+    try:
+        rollout_path = Path(thread["rollout_path"])
+        rollout_size, rollout_mtime_ns = rollout_signature(rollout_path)
+        thread_stats = safe_thread_entry_stats(conn, thread["id"])
+        rebuild_reason, _force_rebuild = cache_rebuild_reason(
+            existing=existing,
+            thread_stats=thread_stats,
+            rollout_path=rollout_path,
+            rollout_size=rollout_size,
+            rollout_mtime_ns=rollout_mtime_ns,
+        )
+    except Exception:
+        return None
+    if rebuild_reason not in FOREGROUND_STALE_CACHE_REASONS:
+        return None
+    lock_state = {
+        **classify_lock_state(read_lock_metadata(thread_lock_path(codex_home, thread["id"]))),
+        "state": "refresh-deferred-using-stale-cache",
+        "refresh_reason": rebuild_reason,
+    }
+    return index_meta_payload(
+        codex_home,
+        existing,
+        built=False,
+        stale=True,
+        appended_entries=0,
+        lock_state=lock_state,
+    ), [
+        (
+            "Thread recall cache refresh was deferred to avoid blocking foreground work "
+            f"(reason={rebuild_reason}); using existing stale cache for thread {thread['id']}."
+        )
+    ]
+
+
 def ensure_index_for_threads(
     conn: sqlite3.Connection,
     *,
@@ -3565,7 +3637,11 @@ def ensure_index_for_threads(
     warnings: list[str] = []
     for position, thread in enumerate(threads):
         try:
-            item_meta, item_warnings = ensure_index(conn, thread=thread, codex_home=codex_home)
+            fallback = foreground_stale_cache_fallback(conn, thread=thread, codex_home=codex_home)
+            if fallback is not None:
+                item_meta, item_warnings = fallback
+            else:
+                item_meta, item_warnings = ensure_index(conn, thread=thread, codex_home=codex_home)
         except IndexBusyError as exc:
             existing = cache_metadata_row(conn, thread["id"]) if table_exists(conn, "rollout_indexes") else None
             if existing is None:

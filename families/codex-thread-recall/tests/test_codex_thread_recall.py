@@ -1324,6 +1324,48 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertTrue(payload["index"]["stale"])
         self.assertTrue(any("SQLite cache is locked" in warning for warning in payload["warnings"]))
 
+    def test_foreground_recall_defers_append_refresh_when_recent_collector_covers_thread(self):
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Remember artifact-alpha."}),
+            make_entry("2026-04-25T08:01:00Z", "event_msg", {"type": "agent_message", "text": "Decision: artifact-alpha is indexed."}),
+        ]
+        appended_entry = make_entry(
+            "2026-04-25T08:02:00Z",
+            "event_msg",
+            {"type": "agent_message", "text": "Decision: appended while collector-backed."},
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, rollout_path = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                warmed = thread_recall.recall()
+            self.assertTrue(warmed["ok"], warmed)
+            thread_recall.write_collector_last_run(
+                codex_home,
+                {
+                    "started_at": datetime.now(tz=thread_recall.UTC).isoformat(),
+                    "finished_at": datetime.now(tz=thread_recall.UTC).isoformat(),
+                    "threads": [{"thread_id": THREAD_ID, "result": "already_fresh"}],
+                },
+            )
+            with rollout_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(appended_entry, ensure_ascii=False) + "\n")
+
+            original_ensure_index = thread_recall.ensure_index
+            try:
+                thread_recall.ensure_index = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                    AssertionError("foreground refresh should be deferred")
+                )
+                with self.with_env(codex_home):
+                    payload = thread_recall.recall()
+            finally:
+                thread_recall.ensure_index = original_ensure_index
+
+        self.assertTrue(payload["ok"], payload)
+        self.assertEqual(payload["index"]["lock_state"]["state"], "refresh-deferred-using-stale-cache")
+        self.assertEqual(payload["index"]["lock_state"]["refresh_reason"], "append-rollout-growth")
+        self.assertTrue(payload["index"]["stale"])
+        self.assertTrue(any("refresh was deferred" in warning for warning in payload["warnings"]))
+
     def test_timeline_groups_ship_events_by_entity_and_tracks_revisits_without_repo_specific_heuristics(self):
         entries = [
             make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Please ship `artifact-alpha`."}),
