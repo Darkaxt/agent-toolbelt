@@ -14,6 +14,7 @@ Each family ships its own Codex skill bundle. Install only the family you want.
 - Codex Thread Recall: `families/codex-thread-recall/codex/skills/codex-thread-recall`
 - Skills.sh Scout: `families/skills-sh-scout/codex/skills/skills-sh-scout`
 - Skroutz CLI: `families/skroutz-cli/codex/skills/skroutz-cli`
+- AliExpress CLI: `families/aliexpress-cli/codex/skills/aliexpress-cli`
 
 ## Install flow
 

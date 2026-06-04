@@ -7,6 +7,8 @@
 - `families/media`: `yt-dlp`, `ffmpeg`, and `ffprobe` available on `PATH`
 - `families/outlook-classic-mail`: Outlook Classic installed and configured locally, `uv` available on `PATH`, and a local Outlook COM client project
 - `families/amazon-cli`: `uv` available on `PATH`; the Amazon CLI client source is bundled, while browser/session runtime state remains under local app data
+- `families/skroutz-cli`: `uv` available on `PATH`; the Skroutz CLI client source is bundled, while optional browser/session runtime state remains under local app data
+- `families/aliexpress-cli`: `uv` available on `PATH`; the AliExpress CLI client source is bundled, while optional browser/session runtime state remains under local app data
 - `families/linkedin-cv`: `uv` available on `PATH`; Playwright dependencies are resolved by the package, while managed browser profiles, sessions, and snapshots remain under local app data
 
 ## Shared resolution order
@@ -19,7 +21,7 @@ For external binaries, the family packages prefer:
 
 On Windows, binary families keep `%LOCALAPPDATA%\Tools` as a final compatibility fallback for older local installs. Do not treat it as required when that directory is already on `PATH`.
 
-Project-style clients such as Outlook, WhatsApp, and Amazon need a project root for `uv run --project` or editable execution. Use the documented environment override or `--client-home` when the default project root is not suitable.
+Project-style clients such as Outlook, WhatsApp, Amazon, Skroutz, and AliExpress need a project root for `uv run --project` or editable execution. Use the documented environment override or `--client-home` when the default project root is not suitable.
 
 ## Suggested environment overrides
 
@@ -40,3 +42,9 @@ Project-style clients such as Outlook, WhatsApp, and Amazon need a project root 
 - The Amazon family runs the bundled `amazon-intent-cli` project with `uv run --project`.
 - `AMAZON_INTENT_CLI_HOME` or `--client-home` can point at another checkout.
 - Managed browser sessions, browser profiles, cookies, caches, and account state are runtime data and are not included in this repo.
+
+## Shopping CLI notes
+
+- Skroutz and AliExpress follow the same package-backed pattern as Amazon.
+- `SKROUTZ_INTENT_CLI_HOME` and `ALIEXPRESS_INTENT_CLI_HOME` can point at alternate client checkouts.
+- AliExpress supports read-only `--use-session` commands after explicit managed login; cart and checkout workflows are intentionally absent.

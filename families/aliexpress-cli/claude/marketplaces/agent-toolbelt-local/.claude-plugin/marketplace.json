@@ -1,0 +1,13 @@
+{
+  "name": "agent-toolbelt-local",
+  "owner": {
+    "name": "Agent Toolbelt",
+    "email": "noreply@example.com"
+  },
+  "plugins": [
+    {
+      "name": "aliexpress-cli",
+      "source": "./plugins/aliexpress-cli"
+    }
+  ]
+}

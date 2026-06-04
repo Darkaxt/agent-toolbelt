@@ -79,6 +79,20 @@ class PortabilityTests(unittest.TestCase):
             / "agent_toolbelt_amazon_cli"
             / "assets"
             / "amazon-intent-cli",
+            REPO_ROOT
+            / "families"
+            / "skroutz-cli"
+            / "src"
+            / "agent_toolbelt_skroutz_cli"
+            / "assets"
+            / "skroutz-intent-cli",
+            REPO_ROOT
+            / "families"
+            / "aliexpress-cli"
+            / "src"
+            / "agent_toolbelt_aliexpress_cli"
+            / "assets"
+            / "aliexpress-intent-cli",
         ]
 
         offenders = []

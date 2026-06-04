@@ -47,6 +47,12 @@ EXPECTED_FAMILIES = {
         "package_dir": "agent_toolbelt_skroutz_cli",
         "has_claude": True,
     },
+    "aliexpress-cli": {
+        "project_name": "agent-toolbelt-aliexpress-cli",
+        "script_name": "agent-toolbelt-aliexpress-cli",
+        "package_dir": "agent_toolbelt_aliexpress_cli",
+        "has_claude": True,
+    },
     "linkedin-cv": {
         "project_name": "agent-toolbelt-linkedin-cv",
         "script_name": "agent-toolbelt-linkedin-cv",
@@ -98,6 +104,7 @@ class MonorepoLayoutTests(unittest.TestCase):
                 "families/mail-domain-quarantine",
                 "families/amazon-cli",
                 "families/skroutz-cli",
+                "families/aliexpress-cli",
                 "families/linkedin-cv",
                 "families/codex-thread-recall",
                 "families/whatsapp-wacli",

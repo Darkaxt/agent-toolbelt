@@ -13,6 +13,7 @@ Each family ships its own self-contained local marketplace with one plugin.
 - LinkedIn CV: `families/linkedin-cv/claude/marketplaces/agent-toolbelt-local`
 - Skills.sh Scout: `families/skills-sh-scout/claude/marketplaces/agent-toolbelt-local`
 - Skroutz CLI: `families/skroutz-cli/claude/marketplaces/agent-toolbelt-local`
+- AliExpress CLI: `families/aliexpress-cli/claude/marketplaces/agent-toolbelt-local`
 
 ## Install flow
 

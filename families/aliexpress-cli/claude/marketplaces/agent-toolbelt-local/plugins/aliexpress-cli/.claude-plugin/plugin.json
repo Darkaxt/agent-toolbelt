@@ -1,0 +1,6 @@
+{
+  "name": "aliexpress-cli",
+  "version": "0.1.0",
+  "description": "AliExpress product discovery helper for clean search/detail/review data.",
+  "license": "MIT"
+}

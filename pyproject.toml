@@ -9,6 +9,7 @@ members = [
   "families/mail-domain-quarantine",
   "families/amazon-cli",
   "families/skroutz-cli",
+  "families/aliexpress-cli",
   "families/linkedin-cv",
   "families/codex-thread-recall",
   "families/whatsapp-wacli",
@@ -21,4 +22,5 @@ addopts = ["--import-mode=importlib"]
 norecursedirs = [
   "families/amazon-cli/src/agent_toolbelt_amazon_cli/assets/amazon-intent-cli/tests",
   "families/skroutz-cli/src/agent_toolbelt_skroutz_cli/assets/skroutz-intent-cli/tests",
+  "families/aliexpress-cli/src/agent_toolbelt_aliexpress_cli/assets/aliexpress-intent-cli/tests",
 ]

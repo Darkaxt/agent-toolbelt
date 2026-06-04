@@ -1,0 +1,2 @@
+"""AliExpress intent CLI."""
+
