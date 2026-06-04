@@ -1,0 +1,3 @@
+display_name: AliExpress CLI
+short_description: Search AliExpress and extract clean product, price, delivery, and review data.
+default_prompt: Use $aliexpress-cli for AliExpress product search, item details, reviews/comments, comparisons, and optional managed logged-in read-only browsing.

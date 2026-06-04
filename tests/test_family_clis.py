@@ -34,6 +34,10 @@ FAMILY_IMPORTS = {
         REPO_ROOT / "families" / "skroutz-cli" / "src",
         "agent_toolbelt_skroutz_cli.cli",
     ),
+    "aliexpress-cli": (
+        REPO_ROOT / "families" / "aliexpress-cli" / "src",
+        "agent_toolbelt_aliexpress_cli.cli",
+    ),
     "linkedin-cv": (
         REPO_ROOT / "families" / "linkedin-cv" / "src",
         "agent_toolbelt_linkedin_cv.cli",
@@ -227,6 +231,29 @@ class FamilyCLITests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["operation"], "offers")
         self.assertEqual(payload["result"]["product_id"], "62956505")
+
+    def test_aliexpress_cli_routes_pass_through_command(self):
+        cli = import_family_cli("aliexpress-cli")
+
+        original_invoke = cli.aliexpress_cli.invoke_client
+        cli.aliexpress_cli.invoke_client = lambda **kwargs: {
+            "ok": True,
+            "operation": "search",
+            "result": {"query": "30L trash bin", "results": []},
+            "warnings": [],
+            "stderr": "",
+            "exit_code": 0,
+        }
+        try:
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                exit_code = cli.main(["--", "search", "30L trash bin", "--use-session"])
+                payload = json.loads(buffer.getvalue())
+        finally:
+            cli.aliexpress_cli.invoke_client = original_invoke
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["operation"], "search")
+        self.assertEqual(payload["result"]["query"], "30L trash bin")
 
     def test_linkedin_cv_cli_routes_profile_capture(self):
         cli = import_family_cli("linkedin-cv")

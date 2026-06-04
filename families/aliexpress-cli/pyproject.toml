@@ -1,0 +1,27 @@
+[project]
+name = "agent-toolbelt-aliexpress-cli"
+version = "0.1.0"
+description = "Agent Toolbelt bridge for AliExpress product discovery workflows."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "agent-toolbelt-core",
+]
+
+[project.scripts]
+agent-toolbelt-aliexpress-cli = "agent_toolbelt_aliexpress_cli.cli:entrypoint"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+agent_toolbelt_aliexpress_cli = [
+  "assets/aliexpress-intent-cli/pyproject.toml",
+  "assets/aliexpress-intent-cli/aliexpress_intent_cli/*.py",
+  "assets/aliexpress-intent-cli/tests/*.py",
+  "assets/aliexpress-intent-cli/tests/fixtures/*.html",
+]

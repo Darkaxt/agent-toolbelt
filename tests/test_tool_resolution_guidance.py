@@ -12,12 +12,14 @@ MEDIA_SRC = REPO_ROOT / "families" / "media" / "src"
 OUTLOOK_SRC = REPO_ROOT / "families" / "outlook-classic-mail" / "src"
 WHATSAPP_SRC = REPO_ROOT / "families" / "whatsapp-wacli" / "src"
 AMAZON_SRC = REPO_ROOT / "families" / "amazon-cli" / "src"
-for path in (CORE_SRC, MEDIA_SRC, OUTLOOK_SRC, WHATSAPP_SRC, AMAZON_SRC):
+ALIEXPRESS_SRC = REPO_ROOT / "families" / "aliexpress-cli" / "src"
+for path in (CORE_SRC, MEDIA_SRC, OUTLOOK_SRC, WHATSAPP_SRC, AMAZON_SRC, ALIEXPRESS_SRC):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
 from agent_toolbelt_core import common
 from agent_toolbelt_amazon_cli import amazon_cli
+from agent_toolbelt_aliexpress_cli import aliexpress_cli
 from agent_toolbelt_media import media
 from agent_toolbelt_outlook_classic_mail import outlook_classic_mail
 from agent_toolbelt_whatsapp_wacli import whatsapp_wacli
@@ -76,22 +78,26 @@ class ToolResolutionGuidanceTests(unittest.TestCase):
             outlook_classic_mail.resolve_client_home,
             whatsapp_wacli.resolve_client_home,
             amazon_cli.resolve_client_home,
+            aliexpress_cli.resolve_client_home,
         )
         outlook_classic_mail.resolve_client_home = lambda explicit_home=None: None
         whatsapp_wacli.resolve_client_home = lambda explicit_home=None: None
         amazon_cli.resolve_client_home = lambda explicit_home=None: None
+        aliexpress_cli.resolve_client_home = lambda explicit_home=None: None
         try:
             outlook_result = outlook_classic_mail.invoke_client(operation_args=["accounts"])
             whatsapp_result = whatsapp_wacli.invoke_client(operation_args=["status"])
             amazon_result = amazon_cli.invoke_client(operation_args=["search", "coffee"])
+            aliexpress_result = aliexpress_cli.invoke_client(operation_args=["search", "bin"])
         finally:
             (
                 outlook_classic_mail.resolve_client_home,
                 whatsapp_wacli.resolve_client_home,
                 amazon_cli.resolve_client_home,
+                aliexpress_cli.resolve_client_home,
             ) = original_resolvers
 
-        for result in (outlook_result, whatsapp_result, amazon_result):
+        for result in (outlook_result, whatsapp_result, amazon_result, aliexpress_result):
             self.assertIn("environment override", result["stderr"])
             self.assertIn("project root", result["stderr"])
             self.assertIn("compatibility fallback", result["stderr"])

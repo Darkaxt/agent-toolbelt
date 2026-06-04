@@ -12,6 +12,7 @@ FAMILY_NAMES = (
     "outlook-classic-mail",
     "amazon-cli",
     "skroutz-cli",
+    "aliexpress-cli",
     "linkedin-cv",
     "codex-thread-recall",
     "whatsapp-wacli",

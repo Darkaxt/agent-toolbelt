@@ -4,6 +4,7 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 $ExpectedSkills = @(
   @{ Name = "amazon-cli"; Path = "families/amazon-cli/codex/skills/amazon-cli/SKILL.md" },
   @{ Name = "skroutz-cli"; Path = "families/skroutz-cli/codex/skills/skroutz-cli/SKILL.md" },
+  @{ Name = "aliexpress-cli"; Path = "families/aliexpress-cli/codex/skills/aliexpress-cli/SKILL.md" },
   @{ Name = "codex-thread-recall"; Path = "families/codex-thread-recall/codex/skills/codex-thread-recall/SKILL.md" },
   @{ Name = "everything-search"; Path = "families/everything/codex/skills/everything-search/SKILL.md" },
   @{ Name = "gemini-cli"; Path = "families/gemini/codex/skills/gemini-cli/SKILL.md" },
@@ -103,7 +104,7 @@ try {
   $env:DISABLE_TELEMETRY = "1"
   $CurrentBranch = (& git branch --show-current 2>$null | Out-String).Trim()
   if ($CurrentBranch -eq "main") {
-    $RemoteOutput = & npx skills add Darkaxt/agent-toolbelt --list 2>&1 | Out-String
+    $RemoteOutput = & npx --yes skills@1.5.10 add Darkaxt/agent-toolbelt --list 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) {
       Fail "remote skills CLI discovery failed"
     }
@@ -112,7 +113,7 @@ try {
     Write-Host "Skipping default-branch remote skills CLI discovery on feature branch $CurrentBranch."
   }
 
-  $LocalOutput = & npx skills add . --list 2>&1 | Out-String
+  $LocalOutput = & npx --yes skills@1.5.10 add . --list 2>&1 | Out-String
   if ($LASTEXITCODE -ne 0) {
     Fail "local skills CLI discovery failed"
   }
