@@ -22,7 +22,7 @@ Use `scripts/invoke_outlook_mail.py` for local mailbox access through Outlook Cl
 - Use the metadata cache for repeated contact/sender/subject lookups. It stores message identifiers, contacts, subjects, timestamps, and folder locations, but not full message bodies.
 - Use `cache-refresh --all-accounts --days 90` to populate or refresh the cache; use `cache-status` and `cache-show --query <text>` to inspect cache coverage.
 - Run `sync-mail` before searching for very recent sent or received mail when Outlook folders may lag behind Send/Receive.
-- Outlook COM-backed calls are single-lane. Never launch parallel Outlook searches or parallel wrapper invocations for `search`, `search --all-folders`, `find-folders`, `find-response`, `read-thread`, `triage`, `inspect-domains`, or `scan-domain-refs`.
+- Outlook COM-backed calls are single-lane. Never launch parallel Outlook searches or parallel wrapper invocations for `search`, `search --all-folders`, `find-folders`, `find-response`, `read-thread`, `read-message`, `triage`, `inspect-domains`, or `scan-domain-refs`.
 - Do not use background jobs, `Start-Job`, `Start-Process`, shell `&`, command chaining such as `cmd1; cmd2`, or any other tool fanout to run Outlook searches across folders, accounts, queries, or message ids in parallel. Run one Outlook command at a time and wait for its JSON result before deciding the next command.
 - If multiple accounts or folders must be searched, use one bounded helper command such as `--all-folders`, `--all-accounts`, or cache-guided candidates, or run narrower commands sequentially.
 - The local FIFO queue is not permission to start parallel searches. It is a last-line guard for accidental concurrency and timeout isolation.
@@ -33,6 +33,7 @@ Use `scripts/invoke_outlook_mail.py` for local mailbox access through Outlook Cl
 - Use `search --all-folders` as a bounded fallback. It uses cache-guided folder candidates by default; add `--bypass-cache --broad-scan` when the user suspects the cache/rules missed something or explicitly asks to scan broadly.
 - Use `--no-update-cache` for repeated direct-folder read-only searches when cache freshness is not needed.
 - For "find my response/reply" tasks tied to a received message, use `find-response` before manual Sent/Drafts searches.
+- When a search or thread result gives only `body_excerpt` but exact message text or attachment names are needed, use `read-message --account <smtp|store> --message-id <entry-id>` for that single message. Add `--include-html` only when the HTML body is materially needed. Do not bypass the helper with ad hoc COM scripts for normal exact-body reads.
 - For domain age or blocklist evidence, use `inspect-domains` for one message or `scan-domain-refs` for a bounded folder scan; these commands are read-only.
 - Use `blocklists status` to inspect the local DNS blocklist cache and `blocklists refresh` only when cache maintenance is explicitly needed.
 - For reply or forward drafts, prefer `draft-reply` or `draft-forward`; do not use generic `apply-action --action create-draft` for replies because it has no original thread anchor to quote.
@@ -65,6 +66,7 @@ python scripts/invoke_outlook_mail.py find-folders --query <text> [--account <sm
 python scripts/invoke_outlook_mail.py search --account <smtp|store> [--folder inbox|sent|drafts|trash|custom:<path>] [--query <text>] [--unread] [--from <email>] [--to <email>] [--days <n>] [--limit <n>]
 python scripts/invoke_outlook_mail.py search --all-folders --query <text> [--account <smtp|store>|--all-accounts] [--folder-limit <n>] [--per-folder-limit <n>] [--bypass-cache] [--broad-scan] [--no-update-cache]
 python scripts/invoke_outlook_mail.py read-thread --account <smtp|store> --message-id <entry-id>
+python scripts/invoke_outlook_mail.py read-message --account <smtp|store> --message-id <entry-id> [--include-html]
 python scripts/invoke_outlook_mail.py find-response --account <anchor-store> --message-id <entry-id> [--limit <n>] [--fallback-all-accounts] [--exclude-drafts]
 python scripts/invoke_outlook_mail.py inspect-domains --account <smtp|store> --message-id <entry-id> [--with-rdap] [--young-days <n>] [--rdap-cache <sqlite-path>] [--with-blocklists] [--blocklist-profile threat|debug-all] [--blocklist-cache <sqlite-path>]
 python scripts/invoke_outlook_mail.py scan-domain-refs --account <smtp|store> --folder inbox|custom:<path> [--days <n>] [--limit <n>] [--with-rdap] [--young-days <n>] [--rdap-cache <sqlite-path>] [--with-blocklists] [--blocklist-profile threat|debug-all] [--blocklist-cache <sqlite-path>]

@@ -37,6 +37,24 @@ class FakeItems(list):
 
 
 @dataclass
+class FakeAttachment:
+    FileName: str
+    DisplayName: str = ""
+    Size: int = 0
+    Type: int = 1
+    Position: int = 0
+
+
+class FakeAttachments(list):
+    @property
+    def Count(self) -> int:
+        return len(self)
+
+    def Item(self, index):
+        return self[index - 1]
+
+
+@dataclass
 class FakeReply:
     Subject: str
     To: str
@@ -81,10 +99,13 @@ class FakeMessage:
     ConversationID: str
     ConversationTopic: str
     CC: str = ""
+    BCC: str = ""
     Parent: object | None = None
     deleted: bool = False
     sent: bool = False
     Categories: str = ""
+    HTMLBody: str = ""
+    Attachments: FakeAttachments = field(default_factory=FakeAttachments)
     last_reply: FakeReply | None = field(default=None, init=False)
     last_forward: FakeForward | None = field(default=None, init=False)
 
@@ -740,6 +761,38 @@ class OutlookClassicMailClientTests(unittest.TestCase):
 
         self.assertEqual(result["anchor"]["entry_id"], "msg-1")
         self.assertEqual([message["entry_id"] for message in result["messages"]], ["msg-3", "msg-1"])
+
+    def test_read_message_returns_full_body_and_attachment_list(self):
+        account = client.resolve_account(self.session, "demo@example.com")
+        message = client.resolve_message(self.session, account, "msg-1")
+        message.Body = "Line one\r\nLine two\r\nFinal exact sentence."
+        message.HTMLBody = "<html><body><p>Line one</p><p>Line two</p></body></html>"
+        message.Attachments = FakeAttachments(
+            [
+                FakeAttachment(FileName="transfer.pdf", DisplayName="Transfer PDF", Size=12345),
+                FakeAttachment(FileName="terms.txt", Size=99),
+            ]
+        )
+
+        result = client.read_message(
+            self.session,
+            account_selector="demo@example.com",
+            message_id="msg-1",
+            include_html=True,
+        )
+
+        self.assertEqual(result["message"]["entry_id"], "msg-1")
+        self.assertEqual(result["message"]["body"], "Line one\r\nLine two\r\nFinal exact sentence.")
+        self.assertEqual(result["message"]["html_body"], message.HTMLBody)
+        self.assertEqual(result["message"]["body_length"], len(message.Body))
+        self.assertEqual(result["message"]["attachment_count"], 2)
+        self.assertEqual(
+            [attachment["file_name"] for attachment in result["message"]["attachments"]],
+            ["transfer.pdf", "terms.txt"],
+        )
+        self.assertEqual(result["message"]["attachments"][0]["display_name"], "Transfer PDF")
+        self.assertEqual(result["message"]["attachments"][0]["size"], 12345)
+        self.assertTrue(result["message"]["has_attachments"])
 
     def test_find_response_uses_original_recipient_account_before_other_stores(self):
         response_session = make_response_session()

@@ -44,6 +44,7 @@ agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 search --account dem
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 search --all-folders --query lettre24 --all-accounts --folder-limit 10 --per-folder-limit 5
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 search --all-folders --query lettre24 --all-accounts --bypass-cache --broad-scan
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 read-thread --account demo@example.com --message-id <entry-id>
+agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 read-message --account demo@example.com --message-id <entry-id> --include-html
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 find-response --account demo@example.com --message-id <entry-id>
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 move-message --account demo@example.com --message-id <entry-id> --target-folder custom:Inbox/Projects
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 move-message --account demo@example.com --message-id <entry-id> --target-folder custom:Inbox/Projects --confirm
