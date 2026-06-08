@@ -456,6 +456,35 @@ def message_summary(item: Any) -> dict[str, Any]:
     }
 
 
+def attachment_summary(attachment: Any) -> dict[str, Any]:
+    return {
+        "file_name": safe_get(attachment, "FileName", "") or "",
+        "display_name": safe_get(attachment, "DisplayName", "") or "",
+        "size": safe_get(attachment, "Size", None),
+        "type": safe_get(attachment, "Type", None),
+        "position": safe_get(attachment, "Position", None),
+    }
+
+
+def message_detail(item: Any, *, include_html: bool = False) -> dict[str, Any]:
+    attachments = safe_get(item, "Attachments")
+    attachment_count = int(safe_get(attachments, "Count", 0) or 0)
+    body = str(safe_get(item, "Body", "") or "")
+    detail = {
+        **message_summary(item),
+        "body": body,
+        "body_length": len(body),
+        "attachment_count": attachment_count,
+        "has_attachments": attachment_count > 0,
+        "attachments": [attachment_summary(attachment) for attachment in iterate_collection(attachments, attachment_count)],
+    }
+    if include_html:
+        html_body = str(safe_get(item, "HTMLBody", "") or "")
+        detail["html_body"] = html_body
+        detail["html_body_length"] = len(html_body)
+    return detail
+
+
 def message_datetime(item: Any) -> datetime | None:
     for attribute in ("ReceivedTime", "SentOn", "CreationTime", "LastModificationTime"):
         value = safe_get(item, attribute)
@@ -1511,6 +1540,22 @@ def read_thread(session: Any, *, account_selector: str, message_id: str) -> dict
         "store": account_info["delivery_store"],
         "anchor": anchor_summary,
         "messages": messages,
+    }
+
+
+def read_message(
+    session: Any,
+    *,
+    account_selector: str,
+    message_id: str,
+    include_html: bool = False,
+) -> dict[str, Any]:
+    account_info = resolve_account(session, account_selector)
+    item = resolve_message(session, account_info, message_id)
+    return {
+        "account": account_info["smtp_address"],
+        "store": account_info["delivery_store"],
+        "message": message_detail(item, include_html=include_html),
     }
 
 
@@ -2680,6 +2725,21 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
             result={"anchor": payload["anchor"], "messages": payload["messages"]},
         )
 
+    if args.operation == "read-message":
+        payload = read_message(
+            session,
+            account_selector=args.account,
+            message_id=args.message_id,
+            include_html=args.include_html,
+        )
+        return make_result(
+            ok=True,
+            operation="read-message",
+            account=payload["account"],
+            store=payload["store"],
+            result={"message": payload["message"]},
+        )
+
     if args.operation == "inspect-domains":
         payload = inspect_domains(
             session,
@@ -2928,6 +2988,11 @@ def build_parser() -> argparse.ArgumentParser:
     read_thread = subparsers.add_parser("read-thread", help="Read a thread anchored by one message ID.")
     read_thread.add_argument("--account", required=True)
     read_thread.add_argument("--message-id", required=True)
+
+    read_message_parser = subparsers.add_parser("read-message", help="Read one message body and attachment metadata.")
+    read_message_parser.add_argument("--account", required=True)
+    read_message_parser.add_argument("--message-id", required=True)
+    read_message_parser.add_argument("--include-html", action="store_true")
 
     inspect_domains_parser = subparsers.add_parser(
         "inspect-domains",

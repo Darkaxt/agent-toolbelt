@@ -49,6 +49,7 @@ uv run --project families/outlook-classic-mail/local-client outlook-classic-mail
 uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 scan-domain-refs --account demo@example.com --folder inbox --days 7 --limit 20 --with-rdap --with-blocklists --blocklist-profile threat --rdap-cache C:\path\to\domain_cache.sqlite --blocklist-cache C:\path\to\blocklist_cache.sqlite
 uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client blocklists status --blocklist-profile threat
 uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client blocklists refresh --blocklist-profile threat
+uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 read-message --account demo@example.com --message-id <entry-id> --include-html
 uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 find-response --account demo@example.com --message-id <entry-id>
 uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 move-message --account demo@example.com --message-id <entry-id> --target-folder custom:Inbox/Projects
 uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 move-message --account demo@example.com --message-id <entry-id> --target-folder custom:Inbox/Projects --confirm

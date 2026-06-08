@@ -338,6 +338,11 @@ def build_parser() -> argparse.ArgumentParser:
     read_thread.add_argument("--account", required=True)
     read_thread.add_argument("--message-id", required=True)
 
+    read_message = subparsers.add_parser("read-message", help="Read one message body and attachment metadata.")
+    read_message.add_argument("--account", required=True)
+    read_message.add_argument("--message-id", required=True)
+    read_message.add_argument("--include-html", action="store_true")
+
     blocklists = subparsers.add_parser("blocklists", help="Inspect or refresh local DNS blocklist cache.")
     blocklists.add_argument("action", choices=("status", "refresh"))
     blocklists.add_argument("--blocklist-profile", choices=("threat", "debug-all"), default="threat")
@@ -534,6 +539,12 @@ def build_operation_args(args: argparse.Namespace) -> list[str]:
 
     if args.operation == "read-thread":
         return [*parts, "--account", args.account, "--message-id", args.message_id]
+
+    if args.operation == "read-message":
+        parts.extend(["--account", args.account, "--message-id", args.message_id])
+        if args.include_html:
+            parts.append("--include-html")
+        return parts
 
     if args.operation == "blocklists":
         parts.append(args.action)

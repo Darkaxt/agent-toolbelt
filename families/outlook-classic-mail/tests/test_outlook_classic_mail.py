@@ -366,6 +366,26 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertEqual(outlook_classic_mail.build_operation_args(probe_args), ["diagnostics-probe"])
         self.assertEqual(outlook_classic_mail.build_operation_args(log_args), ["diagnostics-log", "--limit", "7"])
 
+    def test_build_operation_args_routes_read_message(self):
+        parser = outlook_classic_mail.build_parser()
+        args = parser.parse_args(
+            [
+                "read-message",
+                "--account",
+                "demo@example.com",
+                "--message-id",
+                "msg-1",
+                "--include-html",
+            ]
+        )
+
+        operation_args = outlook_classic_mail.build_operation_args(args)
+
+        self.assertEqual(
+            operation_args,
+            ["read-message", "--account", "demo@example.com", "--message-id", "msg-1", "--include-html"],
+        )
+
     def test_build_operation_args_routes_find_response(self):
         parser = outlook_classic_mail.build_parser()
         args = parser.parse_args(
@@ -616,6 +636,8 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
 
         self.assertIn("cache-refresh", skill_text)
         self.assertIn("sync-mail", skill_text)
+        self.assertIn("read-message", skill_text)
+        self.assertIn("exact message text", skill_text)
         self.assertIn("bypass-cache", skill_text)
         self.assertIn("outlook_busy", skill_text)
         self.assertIn("FIFO queue", skill_text)
@@ -687,6 +709,7 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
 
         self.assertIn("find-folders", skill_text)
         self.assertIn("find-response", skill_text)
+        self.assertIn("read-message", skill_text)
         self.assertIn("scan-domain-refs", skill_text)
         self.assertIn("blocklists status", skill_text)
         self.assertIn("move-message", skill_text)
