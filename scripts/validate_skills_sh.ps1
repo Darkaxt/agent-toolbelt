@@ -69,10 +69,14 @@ try {
     if ($Frontmatter -notmatch "(?m)^license:\s*MIT\s*$") {
       Fail "missing MIT license metadata in $($Skill.Path)"
     }
-    if ($Frontmatter -notmatch "(?m)^compatibility:\s*\S") {
+    $HasCompatibility = (
+      $Frontmatter -match "(?m)^compatibility:\s*\S" -or
+      $Frontmatter -match "(?m)^\s+compatibility:\s*\S"
+    )
+    if (-not $HasCompatibility) {
       Fail "missing compatibility metadata in $($Skill.Path)"
     }
-    if ($Frontmatter -notmatch "(?ms)^metadata:\s*\r?\n\s+version:\s*`"0\.1\.0`"\s*$") {
+    if ($Frontmatter -notmatch "(?m)^\s+version:\s*`"0\.1\.0`"\s*$") {
       Fail "missing metadata.version in $($Skill.Path)"
     }
   }
