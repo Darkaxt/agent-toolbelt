@@ -687,8 +687,9 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn('family_name="outlook-classic-mail"', wrapper_text)
         self.assertIn('package_dir_name="agent_toolbelt_outlook_classic_mail"', wrapper_text)
         self.assertIn("from agent_toolbelt_outlook_classic_mail import cli", wrapper_text)
+        self.assertIn("AGENT_TOOLBELT_HOME", wrapper_text)
+        self.assertIn(r"D:\Downloads\Public\agent-toolbelt", wrapper_text)
         self.assertNotIn("win32com", wrapper_text.lower())
-        self.assertNotIn("DEFAULT_AGENT_TOOLBELT_HOME", wrapper_text)
 
     def test_claude_skill_documents_outlook_workflows(self):
         skill_path = (
