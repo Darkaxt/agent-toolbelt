@@ -4,6 +4,7 @@ from pathlib import Path
 
 
 WORKSPACE_MARKER = "[tool.uv.workspace]"
+DEFAULT_AGENT_TOOLBELT_HOME = Path(r"D:\Downloads\Public\agent-toolbelt")
 
 
 def workspace_candidates(current: Path) -> list[Path]:
@@ -11,6 +12,7 @@ def workspace_candidates(current: Path) -> list[Path]:
     env_home = os.getenv("AGENT_TOOLBELT_HOME")
     if env_home:
         candidates.append(Path(env_home).expanduser())
+    candidates.append(DEFAULT_AGENT_TOOLBELT_HOME)
 
     for start in (current, Path.cwd().resolve()):
         for parent in (start, *start.parents):
