@@ -645,6 +645,8 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("wrapper_diagnostics", skill_text)
         self.assertIn("local Outlook Classic COM", skill_text)
         self.assertIn("cloud connector", skill_text)
+        self.assertIn("Do not blindly rerun an Outlook search", skill_text)
+        self.assertIn("--timeout-sec 900 --queue-timeout-sec 900", skill_text)
 
     def test_claude_plugin_manifest_and_marketplace_exist(self):
         marketplace_root = (
@@ -722,6 +724,8 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("explicit confirmation", skill_text)
         self.assertIn("wrapper_diagnostics", skill_text)
         self.assertIn("cloud connector", skill_text)
+        self.assertIn("Do not blindly rerun an Outlook search", skill_text)
+        self.assertIn("--timeout-sec 900 --queue-timeout-sec 900", skill_text)
         self.assertIn("draft_content.thread_content_included", skill_text)
         self.assertIn("draft_placement.actual_send_using_account", skill_text)
         self.assertIn("thread_quote_fallback_used", skill_text)
