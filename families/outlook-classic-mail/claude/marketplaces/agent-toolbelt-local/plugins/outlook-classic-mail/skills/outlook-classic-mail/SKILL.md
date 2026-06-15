@@ -1,7 +1,8 @@
 ---
 name: outlook-classic-mail
 description: Use Outlook Classic on Windows as the default local mail path for generic email, inbox, multi-account mailbox, triage, search, thread read, response lookup, reply draft, forward draft, folder move, and explicit mailbox action requests.
-version: 0.1.1
+metadata:
+  version: "0.1.1"
 ---
 
 # Outlook Classic Mail
