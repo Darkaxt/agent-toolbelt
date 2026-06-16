@@ -14,7 +14,7 @@ Use this family when an agent needs local mailbox access through Microsoft Outlo
 - serializes COM-backed operations through a client-wide FIFO queue
 - exposes deterministic response lookup from the original recipient account's Sent and Drafts folders
 - exposes explicit folder move previews and confirmed message moves
-- creates reply and forward drafts with quoted thread content diagnostics and verified sender-store placement when Outlook does not do that reliably
+- creates reply and forward drafts with quoted thread content diagnostics, explicit local attachments, and verified sender-store placement when Outlook does not do that reliably
 
 ## What it does not do
 
@@ -49,8 +49,8 @@ agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 find-response --acco
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 move-message --account demo@example.com --message-id <entry-id> --target-folder custom:Inbox/Projects
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 move-message --account demo@example.com --message-id <entry-id> --target-folder custom:Inbox/Projects --confirm
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 triage --all-accounts --days 7 --limit 20
-agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 draft-reply --account demo@example.com --message-id <entry-id> --instruction "Draft a concise confirmation." --body "Tuesday works for me." --create-draft --confirm
-agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 draft-reply --account anchor@example.com --send-using-account reply@example.com --message-id <entry-id> --instruction "Draft from reply@example.com." --body "Tuesday works for me." --create-draft --confirm
+agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 draft-reply --account demo@example.com --message-id <entry-id> --instruction "Draft a concise confirmation." --body "Tuesday works for me." --attach C:\path\transfer.pdf --create-draft --confirm
+agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 draft-reply --account anchor@example.com --send-using-account reply@example.com --message-id <entry-id> --instruction "Draft from reply@example.com." --body "Tuesday works for me." --attach C:\path\transfer.pdf --create-draft --confirm
 ```
 
 The family bridge uses the external client root in this order:
@@ -100,13 +100,22 @@ as the saved draft body. To create a draft, pass the final reply/forward text in
 returns `draft_status: needs_body` in preview mode and fails closed if draft
 creation is requested.
 
-Created reply/forward payloads include `draft_content` and `draft_placement`.
+Pass each explicit local attachment with repeatable `--attach <local-file>`.
+Attachment paths are validated before the helper creates an Outlook draft, and
+missing files or directories fail closed instead of saving a partial draft. Do
+not create a threaded draft and then attach files through ad hoc COM; use the
+helper so sender placement, quoted thread content, and attachments are verified
+together.
+
+Created reply/forward payloads include `draft_content`, `draft_placement`, and
+`draft_attachments`.
 Check `draft_content.thread_content_included`,
 `draft_content.thread_content_source`, `draft_placement.actual_send_using_account`,
-and `draft_placement.placement_verified` before reporting that a draft is
-correctly threaded and sender-safe. If Outlook does not materialize the quoted
-thread, the client adds a manual quoted block from the anchor message and
-reports `thread_quote_fallback_used`.
+`draft_placement.placement_verified`, and `draft_attachments.items[].attached`
+before reporting that a draft is correctly threaded, sender-safe, and has the
+requested files. If Outlook does not materialize the quoted thread, the client
+adds a manual quoted block from the anchor message and reports
+`thread_quote_fallback_used`.
 
 When the sender account cannot be verified, or when `--send-using-account`
 targets a different Outlook store, the local COM client creates the saved draft
