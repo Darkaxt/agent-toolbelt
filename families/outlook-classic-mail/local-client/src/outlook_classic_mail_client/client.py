@@ -1828,6 +1828,42 @@ def draft_body_state(*, suggested_body: str, created: bool) -> dict[str, Any]:
     }
 
 
+def prepare_draft_attachments(attachments: Iterable[str] | None) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    for raw_path in attachments or []:
+        path = Path(raw_path).expanduser()
+        if not path.exists():
+            raise ValueError(f"Attachment path does not exist: {raw_path}")
+        if not path.is_file():
+            raise ValueError(f"Attachment path is not a file: {raw_path}")
+        resolved = path.resolve()
+        items.append(
+            {
+                "filename": resolved.name,
+                "path": str(resolved),
+                "attached": False,
+                "warnings": [],
+            }
+        )
+    return {
+        "count": len(items),
+        "items": items,
+        "warnings": [],
+    }
+
+
+def attach_draft_files(draft: Any, draft_attachments: dict[str, Any]) -> None:
+    if not draft_attachments.get("items"):
+        return
+    attachments = safe_get(draft, "Attachments")
+    add_attachment = safe_get(attachments, "Add")
+    if not callable(add_attachment):
+        raise ValueError("Draft item does not expose Attachments.Add.")
+    for item in draft_attachments["items"]:
+        add_attachment(item["path"])
+        item["attached"] = True
+
+
 def validate_operation_args(args: argparse.Namespace) -> None:
     operation = getattr(args, "operation", "")
     if operation not in {"draft-reply", "draft-forward"} or not getattr(args, "create_draft", False):
@@ -2120,6 +2156,7 @@ def save_target_store_draft(
     source_message: Any | None = None,
     mode: str | None = None,
     initial_warnings: list[str] | None = None,
+    draft_attachments: dict[str, Any] | None = None,
 ) -> tuple[Any, str, dict[str, Any], dict[str, Any]]:
     warnings: list[str] = list(initial_warnings or [])
     draft_content = {
@@ -2135,6 +2172,7 @@ def save_target_store_draft(
     draft = create_mail_item_in_folder(target_folder)
     copy_draft_fields(template, draft)
     set_send_using_account(draft, target_account_info, warnings)
+    attach_draft_files(draft, draft_attachments or {})
     draft.Save()
     placement = draft_placement_summary(
         strategy="target_store_drafts",
@@ -2152,6 +2190,7 @@ def create_target_store_draft(
     subject: str | None,
     to: str | None,
     body: str | None,
+    draft_attachments: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     warnings: list[str] = []
     target_folder = account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
@@ -2163,6 +2202,7 @@ def create_target_store_draft(
     if body:
         draft.Body = body
     set_send_using_account(draft, account_info, warnings)
+    attach_draft_files(draft, draft_attachments or {})
     draft.Save()
     placement = draft_placement_summary(
         strategy="target_store_drafts",
@@ -2184,6 +2224,7 @@ def create_target_store_draft(
             "body_format": "plain" if body else "empty",
             "warnings": [],
         },
+        "draft_attachments": draft_attachments or prepare_draft_attachments([]),
     }
 
 
@@ -2208,11 +2249,13 @@ def draft_reply(
     body: str | None,
     create_draft: bool,
     confirm: bool,
+    attachments: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     if create_draft and not confirm:
         raise ValueError("Creating a reply draft requires --confirm.")
     if create_draft:
         require_final_draft_body(body=body, mode="reply")
+    draft_attachments = prepare_draft_attachments(attachments)
 
     account_info = resolve_account(session, account_selector)
     message = resolve_message(session, account_info, message_id)
@@ -2247,6 +2290,7 @@ def draft_reply(
                 suggested_body=suggested_body,
                 source_message=message,
                 mode="reply",
+                draft_attachments=draft_attachments,
             )
         else:
             warnings: list[str] = []
@@ -2260,11 +2304,13 @@ def draft_reply(
                     source_message=message,
                     mode="reply",
                     initial_warnings=fallback_warnings,
+                    draft_attachments=draft_attachments,
                 )
             else:
                 draft_content = ensure_thread_content(reply, message, "reply")
                 body_format = prepend_draft_body(reply, suggested_body)
                 draft_content["body_format"] = body_format
+                attach_draft_files(reply, draft_attachments)
                 reply.Save()
                 target_folder = account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
                 draft_placement = draft_placement_summary(
@@ -2295,6 +2341,7 @@ def draft_reply(
         "draft_entry_id": draft_entry_id,
         "draft_placement": draft_placement,
         "draft_content": draft_content,
+        "draft_attachments": draft_attachments,
     }
 
 
@@ -2309,11 +2356,13 @@ def draft_forward(
     body: str | None,
     create_draft: bool,
     confirm: bool,
+    attachments: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     if create_draft and not confirm:
         raise ValueError("Creating a forward draft requires --confirm.")
     if create_draft:
         require_final_draft_body(body=body, mode="forward")
+    draft_attachments = prepare_draft_attachments(attachments)
 
     account_info = resolve_account(session, account_selector)
     message = resolve_message(session, account_info, message_id)
@@ -2349,6 +2398,7 @@ def draft_forward(
                 suggested_body=suggested_body,
                 source_message=message,
                 mode="forward",
+                draft_attachments=draft_attachments,
             )
         else:
             warnings: list[str] = []
@@ -2362,11 +2412,13 @@ def draft_forward(
                     source_message=message,
                     mode="forward",
                     initial_warnings=fallback_warnings,
+                    draft_attachments=draft_attachments,
                 )
             else:
                 draft_content = ensure_thread_content(forward, message, "forward")
                 body_format = prepend_draft_body(forward, suggested_body)
                 draft_content["body_format"] = body_format
+                attach_draft_files(forward, draft_attachments)
                 forward.Save()
                 target_folder = account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
                 draft_placement = draft_placement_summary(
@@ -2397,6 +2449,7 @@ def draft_forward(
         "draft_entry_id": draft_entry_id,
         "draft_placement": draft_placement,
         "draft_content": draft_content,
+        "draft_attachments": draft_attachments,
     }
 
 
@@ -2448,12 +2501,14 @@ def create_generic_draft(
     subject: str | None,
     to: str | None,
     body: str | None,
+    attachments: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     return create_target_store_draft(
         account_info,
         subject=subject,
         to=to,
         body=body,
+        draft_attachments=prepare_draft_attachments(attachments),
     )
 
 
@@ -2471,6 +2526,7 @@ def apply_action(
     subject: str | None = None,
     to: str | None = None,
     body: str | None = None,
+    attachments: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     if action in MUTATING_ACTIONS and not confirm:
         raise ValueError(f"Action {action} requires --confirm.")
@@ -2486,6 +2542,7 @@ def apply_action(
                 subject=subject,
                 to=to,
                 body=body,
+                attachments=attachments,
             ),
         }
 
@@ -2829,6 +2886,7 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
             body=args.body,
             create_draft=args.create_draft,
             confirm=args.confirm,
+            attachments=args.attach,
         )
         return make_result(
             ok=True,
@@ -2849,6 +2907,7 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
             body=args.body,
             create_draft=args.create_draft,
             confirm=args.confirm,
+            attachments=args.attach,
         )
         return make_result(
             ok=True,
@@ -2887,6 +2946,7 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
         subject=args.subject,
         to=args.to,
         body=args.body,
+        attachments=args.attach,
     )
     return make_result(
         ok=True,
@@ -3040,6 +3100,7 @@ def build_parser() -> argparse.ArgumentParser:
     draft_reply_parser.add_argument("--message-id", required=True)
     draft_reply_parser.add_argument("--instruction", required=True)
     draft_reply_parser.add_argument("--body")
+    draft_reply_parser.add_argument("--attach", action="append", default=[])
     draft_reply_parser.add_argument("--send-using-account")
     draft_reply_parser.add_argument("--create-draft", action="store_true")
     draft_reply_parser.add_argument("--confirm", action="store_true")
@@ -3050,6 +3111,7 @@ def build_parser() -> argparse.ArgumentParser:
     draft_forward_parser.add_argument("--to", required=True)
     draft_forward_parser.add_argument("--instruction", required=True)
     draft_forward_parser.add_argument("--body")
+    draft_forward_parser.add_argument("--attach", action="append", default=[])
     draft_forward_parser.add_argument("--send-using-account")
     draft_forward_parser.add_argument("--create-draft", action="store_true")
     draft_forward_parser.add_argument("--confirm", action="store_true")
@@ -3075,5 +3137,6 @@ def build_parser() -> argparse.ArgumentParser:
     apply_action.add_argument("--subject")
     apply_action.add_argument("--to")
     apply_action.add_argument("--body")
+    apply_action.add_argument("--attach", action="append", default=[])
 
     return parser

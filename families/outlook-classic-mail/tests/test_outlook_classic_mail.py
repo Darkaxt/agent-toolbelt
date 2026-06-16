@@ -465,6 +465,10 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
                 "Confirm the schedule.",
                 "--body",
                 "Confirmed.",
+                "--attach",
+                "C:/tmp/transfer.pdf",
+                "--attach",
+                "C:/tmp/supporting.pdf",
                 "--create-draft",
                 "--confirm",
             ]
@@ -486,6 +490,10 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
                 "reply@example.com",
                 "--body",
                 "Confirmed.",
+                "--attach",
+                "C:/tmp/transfer.pdf",
+                "--attach",
+                "C:/tmp/supporting.pdf",
                 "--create-draft",
                 "--confirm",
             ],
@@ -615,11 +623,12 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("prefer `draft-reply` or `draft-forward`", skill_text)
         self.assertIn("draft_content.thread_content_included", skill_text)
         self.assertIn("draft_placement.actual_send_using_account", skill_text)
+        self.assertIn("draft_attachments", skill_text)
         self.assertIn("thread_quote_fallback_used", skill_text)
         self.assertIn("standalone new drafts", skill_text)
         self.assertIn("Treat `--instruction` as guidance only", skill_text)
         self.assertIn("draft_status: needs_body", skill_text)
-        self.assertIn("--body \"<final draft text>\" --create-draft --confirm", skill_text)
+        self.assertIn("--body \"<final draft text>\" [--attach <local-file>] --create-draft --confirm", skill_text)
 
     def test_codex_skill_documents_cache_and_sync_workflows(self):
         skill_path = (

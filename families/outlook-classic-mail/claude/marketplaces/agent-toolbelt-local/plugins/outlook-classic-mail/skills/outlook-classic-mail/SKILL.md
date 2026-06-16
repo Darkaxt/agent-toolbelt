@@ -43,7 +43,8 @@ Use `scripts/invoke_outlook_mail.py` for local mailbox access through Outlook Cl
 - For threaded drafts, `--account` resolves the original message. Add `--send-using-account` when the outgoing draft should use another configured Outlook account.
 - Treat `--instruction` as guidance only. It is never the saved draft body. Generate or obtain the final reply/forward text first and pass that exact text in `--body` when using `--create-draft --confirm`.
 - If `draft-reply` or `draft-forward` returns `draft_status: needs_body`, produce the final body text in chat or rerun with `--body`; do not claim a draft was created and do not reuse the instruction text as the body.
-- After creating a reply/forward draft, inspect `draft_content.thread_content_included`, `draft_content.thread_content_source`, `draft_placement.actual_send_using_account`, and `draft_placement.placement_verified` before telling the user the draft is correctly threaded and using the intended sender.
+- Attach explicit local files with repeatable `--attach <local-file>` on `draft-reply` or `draft-forward`. Missing attachment paths fail before a draft is saved. Do not create a threaded draft and then add attachments through ad hoc COM.
+- After creating a reply/forward draft, inspect `draft_content.thread_content_included`, `draft_content.thread_content_source`, `draft_placement.actual_send_using_account`, `draft_placement.placement_verified`, and `draft_attachments.items[].attached` before telling the user the draft is correctly threaded, using the intended sender, and has the requested files.
 - If `draft_content.warnings` contains `thread_quote_fallback_used`, mention that Outlook did not provide a usable native quote and the helper added a manual quoted block from the anchor message. If it contains `thread_content_missing`, warn that the thread content could not be included.
 - Use generic `apply-action --action create-draft` only for standalone new drafts; it saves in the selected account's Drafts folder but does not include reply/forward thread content.
 - For "move/file/put this email in folder X" tasks, run `find-folders` when the target is ambiguous, then run `move-message` without `--confirm` as a preview.
@@ -76,7 +77,7 @@ python scripts/invoke_outlook_mail.py scan-domain-refs --account <smtp|store> --
 python scripts/invoke_outlook_mail.py blocklists status|refresh [--blocklist-profile threat|debug-all] [--blocklist-cache <sqlite-path>] [--force]
 python scripts/invoke_outlook_mail.py move-message --account <smtp|store> --message-id <entry-id> --target-folder <folder-selector> [--confirm]
 python scripts/invoke_outlook_mail.py triage [--account <smtp|store> | --all-accounts] [--days <n>] [--limit <n>]
-python scripts/invoke_outlook_mail.py draft-reply --account <smtp|store> [--send-using-account <smtp|store>] --message-id <entry-id> --instruction "<guidance>" [--body "<final draft text>" --create-draft --confirm]
-python scripts/invoke_outlook_mail.py draft-forward --account <smtp|store> [--send-using-account <smtp|store>] --message-id <entry-id> --to "<recipient>" --instruction "<guidance>" [--body "<final draft text>" --create-draft --confirm]
+python scripts/invoke_outlook_mail.py draft-reply --account <smtp|store> [--send-using-account <smtp|store>] --message-id <entry-id> --instruction "<guidance>" [--body "<final draft text>" [--attach <local-file>] --create-draft --confirm]
+python scripts/invoke_outlook_mail.py draft-forward --account <smtp|store> [--send-using-account <smtp|store>] --message-id <entry-id> --to "<recipient>" --instruction "<guidance>" [--body "<final draft text>" [--attach <local-file>] --create-draft --confirm]
 python scripts/invoke_outlook_mail.py apply-action --account <smtp|store> --message-id <entry-id> --action <create-draft|send|move|delete|category|mark-read> --confirm
 ```
