@@ -466,6 +466,26 @@ def attachment_summary(attachment: Any) -> dict[str, Any]:
     }
 
 
+def safe_attachment_filename(value: str, fallback: str) -> str:
+    name = Path(value or fallback).name.strip()
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name)
+    return name or fallback
+
+
+def unique_output_path(output_dir: Path, filename: str) -> Path:
+    candidate = output_dir / filename
+    if not candidate.exists():
+        return candidate
+    stem = candidate.stem
+    suffix = candidate.suffix
+    index = 2
+    while True:
+        alternate = output_dir / f"{stem}-{index}{suffix}"
+        if not alternate.exists():
+            return alternate
+        index += 1
+
+
 def message_detail(item: Any, *, include_html: bool = False) -> dict[str, Any]:
     attachments = safe_get(item, "Attachments")
     attachment_count = int(safe_get(attachments, "Count", 0) or 0)
@@ -1559,6 +1579,56 @@ def read_message(
     }
 
 
+def save_attachments(
+    session: Any,
+    *,
+    account_selector: str,
+    message_id: str,
+    output_dir: str,
+) -> dict[str, Any]:
+    account_info = resolve_account(session, account_selector)
+    item = resolve_message(session, account_info, message_id)
+    destination = Path(output_dir).expanduser().resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    if not destination.is_dir():
+        raise ValueError(f"Attachment output path is not a directory: {output_dir}")
+
+    attachments = safe_get(item, "Attachments")
+    attachment_count = int(safe_get(attachments, "Count", 0) or 0)
+    saved_items: list[dict[str, Any]] = []
+    for index, attachment in enumerate(iterate_collection(attachments, attachment_count), start=1):
+        filename = safe_attachment_filename(
+            str(safe_get(attachment, "FileName", "") or safe_get(attachment, "DisplayName", "")),
+            f"attachment-{index}",
+        )
+        target = unique_output_path(destination, filename)
+        save_as_file = safe_get(attachment, "SaveAsFile")
+        if not callable(save_as_file):
+            raise ValueError(f"Attachment cannot be saved through Outlook: {filename}")
+        save_as_file(str(target))
+        saved_items.append(
+            {
+                **attachment_summary(attachment),
+                "filename": filename,
+                "path": str(target),
+                "saved": True,
+                "warnings": [],
+            }
+        )
+
+    return {
+        "account": account_info["smtp_address"],
+        "store": account_info["delivery_store"],
+        "message": message_summary(item),
+        "attachment_export": {
+            "output_dir": str(destination),
+            "saved_count": len(saved_items),
+            "items": saved_items,
+            "warnings": [],
+        },
+    }
+
+
 def extract_recipient_emails(item: Any) -> set[str]:
     text = " ".join(
         [
@@ -1864,6 +1934,52 @@ def attach_draft_files(draft: Any, draft_attachments: dict[str, Any]) -> None:
         item["attached"] = True
 
 
+def apply_recipient_fields(
+    draft: Any,
+    *,
+    to: str | None = None,
+    cc: str | None = None,
+    bcc: str | None = None,
+) -> dict[str, Any]:
+    requested = {"to": to, "cc": cc, "bcc": bcc}
+    warnings: list[str] = []
+    for attribute, value in (("To", to), ("CC", cc), ("BCC", bcc)):
+        if value is None:
+            continue
+        try:
+            setattr(draft, attribute, value)
+        except Exception:
+            add_unique_warning(warnings, f"{attribute.lower()}_unset")
+    return {
+        "requested": {key: value for key, value in requested.items() if value is not None},
+        "actual": {
+            "to": str(safe_get(draft, "To", "") or ""),
+            "cc": str(safe_get(draft, "CC", "") or ""),
+            "bcc": str(safe_get(draft, "BCC", "") or ""),
+        },
+        "warnings": warnings,
+    }
+
+
+def draft_recipients_summary(
+    draft: Any,
+    *,
+    reply_mode: str | None = None,
+    requested: dict[str, str | None] | None = None,
+    warnings: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        **({"reply_mode": reply_mode} if reply_mode is not None else {}),
+        "requested": {key: value for key, value in (requested or {}).items() if value is not None},
+        "actual": {
+            "to": str(safe_get(draft, "To", "") or ""),
+            "cc": str(safe_get(draft, "CC", "") or ""),
+            "bcc": str(safe_get(draft, "BCC", "") or ""),
+        },
+        "warnings": list(warnings or []),
+    }
+
+
 def validate_operation_args(args: argparse.Namespace) -> None:
     operation = getattr(args, "operation", "")
     if operation not in {"draft-reply", "draft-forward"} or not getattr(args, "create_draft", False):
@@ -2094,7 +2210,7 @@ def set_send_using_account(item: Any, account_info: dict[str, Any], warnings: li
 
 
 def copy_draft_fields(source: Any, target: Any) -> None:
-    for attribute in ("To", "CC", "Subject"):
+    for attribute in ("To", "CC", "BCC", "Subject"):
         value = safe_get(source, attribute, "")
         if value:
             try:
@@ -2190,13 +2306,14 @@ def create_target_store_draft(
     subject: str | None,
     to: str | None,
     body: str | None,
+    cc: str | None = None,
+    bcc: str | None = None,
     draft_attachments: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     warnings: list[str] = []
     target_folder = account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
     draft = create_mail_item_in_folder(target_folder)
-    if to:
-        draft.To = to
+    draft_recipients = apply_recipient_fields(draft, to=to, cc=cc, bcc=bcc)
     if subject:
         draft.Subject = subject
     if body:
@@ -2216,6 +2333,7 @@ def create_target_store_draft(
         "draft_entry_id": safe_get(draft, "EntryID", None),
         "subject": safe_get(draft, "Subject", ""),
         "to": safe_get(draft, "To", ""),
+        "draft_recipients": draft_recipients,
         "send_using_account": account_info.get("smtp_address"),
         "draft_placement": placement,
         "draft_content": {
@@ -2250,6 +2368,10 @@ def draft_reply(
     create_draft: bool,
     confirm: bool,
     attachments: Iterable[str] | None = None,
+    reply_mode: str = "sender",
+    to: str | None = None,
+    cc: str | None = None,
+    bcc: str | None = None,
 ) -> dict[str, Any]:
     if create_draft and not confirm:
         raise ValueError("Creating a reply draft requires --confirm.")
@@ -2259,7 +2381,16 @@ def draft_reply(
 
     account_info = resolve_account(session, account_selector)
     message = resolve_message(session, account_info, message_id)
-    reply = message.Reply()
+    if reply_mode == "all":
+        reply_all = safe_get(message, "ReplyAll")
+        if not callable(reply_all):
+            raise ValueError("Message does not expose ReplyAll.")
+        reply = reply_all()
+    elif reply_mode == "sender":
+        reply = message.Reply()
+    else:
+        raise ValueError("Reply mode must be sender or all.")
+    recipient_summary = apply_recipient_fields(reply, to=to, cc=cc, bcc=bcc)
     suggested_body = compose_draft_body(
         instruction=instruction,
         message=message,
@@ -2342,6 +2473,12 @@ def draft_reply(
         "draft_placement": draft_placement,
         "draft_content": draft_content,
         "draft_attachments": draft_attachments,
+        "draft_recipients": draft_recipients_summary(
+            reply,
+            reply_mode=reply_mode,
+            requested=recipient_summary["requested"],
+            warnings=recipient_summary["warnings"],
+        ),
     }
 
 
@@ -2357,6 +2494,8 @@ def draft_forward(
     create_draft: bool,
     confirm: bool,
     attachments: Iterable[str] | None = None,
+    cc: str | None = None,
+    bcc: str | None = None,
 ) -> dict[str, Any]:
     if create_draft and not confirm:
         raise ValueError("Creating a forward draft requires --confirm.")
@@ -2367,6 +2506,7 @@ def draft_forward(
     account_info = resolve_account(session, account_selector)
     message = resolve_message(session, account_info, message_id)
     forward = message.Forward()
+    recipient_summary = apply_recipient_fields(forward, to=to, cc=cc, bcc=bcc)
     suggested_body = compose_draft_body(
         instruction=instruction,
         message=message,
@@ -2389,7 +2529,6 @@ def draft_forward(
         anchor_account_info=account_info,
         send_using_account_selector=send_using_account_selector,
     )
-    forward.To = to
     if create_draft:
         if send_using_account_selector and not account_store_matches(account_info, send_account_info):
             forward, body_format, draft_placement, draft_content = save_target_store_draft(
@@ -2450,6 +2589,11 @@ def draft_forward(
         "draft_placement": draft_placement,
         "draft_content": draft_content,
         "draft_attachments": draft_attachments,
+        "draft_recipients": draft_recipients_summary(
+            forward,
+            requested=recipient_summary["requested"],
+            warnings=recipient_summary["warnings"],
+        ),
     }
 
 
@@ -2501,6 +2645,8 @@ def create_generic_draft(
     subject: str | None,
     to: str | None,
     body: str | None,
+    cc: str | None = None,
+    bcc: str | None = None,
     attachments: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     return create_target_store_draft(
@@ -2508,6 +2654,8 @@ def create_generic_draft(
         subject=subject,
         to=to,
         body=body,
+        cc=cc,
+        bcc=bcc,
         draft_attachments=prepare_draft_attachments(attachments),
     )
 
@@ -2529,13 +2677,21 @@ def edit_draft(
     *,
     account_selector: str,
     message_id: str,
-    body: str,
+    body: str | None = None,
+    subject: str | None = None,
+    to: str | None = None,
+    cc: str | None = None,
+    bcc: str | None = None,
+    attachments: Iterable[str] | None = None,
     confirm: bool,
 ) -> dict[str, Any]:
     if not confirm:
         raise ValueError("Editing a draft requires --confirm.")
-    if not body or not body.strip():
-        raise ValueError("Editing a draft requires --body with the final draft text.")
+    if not any(value is not None for value in (body, subject, to, cc, bcc)) and not list(attachments or []):
+        raise ValueError("Editing a draft requires at least one field to update.")
+    if body is not None and not body.strip():
+        raise ValueError("Editing a draft body requires --body with non-empty final draft text.")
+    draft_attachments = prepare_draft_attachments(attachments)
 
     account_info = resolve_account(session, account_selector)
     item = resolve_message(session, account_info, message_id)
@@ -2544,7 +2700,13 @@ def edit_draft(
     if not folder_paths_match(parent_folder, drafts_folder):
         raise ValueError("Message is not in the selected account's Drafts folder; refusing to edit it as a draft.")
 
-    body_format = set_draft_body(item, body)
+    body_format = None
+    if body is not None:
+        body_format = set_draft_body(item, body)
+    if subject is not None:
+        item.Subject = subject
+    recipient_summary = apply_recipient_fields(item, to=to, cc=cc, bcc=bcc)
+    attach_draft_files(item, draft_attachments)
     item.Save()
     return {
         "account": account_info["smtp_address"],
@@ -2552,13 +2714,19 @@ def edit_draft(
         "message": message_summary(item),
         "updated": True,
         "draft_edit": {
-            "body_source": "body",
-            "body_format": body_format,
+            "body_source": "body" if body is not None else "unchanged",
+            "body_format": body_format or "unchanged",
             "draft_folder": folder_summary(parent_folder),
             "target_drafts_folder": folder_summary(drafts_folder),
             "draft_folder_verified": True,
             "warnings": [],
         },
+        "draft_recipients": draft_recipients_summary(
+            item,
+            requested=recipient_summary["requested"],
+            warnings=recipient_summary["warnings"],
+        ),
+        "draft_attachments": draft_attachments,
     }
 
 
@@ -2575,6 +2743,8 @@ def apply_action(
     read_state: str | None = None,
     subject: str | None = None,
     to: str | None = None,
+    cc: str | None = None,
+    bcc: str | None = None,
     body: str | None = None,
     attachments: Iterable[str] | None = None,
 ) -> dict[str, Any]:
@@ -2591,6 +2761,8 @@ def apply_action(
                 account_info,
                 subject=subject,
                 to=to,
+                cc=cc,
+                bcc=bcc,
                 body=body,
                 attachments=attachments,
             ),
@@ -2847,6 +3019,21 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
             result={"message": payload["message"]},
         )
 
+    if args.operation == "save-attachments":
+        payload = save_attachments(
+            session,
+            account_selector=args.account,
+            message_id=args.message_id,
+            output_dir=args.output_dir,
+        )
+        return make_result(
+            ok=True,
+            operation="save-attachments",
+            account=payload["account"],
+            store=payload["store"],
+            result=payload,
+        )
+
     if args.operation == "inspect-domains":
         payload = inspect_domains(
             session,
@@ -2937,6 +3124,10 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
             create_draft=args.create_draft,
             confirm=args.confirm,
             attachments=args.attach,
+            reply_mode=args.reply_mode,
+            to=args.to,
+            cc=args.cc,
+            bcc=args.bcc,
         )
         return make_result(
             ok=True,
@@ -2953,6 +3144,8 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
             send_using_account_selector=args.send_using_account,
             message_id=args.message_id,
             to=args.to,
+            cc=args.cc,
+            bcc=args.bcc,
             instruction=args.instruction,
             body=args.body,
             create_draft=args.create_draft,
@@ -2989,6 +3182,11 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
             account_selector=args.account,
             message_id=args.message_id,
             body=args.body,
+            subject=args.subject,
+            to=args.to,
+            cc=args.cc,
+            bcc=args.bcc,
+            attachments=args.attach,
             confirm=args.confirm,
         )
         return make_result(
@@ -3011,6 +3209,8 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
         read_state=args.read_state,
         subject=args.subject,
         to=args.to,
+        cc=args.cc,
+        bcc=args.bcc,
         body=args.body,
         attachments=args.attach,
     )
@@ -3120,6 +3320,14 @@ def build_parser() -> argparse.ArgumentParser:
     read_message_parser.add_argument("--message-id", required=True)
     read_message_parser.add_argument("--include-html", action="store_true")
 
+    save_attachments_parser = subparsers.add_parser(
+        "save-attachments",
+        help="Save all attachments from one message to a local directory.",
+    )
+    save_attachments_parser.add_argument("--account", required=True)
+    save_attachments_parser.add_argument("--message-id", required=True)
+    save_attachments_parser.add_argument("--output-dir", required=True)
+
     inspect_domains_parser = subparsers.add_parser(
         "inspect-domains",
         help="Inspect domain references on one message without mutating mail.",
@@ -3166,6 +3374,10 @@ def build_parser() -> argparse.ArgumentParser:
     draft_reply_parser.add_argument("--message-id", required=True)
     draft_reply_parser.add_argument("--instruction", required=True)
     draft_reply_parser.add_argument("--body")
+    draft_reply_parser.add_argument("--reply-mode", choices=("sender", "all"), default="sender")
+    draft_reply_parser.add_argument("--to")
+    draft_reply_parser.add_argument("--cc")
+    draft_reply_parser.add_argument("--bcc")
     draft_reply_parser.add_argument("--attach", action="append", default=[])
     draft_reply_parser.add_argument("--send-using-account")
     draft_reply_parser.add_argument("--create-draft", action="store_true")
@@ -3175,6 +3387,8 @@ def build_parser() -> argparse.ArgumentParser:
     draft_forward_parser.add_argument("--account", required=True)
     draft_forward_parser.add_argument("--message-id", required=True)
     draft_forward_parser.add_argument("--to", required=True)
+    draft_forward_parser.add_argument("--cc")
+    draft_forward_parser.add_argument("--bcc")
     draft_forward_parser.add_argument("--instruction", required=True)
     draft_forward_parser.add_argument("--body")
     draft_forward_parser.add_argument("--attach", action="append", default=[])
@@ -3191,7 +3405,12 @@ def build_parser() -> argparse.ArgumentParser:
     edit_draft_parser = subparsers.add_parser("edit-draft", help="Replace the body of an existing draft.")
     edit_draft_parser.add_argument("--account", required=True)
     edit_draft_parser.add_argument("--message-id", required=True)
-    edit_draft_parser.add_argument("--body", required=True)
+    edit_draft_parser.add_argument("--body")
+    edit_draft_parser.add_argument("--subject")
+    edit_draft_parser.add_argument("--to")
+    edit_draft_parser.add_argument("--cc")
+    edit_draft_parser.add_argument("--bcc")
+    edit_draft_parser.add_argument("--attach", action="append", default=[])
     edit_draft_parser.add_argument("--confirm", action="store_true")
 
     apply_action = subparsers.add_parser("apply-action", help="Apply an explicit mailbox action.")
@@ -3208,6 +3427,8 @@ def build_parser() -> argparse.ArgumentParser:
     apply_action.add_argument("--read-state", choices=("read", "unread"))
     apply_action.add_argument("--subject")
     apply_action.add_argument("--to")
+    apply_action.add_argument("--cc")
+    apply_action.add_argument("--bcc")
     apply_action.add_argument("--body")
     apply_action.add_argument("--attach", action="append", default=[])
 

@@ -14,7 +14,8 @@ Use this family when an agent needs local mailbox access through Microsoft Outlo
 - serializes COM-backed operations through a client-wide FIFO queue
 - exposes deterministic response lookup from the original recipient account's Sent and Drafts folders
 - exposes explicit folder move previews and confirmed message moves
-- creates reply and forward drafts with quoted thread content diagnostics, explicit local attachments, and verified sender-store placement when Outlook does not do that reliably
+- creates reply and forward drafts with quoted thread content diagnostics, reply-all and explicit recipient controls, explicit local attachments, and verified sender-store placement when Outlook does not do that reliably
+- exports attachments from one selected message to a local directory
 
 ## What it does not do
 
@@ -45,13 +46,14 @@ agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 search --all-folders
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 search --all-folders --query lettre24 --all-accounts --bypass-cache --broad-scan
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 read-thread --account demo@example.com --message-id <entry-id>
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 read-message --account demo@example.com --message-id <entry-id> --include-html
+agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 save-attachments --account demo@example.com --message-id <entry-id> --output-dir C:\path\outlook-attachments
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 find-response --account demo@example.com --message-id <entry-id>
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 move-message --account demo@example.com --message-id <entry-id> --target-folder custom:Inbox/Projects
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 move-message --account demo@example.com --message-id <entry-id> --target-folder custom:Inbox/Projects --confirm
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 triage --all-accounts --days 7 --limit 20
-agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 draft-reply --account demo@example.com --message-id <entry-id> --instruction "Draft a concise confirmation." --body "Tuesday works for me." --attach C:\path\transfer.pdf --create-draft --confirm
+agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 draft-reply --account demo@example.com --message-id <entry-id> --reply-mode all --cc copy@example.com --instruction "Draft a concise confirmation." --body "Tuesday works for me." --attach C:\path\transfer.pdf --create-draft --confirm
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 draft-reply --account anchor@example.com --send-using-account reply@example.com --message-id <entry-id> --instruction "Draft from reply@example.com." --body "Tuesday works for me." --attach C:\path\transfer.pdf --create-draft --confirm
-agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 edit-draft --account demo@example.com --message-id <draft-entry-id> --body "Updated draft body." --confirm
+agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 edit-draft --account demo@example.com --message-id <draft-entry-id> --body "Updated draft body." --cc copy@example.com --attach C:\path\support.pdf --confirm
 ```
 
 The family bridge uses the external client root in this order:
@@ -92,8 +94,10 @@ For folder moves such as "move this email to X", use `find-folders` first when t
 For draft replies or forwards, use `draft-reply` or `draft-forward` instead of
 generic `apply-action --action create-draft`; the threaded commands use the
 anchor message as the quote source. `--account` resolves the original message.
-Use `--send-using-account` when the outgoing draft should be sent from a
-different configured Outlook account.
+Use `--reply-mode all` when the user wants the full Outlook thread recipient
+set, and use explicit `--to`, `--cc`, or `--bcc` when the user names a specific
+recipient set. Use `--send-using-account` when the outgoing draft should be
+sent from a different configured Outlook account.
 
 `--instruction` is guidance for the agent and diagnostics only; it is never used
 as the saved draft body. To create a draft, pass the final reply/forward text in
@@ -109,10 +113,11 @@ helper so sender placement, quoted thread content, and attachments are verified
 together.
 
 Created reply/forward payloads include `draft_content`, `draft_placement`, and
-`draft_attachments`.
+`draft_attachments`, and `draft_recipients`.
 Check `draft_content.thread_content_included`,
 `draft_content.thread_content_source`, `draft_placement.actual_send_using_account`,
-`draft_placement.placement_verified`, and `draft_attachments.items[].attached`
+`draft_placement.placement_verified`, `draft_recipients.actual`, and
+`draft_attachments.items[].attached`
 before reporting that a draft is correctly threaded, sender-safe, and has the
 requested files. If Outlook does not materialize the quoted thread, the client
 adds a manual quoted block from the anchor message and reports
@@ -127,9 +132,16 @@ account unset. Generic `apply-action --action create-draft` is for standalone
 new drafts only; it also creates in the selected account's Drafts folder but has
 no original thread to quote.
 
-To replace the body of an existing draft, locate or read the draft first and use
-`edit-draft --body "<final draft text>" --confirm`. The helper only edits items
-that are still in the selected account's Drafts folder and returns `draft_edit`
-metadata. Do not use ad hoc COM scripts to update draft bodies.
+To update an existing draft, locate or read the draft first and use `edit-draft`
+with the fields that should change: `--body`, `--subject`, `--to`, `--cc`,
+`--bcc`, and repeatable `--attach`. The helper only edits items that are still
+in the selected account's Drafts folder and returns `draft_edit`,
+`draft_recipients`, and `draft_attachments` metadata. Do not use ad hoc COM
+scripts to update draft bodies, recipients, or attachments.
+
+When attachment files from an existing message are needed, use
+`save-attachments --account <smtp|store> --message-id <entry-id> --output-dir
+<directory>`. The command exports through Outlook's attachment API and returns
+the saved paths; it does not mutate mailbox state.
 
 Cache and folder-hint writes are best-effort. If the local state files are temporarily locked, the client returns the search results and reports the skipped update as a warning. Use `--no-update-cache` for repeated read-only direct-folder searches when cache freshness is not needed.

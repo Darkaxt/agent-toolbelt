@@ -499,6 +499,127 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
             ],
         )
 
+    def test_build_operation_args_routes_reply_all_recipients(self):
+        parser = outlook_classic_mail.build_parser()
+        args = parser.parse_args(
+            [
+                "draft-reply",
+                "--account",
+                "demo@example.com",
+                "--message-id",
+                "msg-1",
+                "--instruction",
+                "Reply to the thread.",
+                "--reply-mode",
+                "all",
+                "--to",
+                "primary@example.com",
+                "--cc",
+                "copy@example.com",
+                "--bcc",
+                "blind@example.com",
+                "--body",
+                "Final reply.",
+                "--create-draft",
+                "--confirm",
+            ]
+        )
+
+        operation_args = outlook_classic_mail.build_operation_args(args)
+
+        self.assertEqual(
+            operation_args,
+            [
+                "draft-reply",
+                "--account",
+                "demo@example.com",
+                "--message-id",
+                "msg-1",
+                "--instruction",
+                "Reply to the thread.",
+                "--reply-mode",
+                "all",
+                "--to",
+                "primary@example.com",
+                "--cc",
+                "copy@example.com",
+                "--bcc",
+                "blind@example.com",
+                "--body",
+                "Final reply.",
+                "--create-draft",
+                "--confirm",
+            ],
+        )
+
+    def test_build_operation_args_routes_attachment_export_and_draft_edit_fields(self):
+        parser = outlook_classic_mail.build_parser()
+        export_args = parser.parse_args(
+            [
+                "save-attachments",
+                "--account",
+                "demo@example.com",
+                "--message-id",
+                "msg-1",
+                "--output-dir",
+                "C:/tmp/outlook-files",
+            ]
+        )
+        edit_args = parser.parse_args(
+            [
+                "edit-draft",
+                "--account",
+                "demo@example.com",
+                "--message-id",
+                "draft-1",
+                "--subject",
+                "Updated",
+                "--to",
+                "to@example.com",
+                "--cc",
+                "cc@example.com",
+                "--bcc",
+                "bcc@example.com",
+                "--attach",
+                "C:/tmp/a.pdf",
+                "--confirm",
+            ]
+        )
+
+        self.assertEqual(
+            outlook_classic_mail.build_operation_args(export_args),
+            [
+                "save-attachments",
+                "--account",
+                "demo@example.com",
+                "--message-id",
+                "msg-1",
+                "--output-dir",
+                "C:/tmp/outlook-files",
+            ],
+        )
+        self.assertEqual(
+            outlook_classic_mail.build_operation_args(edit_args),
+            [
+                "edit-draft",
+                "--account",
+                "demo@example.com",
+                "--message-id",
+                "draft-1",
+                "--subject",
+                "Updated",
+                "--to",
+                "to@example.com",
+                "--cc",
+                "cc@example.com",
+                "--bcc",
+                "bcc@example.com",
+                "--attach",
+                "C:/tmp/a.pdf",
+                "--confirm",
+            ],
+        )
+
     def test_build_operation_args_routes_edit_draft(self):
         parser = outlook_classic_mail.build_parser()
         args = parser.parse_args(

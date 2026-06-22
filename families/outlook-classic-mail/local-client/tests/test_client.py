@@ -43,6 +43,11 @@ class FakeAttachment:
     Size: int = 0
     Type: int = 1
     Position: int = 0
+    saved_paths: list[str] = field(default_factory=list)
+
+    def SaveAsFile(self, path):
+        self.saved_paths.append(str(path))
+        Path(path).write_text(f"saved:{self.FileName}", encoding="utf-8")
 
 
 class FakeAttachments(list):
@@ -123,6 +128,10 @@ class FakeMessage:
 
     def Reply(self) -> FakeReply:
         self.last_reply = FakeReply(Subject=f"RE: {self.Subject}", To=self.SenderEmailAddress)
+        return self.last_reply
+
+    def ReplyAll(self) -> FakeReply:
+        self.last_reply = FakeReply(Subject=f"RE: {self.Subject}", To=f"{self.SenderEmailAddress}; {self.To}", CC=self.CC)
         return self.last_reply
 
     def Forward(self) -> FakeForward:
@@ -989,6 +998,33 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         self.assertEqual(result["draft_status"], "created")
         self.assertEqual(result["draft_body_source"], "body")
 
+    def test_draft_reply_all_uses_reply_all_and_allows_recipient_overrides(self):
+        message = self.session.GetItemFromID("msg-1")
+        message.CC = "threadcc@example.com"
+
+        result = client.draft_reply(
+            self.session,
+            account_selector="demo@example.com",
+            message_id="msg-1",
+            instruction="Reply all with the final body.",
+            body="Final reply.",
+            create_draft=True,
+            confirm=True,
+            reply_mode="all",
+            to="primary@example.com",
+            cc="cc@example.com",
+            bcc="hidden@example.com",
+        )
+
+        draft = message.last_reply
+        self.assertTrue(result["created"])
+        self.assertEqual(draft.To, "primary@example.com")
+        self.assertEqual(draft.CC, "cc@example.com")
+        self.assertEqual(draft.BCC, "hidden@example.com")
+        self.assertEqual(result["draft_recipients"]["reply_mode"], "all")
+        self.assertEqual(result["draft_recipients"]["requested"]["to"], "primary@example.com")
+        self.assertEqual(result["draft_recipients"]["actual"]["cc"], "cc@example.com")
+
     def test_draft_reply_reconstructs_thread_when_native_reply_is_empty(self):
         message = self.session.GetItemFromID("msg-1")
         message.HTMLBody = "<html><body><p>Original thread HTML</p></body></html>"
@@ -1209,6 +1245,27 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         self.assertEqual(draft.Attachments.added_paths, [str(attachment_path.resolve())])
         self.assertEqual(result["draft_attachments"]["items"][0]["filename"], "transfer.pdf")
 
+    def test_draft_forward_allows_cc_and_bcc(self):
+        result = client.draft_forward(
+            self.session,
+            account_selector="demo@example.com",
+            message_id="msg-1",
+            to="forward@example.com",
+            cc="copy@example.com",
+            bcc="blind@example.com",
+            instruction="Forward with recipients.",
+            body="Forwarding.",
+            create_draft=True,
+            confirm=True,
+        )
+
+        draft = self.session.GetItemFromID("msg-1").last_forward
+        self.assertTrue(result["created"])
+        self.assertEqual(draft.To, "forward@example.com")
+        self.assertEqual(draft.CC, "copy@example.com")
+        self.assertEqual(draft.BCC, "blind@example.com")
+        self.assertEqual(result["draft_recipients"]["actual"]["bcc"], "blind@example.com")
+
     def test_edit_draft_updates_existing_draft_body_with_confirmation(self):
         account = client.resolve_account(self.session, "demo@example.com")
         drafts = client.resolve_folder(account, "drafts")
@@ -1245,6 +1302,51 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         self.assertEqual(result["draft_edit"]["body_format"], "html_and_plain")
         self.assertEqual(result["draft_edit"]["draft_folder_verified"], True)
 
+    def test_edit_draft_updates_recipients_subject_and_attachments(self):
+        account = client.resolve_account(self.session, "demo@example.com")
+        drafts = client.resolve_folder(account, "drafts")
+        draft = FakeMessage(
+            EntryID="draft-2",
+            Subject="Old subject",
+            SenderName="User",
+            SenderEmailAddress="demo@example.com",
+            To="old@example.com",
+            ReceivedTime=datetime.now().replace(microsecond=0),
+            UnRead=False,
+            Body="Old body",
+            HTMLBody="<html><body><p>Old body</p></body></html>",
+            ConversationID="conv-draft-2",
+            ConversationTopic="Old subject",
+        )
+        draft.Parent = drafts
+        drafts.Items.append(draft)
+        self.session._messages[draft.EntryID] = draft
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            attachment_path = Path(temp_dir) / "support.pdf"
+            attachment_path.write_bytes(b"%PDF-1.4\n")
+            result = client.edit_draft(
+                self.session,
+                account_selector="demo@example.com",
+                message_id="draft-2",
+                body="New body",
+                subject="New subject",
+                to="new@example.com",
+                cc="copy@example.com",
+                bcc="blind@example.com",
+                attachments=[str(attachment_path)],
+                confirm=True,
+            )
+
+        self.assertTrue(result["updated"])
+        self.assertEqual(draft.Subject, "New subject")
+        self.assertEqual(draft.To, "new@example.com")
+        self.assertEqual(draft.CC, "copy@example.com")
+        self.assertEqual(draft.BCC, "blind@example.com")
+        self.assertEqual(draft.Attachments.added_paths, [str(attachment_path.resolve())])
+        self.assertEqual(result["draft_recipients"]["actual"]["to"], "new@example.com")
+        self.assertEqual(result["draft_attachments"]["items"][0]["filename"], "support.pdf")
+
     def test_edit_draft_rejects_non_draft_message(self):
         message = self.session.GetItemFromID("msg-1")
 
@@ -1268,6 +1370,26 @@ class OutlookClassicMailClientTests(unittest.TestCase):
                 body="New draft body.",
                 confirm=False,
             )
+
+    def test_save_attachments_exports_selected_message_files(self):
+        message = self.session.GetItemFromID("msg-1")
+        attachment = FakeAttachment(FileName="transfer.pdf", DisplayName="Transfer PDF", Size=12345)
+        message.Attachments.append(attachment)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = client.save_attachments(
+                self.session,
+                account_selector="demo@example.com",
+                message_id="msg-1",
+                output_dir=temp_dir,
+            )
+            saved_path = Path(temp_dir) / "transfer.pdf"
+            self.assertTrue(saved_path.exists())
+            self.assertEqual(attachment.saved_paths, [str(saved_path)])
+
+        self.assertEqual(result["attachment_export"]["saved_count"], 1)
+        self.assertEqual(result["attachment_export"]["items"][0]["filename"], "transfer.pdf")
+        self.assertTrue(result["attachment_export"]["items"][0]["saved"])
 
     def test_cross_account_draft_warns_when_send_using_account_cannot_be_set(self):
         response_session = make_response_session()
