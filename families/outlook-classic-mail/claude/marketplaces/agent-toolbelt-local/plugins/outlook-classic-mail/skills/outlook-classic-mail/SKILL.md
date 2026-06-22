@@ -45,6 +45,7 @@ Use `scripts/invoke_outlook_mail.py` for local mailbox access through Outlook Cl
 - If `draft-reply` or `draft-forward` returns `draft_status: needs_body`, produce the final body text in chat or rerun with `--body`; do not claim a draft was created and do not reuse the instruction text as the body.
 - Attach explicit local files with repeatable `--attach <local-file>` on `draft-reply` or `draft-forward`. Missing attachment paths fail before a draft is saved. Do not create a threaded draft and then add attachments through ad hoc COM.
 - After creating a reply/forward draft, inspect `draft_content.thread_content_included`, `draft_content.thread_content_source`, `draft_placement.actual_send_using_account`, `draft_placement.placement_verified`, and `draft_attachments.items[].attached` before telling the user the draft is correctly threaded, using the intended sender, and has the requested files.
+- Use `edit-draft --body "<final draft text>" --confirm` to replace the body of an existing Drafts-folder item. Read or locate the draft first, then call `edit-draft`. Do not update draft bodies through ad hoc COM. The helper refuses to edit messages that are not in the selected account's Drafts folder.
 - If `draft_content.warnings` contains `thread_quote_fallback_used`, mention that Outlook did not provide a usable native quote and the helper added a manual quoted block from the anchor message. If it contains `thread_content_missing`, warn that the thread content could not be included.
 - Use generic `apply-action --action create-draft` only for standalone new drafts; it saves in the selected account's Drafts folder but does not include reply/forward thread content.
 - For "move/file/put this email in folder X" tasks, run `find-folders` when the target is ambiguous, then run `move-message` without `--confirm` as a preview.
@@ -79,5 +80,6 @@ python scripts/invoke_outlook_mail.py move-message --account <smtp|store> --mess
 python scripts/invoke_outlook_mail.py triage [--account <smtp|store> | --all-accounts] [--days <n>] [--limit <n>]
 python scripts/invoke_outlook_mail.py draft-reply --account <smtp|store> [--send-using-account <smtp|store>] --message-id <entry-id> --instruction "<guidance>" [--body "<final draft text>" [--attach <local-file>] --create-draft --confirm]
 python scripts/invoke_outlook_mail.py draft-forward --account <smtp|store> [--send-using-account <smtp|store>] --message-id <entry-id> --to "<recipient>" --instruction "<guidance>" [--body "<final draft text>" [--attach <local-file>] --create-draft --confirm]
+python scripts/invoke_outlook_mail.py edit-draft --account <smtp|store> --message-id <draft-entry-id> --body "<final draft text>" --confirm
 python scripts/invoke_outlook_mail.py apply-action --account <smtp|store> --message-id <entry-id> --action <create-draft|send|move|delete|category|mark-read> --confirm
 ```

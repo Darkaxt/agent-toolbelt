@@ -114,6 +114,7 @@ class FakeMessage:
     Parent: object | None = None
     deleted: bool = False
     sent: bool = False
+    saved: bool = False
     Categories: str = ""
     HTMLBody: str = ""
     Attachments: FakeAttachments = field(default_factory=FakeAttachments)
@@ -143,7 +144,7 @@ class FakeMessage:
         return self
 
     def Save(self) -> None:
-        return None
+        self.saved = True
 
 
 @dataclass
@@ -1208,6 +1209,66 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         self.assertEqual(draft.Attachments.added_paths, [str(attachment_path.resolve())])
         self.assertEqual(result["draft_attachments"]["items"][0]["filename"], "transfer.pdf")
 
+    def test_edit_draft_updates_existing_draft_body_with_confirmation(self):
+        account = client.resolve_account(self.session, "demo@example.com")
+        drafts = client.resolve_folder(account, "drafts")
+        draft = FakeMessage(
+            EntryID="draft-1",
+            Subject="Draft to update",
+            SenderName="User",
+            SenderEmailAddress="demo@example.com",
+            To="alice@example.com",
+            ReceivedTime=datetime.now().replace(microsecond=0),
+            UnRead=False,
+            Body="Old draft body",
+            HTMLBody="<html><body><p>Old draft body</p></body></html>",
+            ConversationID="conv-draft",
+            ConversationTopic="Draft to update",
+        )
+        draft.Parent = drafts
+        drafts.Items.append(draft)
+        self.session._messages[draft.EntryID] = draft
+
+        result = client.edit_draft(
+            self.session,
+            account_selector="demo@example.com",
+            message_id="draft-1",
+            body="New draft body\nSecond line.",
+            confirm=True,
+        )
+
+        self.assertTrue(result["updated"])
+        self.assertTrue(draft.saved)
+        self.assertEqual(draft.Body, "New draft body\nSecond line.")
+        self.assertIn("New draft body", draft.HTMLBody)
+        self.assertEqual(result["draft_edit"]["body_source"], "body")
+        self.assertEqual(result["draft_edit"]["body_format"], "html_and_plain")
+        self.assertEqual(result["draft_edit"]["draft_folder_verified"], True)
+
+    def test_edit_draft_rejects_non_draft_message(self):
+        message = self.session.GetItemFromID("msg-1")
+
+        with self.assertRaisesRegex(ValueError, "not in the selected account's Drafts folder"):
+            client.edit_draft(
+                self.session,
+                account_selector="demo@example.com",
+                message_id="msg-1",
+                body="New draft body.",
+                confirm=True,
+            )
+
+        self.assertFalse(message.saved)
+
+    def test_edit_draft_requires_confirmation(self):
+        with self.assertRaisesRegex(ValueError, "requires --confirm"):
+            client.edit_draft(
+                self.session,
+                account_selector="demo@example.com",
+                message_id="msg-1",
+                body="New draft body.",
+                confirm=False,
+            )
+
     def test_cross_account_draft_warns_when_send_using_account_cannot_be_set(self):
         response_session = make_response_session()
         reply_account = client.resolve_account(response_session, "reply@example.com")
@@ -1269,6 +1330,28 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         self.assertEqual(forward_args.send_using_account, "reply@example.com")
         self.assertEqual(reply_args.attach, ["C:/tmp/transfer.pdf"])
         self.assertEqual(forward_args.attach, ["C:/tmp/transfer.pdf"])
+
+    def test_parser_accepts_edit_draft(self):
+        parser = client.build_parser()
+
+        args = parser.parse_args(
+            [
+                "edit-draft",
+                "--account",
+                "demo@example.com",
+                "--message-id",
+                "draft-1",
+                "--body",
+                "Updated body.",
+                "--confirm",
+            ]
+        )
+
+        self.assertEqual(args.operation, "edit-draft")
+        self.assertEqual(args.account, "demo@example.com")
+        self.assertEqual(args.message_id, "draft-1")
+        self.assertEqual(args.body, "Updated body.")
+        self.assertTrue(args.confirm)
 
     def test_draft_forward_create_preserves_existing_html_body(self):
         message = self.session.GetItemFromID("msg-1")

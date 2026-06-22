@@ -499,6 +499,37 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
             ],
         )
 
+    def test_build_operation_args_routes_edit_draft(self):
+        parser = outlook_classic_mail.build_parser()
+        args = parser.parse_args(
+            [
+                "edit-draft",
+                "--account",
+                "demo@example.com",
+                "--message-id",
+                "draft-1",
+                "--body",
+                "Updated draft body.",
+                "--confirm",
+            ]
+        )
+
+        operation_args = outlook_classic_mail.build_operation_args(args)
+
+        self.assertEqual(
+            operation_args,
+            [
+                "edit-draft",
+                "--account",
+                "demo@example.com",
+                "--message-id",
+                "draft-1",
+                "--body",
+                "Updated draft body.",
+                "--confirm",
+            ],
+        )
+
     def test_build_operation_args_routes_domain_inspection_with_blocklists(self):
         parser = outlook_classic_mail.build_parser()
         args = parser.parse_args(
@@ -629,6 +660,8 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("Treat `--instruction` as guidance only", skill_text)
         self.assertIn("draft_status: needs_body", skill_text)
         self.assertIn("--body \"<final draft text>\" [--attach <local-file>] --create-draft --confirm", skill_text)
+        self.assertIn("edit-draft", skill_text)
+        self.assertIn("Do not update draft bodies through ad hoc COM", skill_text)
 
     def test_codex_skill_documents_cache_and_sync_workflows(self):
         skill_path = (
