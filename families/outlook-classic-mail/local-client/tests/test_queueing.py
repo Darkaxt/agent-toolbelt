@@ -55,6 +55,7 @@ class OutlookQueueTests(unittest.TestCase):
     def test_queue_timeout_when_turn_never_arrives(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             queue_path = Path(temp_dir) / "outlook_queue.sqlite"
+            holder_entered = threading.Event()
 
             def holder() -> None:
                 with queueing.acquire_queue_turn(
@@ -64,11 +65,12 @@ class OutlookQueueTests(unittest.TestCase):
                     poll_interval_sec=0.01,
                     lease_sec=60,
                 ):
+                    holder_entered.set()
                     time.sleep(0.2)
 
             thread = threading.Thread(target=holder)
             thread.start()
-            time.sleep(0.03)
+            self.assertTrue(holder_entered.wait(1))
             try:
                 with self.assertRaises(queueing.QueueTimeoutError):
                     with queueing.acquire_queue_turn(
