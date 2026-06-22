@@ -2512,6 +2512,56 @@ def create_generic_draft(
     )
 
 
+def folder_paths_match(left: Any, right: Any) -> bool:
+    left_path = str(safe_get(left, "FolderPath", "") or "").strip().lower()
+    right_path = str(safe_get(right, "FolderPath", "") or "").strip().lower()
+    return bool(left_path and right_path and left_path == right_path)
+
+
+def set_draft_body(item: Any, body: str) -> str:
+    item.Body = body
+    item.HTMLBody = f"<html><body>{text_to_html_fragment(body)}</body></html>"
+    return "html_and_plain"
+
+
+def edit_draft(
+    session: Any,
+    *,
+    account_selector: str,
+    message_id: str,
+    body: str,
+    confirm: bool,
+) -> dict[str, Any]:
+    if not confirm:
+        raise ValueError("Editing a draft requires --confirm.")
+    if not body or not body.strip():
+        raise ValueError("Editing a draft requires --body with the final draft text.")
+
+    account_info = resolve_account(session, account_selector)
+    item = resolve_message(session, account_info, message_id)
+    drafts_folder = account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
+    parent_folder = safe_get(item, "Parent")
+    if not folder_paths_match(parent_folder, drafts_folder):
+        raise ValueError("Message is not in the selected account's Drafts folder; refusing to edit it as a draft.")
+
+    body_format = set_draft_body(item, body)
+    item.Save()
+    return {
+        "account": account_info["smtp_address"],
+        "store": account_info["delivery_store"],
+        "message": message_summary(item),
+        "updated": True,
+        "draft_edit": {
+            "body_source": "body",
+            "body_format": body_format,
+            "draft_folder": folder_summary(parent_folder),
+            "target_drafts_folder": folder_summary(drafts_folder),
+            "draft_folder_verified": True,
+            "warnings": [],
+        },
+    }
+
+
 def apply_action(
     session: Any,
     *,
@@ -2933,6 +2983,22 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
             result=payload,
         )
 
+    if args.operation == "edit-draft":
+        payload = edit_draft(
+            session,
+            account_selector=args.account,
+            message_id=args.message_id,
+            body=args.body,
+            confirm=args.confirm,
+        )
+        return make_result(
+            ok=True,
+            operation="edit-draft",
+            account=payload["account"],
+            store=payload["store"],
+            result=payload,
+        )
+
     payload = apply_action(
         session,
         account_selector=args.account,
@@ -3121,6 +3187,12 @@ def build_parser() -> argparse.ArgumentParser:
     move_message_parser.add_argument("--message-id", required=True)
     move_message_parser.add_argument("--target-folder", required=True)
     move_message_parser.add_argument("--confirm", action="store_true")
+
+    edit_draft_parser = subparsers.add_parser("edit-draft", help="Replace the body of an existing draft.")
+    edit_draft_parser.add_argument("--account", required=True)
+    edit_draft_parser.add_argument("--message-id", required=True)
+    edit_draft_parser.add_argument("--body", required=True)
+    edit_draft_parser.add_argument("--confirm", action="store_true")
 
     apply_action = subparsers.add_parser("apply-action", help="Apply an explicit mailbox action.")
     apply_action.add_argument("--account", required=True)

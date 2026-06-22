@@ -51,6 +51,7 @@ agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 move-message --accou
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 triage --all-accounts --days 7 --limit 20
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 draft-reply --account demo@example.com --message-id <entry-id> --instruction "Draft a concise confirmation." --body "Tuesday works for me." --attach C:\path\transfer.pdf --create-draft --confirm
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 draft-reply --account anchor@example.com --send-using-account reply@example.com --message-id <entry-id> --instruction "Draft from reply@example.com." --body "Tuesday works for me." --attach C:\path\transfer.pdf --create-draft --confirm
+agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 edit-draft --account demo@example.com --message-id <draft-entry-id> --body "Updated draft body." --confirm
 ```
 
 The family bridge uses the external client root in this order:
@@ -125,5 +126,10 @@ under a localized anchor folder such as `Borradores` while leaving the sender
 account unset. Generic `apply-action --action create-draft` is for standalone
 new drafts only; it also creates in the selected account's Drafts folder but has
 no original thread to quote.
+
+To replace the body of an existing draft, locate or read the draft first and use
+`edit-draft --body "<final draft text>" --confirm`. The helper only edits items
+that are still in the selected account's Drafts folder and returns `draft_edit`
+metadata. Do not use ad hoc COM scripts to update draft bodies.
 
 Cache and folder-hint writes are best-effort. If the local state files are temporarily locked, the client returns the search results and reports the skipped update as a warning. Use `--no-update-cache` for repeated read-only direct-folder searches when cache freshness is not needed.
