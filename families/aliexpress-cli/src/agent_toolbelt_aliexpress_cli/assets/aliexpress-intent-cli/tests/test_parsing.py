@@ -21,6 +21,25 @@ class AliExpressParsingTests(unittest.TestCase):
         self.assertTrue(first["free_delivery"])
         self.assertEqual(first["product_link"], "https://www.aliexpress.com/item/1005001111111111.html")
 
+    def test_parse_search_fallback_uses_current_card_price_with_spaced_decimals(self):
+        html = """
+        <html><body>
+          <a href="https://tr.aliexpress.com/item/1005001111111111.html">
+            First INKBIRD thermometer € 62 . 73 €98.85 -36%
+          </a>
+          <span>€36.12 indirim · Yeni müşteri</span>
+          <a href="https://tr.aliexpress.com/item/1005002222222222.html">
+            INKBIRD INT-11I-B Mini Kablosuz Et Termometresi € 31 . 22 €53.83 -41%
+          </a>
+        </body></html>
+        """
+
+        payload = parse_search(html, query="INKBIRD thermometer", page=1, url="https://www.aliexpress.com/wholesale")
+
+        second = payload["results"][1]
+        self.assertEqual(second["item_id"], "1005002222222222")
+        self.assertEqual(second["price_text"], "€31.22")
+
     def test_parse_product_extracts_description_price_shipping_and_variants(self):
         html = (FIXTURES / "item_detail.html").read_text(encoding="utf-8")
 
@@ -36,6 +55,23 @@ class AliExpressParsingTests(unittest.TestCase):
         self.assertEqual(len(payload["variants"]), 2)
         self.assertEqual(payload["specs"][0]["name"], "Capacity")
         self.assertEqual(payload["product_link"], "https://www.aliexpress.com/item/1005001111111111.html")
+
+    def test_parse_product_flags_shell_page_without_product_state(self):
+        html = """
+        <html><body>
+          <dl>
+            <dt>Yardım</dt><dd>Yardım Merkezi, İtirazlar ve raporlar</dd>
+            <dt>Browse by Category</dt><dd>Tüm popüler, Ürün, Promosyon</dd>
+            <dt>Alibaba Group</dt><dd>Alibaba Group Website, AliExpress, Alimama</dd>
+          </dl>
+        </body></html>
+        """
+
+        payload = parse_product(html, item_id="1005006411918625", url="https://www.aliexpress.com/item/1005006411918625.html")
+
+        self.assertEqual(payload["specs"], [])
+        self.assertIn("product_state_missing", payload["warnings"])
+        self.assertTrue(payload["source_diagnostics"]["sparse_product_page"])
 
     def test_parse_reviews_extracts_comments(self):
         html = (FIXTURES / "reviews.html").read_text(encoding="utf-8")

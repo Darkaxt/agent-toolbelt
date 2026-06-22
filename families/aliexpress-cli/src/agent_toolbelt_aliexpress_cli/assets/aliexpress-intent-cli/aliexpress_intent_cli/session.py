@@ -53,7 +53,11 @@ class PlaywrightBrowserFactory:
         except Exception as exc:  # pragma: no cover - live dependency only.
             raise BrowserSessionError("Playwright is required for AliExpress managed login.") from exc
         playwright = sync_playwright().start()
-        context = playwright.chromium.launch_persistent_context(str(user_data_dir), headless=headless)
+        launch_options: dict[str, Any] = {"headless": headless}
+        executable_path = os.getenv("ALIEXPRESS_CLI_CHROME_EXE")
+        if executable_path:
+            launch_options["executable_path"] = executable_path
+        context = playwright.chromium.launch_persistent_context(str(user_data_dir), **launch_options)
         context._agent_toolbelt_playwright = playwright
         return context
 

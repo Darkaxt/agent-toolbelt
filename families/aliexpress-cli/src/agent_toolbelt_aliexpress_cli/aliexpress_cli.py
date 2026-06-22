@@ -91,6 +91,8 @@ def build_client_command(
         "run",
         "--from",
         str(client_home),
+        "--with-editable",
+        str(client_home),
         CLIENT_ENTRYPOINT,
         *operation_args,
     ]

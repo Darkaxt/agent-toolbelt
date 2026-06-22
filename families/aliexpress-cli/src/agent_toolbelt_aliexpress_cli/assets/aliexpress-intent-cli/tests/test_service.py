@@ -80,6 +80,15 @@ class AliExpressServiceTests(unittest.TestCase):
         self.assertTrue(payload["session_used"])
         self.assertEqual(payload["pagination"]["fetched_pages"][0]["fetcher"], "managed_session")
 
+    def test_search_marks_blocked_response(self):
+        service = AliExpressService(fetcher=FakeFetcher("blocked.html"), session=FakeSession())
+
+        payload = service.search(query="INKBIRD thermometer", pages=1)
+
+        self.assertTrue(payload["blocked"])
+        self.assertTrue(payload["pagination"]["fetched_pages"][0]["blocked"])
+        self.assertIn("blocked", " ".join(payload["warnings"]).lower())
+
     def test_get_extracts_detail_fields(self):
         service = AliExpressService(fetcher=FakeFetcher("item_detail.html"), session=FakeSession())
 
