@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .fetch import AliExpressFetcher, FetchResult
+from .fetch import AliExpressFetcher, FetchResult, is_probably_blocked_html
 from .identifiers import inspect_identifier, require_item_identifier, validate_browse_url
 from .parsing import parse_product, parse_reviews, parse_search, search_url
 from .session import BrowserSessionBootstrapper
@@ -21,6 +21,18 @@ class AliExpressService:
             return self.session.fetch(url)
         return self.fetcher.fetch(url)
 
+    def _page_blocked(self, fetched: FetchResult) -> bool:
+        return is_probably_blocked_html(fetched.html, status=fetched.status) or any(
+            "blocked" in warning.lower() or "challenged" in warning.lower() or "login-gated" in warning.lower()
+            for warning in fetched.warnings
+        )
+
+    def _extend_fetch_warnings(self, warnings: list[str], fetched: FetchResult, *, blocked: bool) -> None:
+        warnings.extend(fetched.warnings)
+        blocked_warning = "AliExpress response appears blocked, challenged, or login-gated."
+        if blocked and blocked_warning not in warnings:
+            warnings.append(blocked_warning)
+
     def search(
         self,
         *,
@@ -37,13 +49,28 @@ class AliExpressService:
         results: list[dict[str, Any]] = []
         warnings: list[str] = []
         fetched_pages: list[dict[str, Any]] = []
+        blocked = False
+        no_results = False
         for page in range(1, pages + 1):
             url = search_url(query, page=page, ship_to=ship_to, currency=currency, locale=locale, sort=sort, min_price=min_price, max_price=max_price)
             fetched = self._fetch(url, use_session=use_session)
-            warnings.extend(fetched.warnings)
+            page_blocked = self._page_blocked(fetched)
+            blocked = blocked or page_blocked
+            self._extend_fetch_warnings(warnings, fetched, blocked=page_blocked)
             parsed = parse_search(fetched.html, query=query, page=page, url=fetched.url)
+            no_results = no_results or bool(parsed.get("no_results"))
             results.extend(parsed["results"])
-            fetched_pages.append({"page": page, "url": url, "result_count": parsed["result_count"], "fetcher": fetched.fetcher, "status": fetched.status})
+            fetched_pages.append(
+                {
+                    "page": page,
+                    "url": url,
+                    "result_count": parsed["result_count"],
+                    "fetcher": fetched.fetcher,
+                    "status": fetched.status,
+                    "blocked": page_blocked,
+                    "no_results": bool(parsed.get("no_results")),
+                }
+            )
         return {
             "command": "search",
             "query": query,
@@ -52,6 +79,8 @@ class AliExpressService:
             "results": results,
             "result_count": len(results),
             "pagination": {"requested_pages": pages, "fetched_pages": fetched_pages, "partial": False},
+            "blocked": blocked,
+            "no_results": not blocked and not results and no_results,
             "warnings": warnings,
             "session_used": use_session,
             "safety": {"single_threaded": True, "background_crawling": False, "cart_operations_supported": False},
@@ -62,13 +91,28 @@ class AliExpressService:
         results: list[dict[str, Any]] = []
         warnings: list[str] = []
         fetched_pages: list[dict[str, Any]] = []
+        blocked = False
+        no_results = False
         for page in range(1, pages + 1):
             page_url = url if page == 1 else f"{url}{'&' if '?' in url else '?'}page={page}"
             fetched = self._fetch(page_url, use_session=use_session)
-            warnings.extend(fetched.warnings)
+            page_blocked = self._page_blocked(fetched)
+            blocked = blocked or page_blocked
+            self._extend_fetch_warnings(warnings, fetched, blocked=page_blocked)
             parsed = parse_search(fetched.html, query=url, page=page, url=fetched.url)
+            no_results = no_results or bool(parsed.get("no_results"))
             results.extend(parsed["results"])
-            fetched_pages.append({"page": page, "url": page_url, "result_count": parsed["result_count"], "fetcher": fetched.fetcher, "status": fetched.status})
+            fetched_pages.append(
+                {
+                    "page": page,
+                    "url": page_url,
+                    "result_count": parsed["result_count"],
+                    "fetcher": fetched.fetcher,
+                    "status": fetched.status,
+                    "blocked": page_blocked,
+                    "no_results": bool(parsed.get("no_results")),
+                }
+            )
         return {
             "command": "browse",
             "url": url,
@@ -76,6 +120,8 @@ class AliExpressService:
             "results": results,
             "result_count": len(results),
             "pagination": {"requested_pages": pages, "fetched_pages": fetched_pages, "partial": False},
+            "blocked": blocked,
+            "no_results": not blocked and not results and no_results,
             "warnings": warnings,
             "session_used": use_session,
             "safety": {"single_threaded": True, "background_crawling": False, "cart_operations_supported": False},

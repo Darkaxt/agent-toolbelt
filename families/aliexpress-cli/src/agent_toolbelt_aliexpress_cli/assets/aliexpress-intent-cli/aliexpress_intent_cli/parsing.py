@@ -120,6 +120,30 @@ def _currency(price_text: str | None, default: str = "EUR") -> str | None:
     return default
 
 
+PRICE_PATTERN = re.compile(
+    r"(?P<prefix>[€$])\s*(?P<prefix_major>\d+)(?:\s*[.,]\s*(?P<prefix_minor>\d{1,2}))?"
+    r"|(?P<suffix_major>\d+)(?:\s*[.,]\s*(?P<suffix_minor>\d{1,2}))?\s*(?P<suffix>€|EUR|USD)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _normalize_price_match(match: re.Match[str]) -> str:
+    if match.group("prefix"):
+        amount = match.group("prefix_major")
+        if match.group("prefix_minor"):
+            amount += f".{match.group('prefix_minor')}"
+        return f"{match.group('prefix')}{amount}"
+    amount = match.group("suffix_major")
+    if match.group("suffix_minor"):
+        amount += f".{match.group('suffix_minor')}"
+    return f"{amount} {match.group('suffix')}"
+
+
+def first_price_text(text: str) -> str | None:
+    match = PRICE_PATTERN.search(text)
+    return _normalize_price_match(match) if match else None
+
+
 def price_details(state: dict[str, Any]) -> list[dict[str, Any]]:
     details: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
@@ -229,9 +253,10 @@ def parse_search(page_html: str, *, query: str, page: int, url: str) -> dict[str
                 continue
             seen.add(item_id)
             href = normalize_product_url(html.unescape(match.group("href")))
-            around = page_html[max(0, match.start() - 800) : match.end() + 1400]
-            text = clean_text(around)
-            price_match = re.search(r"([€$]\s*\d+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*(?:€|EUR|USD))", text)
+            card_text = clean_text(match.group("title"))
+            after_text = clean_text(page_html[match.start() : match.end() + 1400])
+            text = card_text or after_text
+            price_text = first_price_text(card_text) or first_price_text(after_text)
             shipping_match = re.search(r"(free shipping|free delivery|shipping[^.]{0,80})", text, flags=re.IGNORECASE)
             results.append(
                 {
@@ -239,8 +264,8 @@ def parse_search(page_html: str, *, query: str, page: int, url: str) -> dict[str
                     "url": href,
                     "product_link": href,
                     "title": clean_text(match.group("title")),
-                    "price_text": clean_text(price_match.group(1)) if price_match else None,
-                    "currency": _currency(price_match.group(1) if price_match else None),
+                    "price_text": price_text,
+                    "currency": _currency(price_text),
                     "shipping_text": clean_text(shipping_match.group(1)) if shipping_match else None,
                     "free_delivery": bool(shipping_match and "free" in shipping_match.group(1).lower()),
                     "rating": None,
@@ -282,6 +307,25 @@ def parse_specs(page_html: str) -> list[dict[str, str]]:
             if name and value:
                 specs.append({"name": name, "value": value})
     return specs
+
+
+SITE_CHROME_SPEC_NAMES = {
+    "alibaba group",
+    "browse by category",
+    "help",
+    "yardım",
+    "birden fazla dili destekleyen aliexpress siteleri",
+}
+
+
+def _looks_like_site_chrome_specs(specs: list[dict[str, str]]) -> bool:
+    if not specs:
+        return False
+    matched = 0
+    for spec in specs:
+        if spec.get("name", "").strip().lower() in SITE_CHROME_SPEC_NAMES:
+            matched += 1
+    return matched >= 2 or matched == len(specs)
 
 
 def parse_variants(state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -336,6 +380,11 @@ def parse_product(page_html: str, *, item_id: str, url: str) -> dict[str, Any]:
     else:
         images = []
     variants = parse_variants(state)
+    specs = parse_specs(page_html)
+    sparse_product_page = not state and not title and not description and not price_text and not images and not variants
+    warnings = ["product_state_missing"] if sparse_product_page else []
+    if sparse_product_page and _looks_like_site_chrome_specs(specs):
+        specs = []
     return {
         "command": "get",
         "item_id": item_id,
@@ -343,7 +392,7 @@ def parse_product(page_html: str, *, item_id: str, url: str) -> dict[str, Any]:
         "product_link": url,
         "title": title,
         "description": description or None,
-        "specs": parse_specs(page_html),
+        "specs": specs,
         "variants": variants,
         "availability": clean_text(str(first_value(state, {"availability", "stockStatus"}) or "")) or None,
         "shipping_summary": {
@@ -373,10 +422,11 @@ def parse_product(page_html: str, *, item_id: str, url: str) -> dict[str, Any]:
         },
         "source_diagnostics": {
             "embedded_state_found": bool(state),
-            "spec_count": len(parse_specs(page_html)),
+            "spec_count": len(specs),
             "variant_count": len(variants),
+            "sparse_product_page": sparse_product_page,
         },
-        "warnings": [],
+        "warnings": warnings,
     }
 
 

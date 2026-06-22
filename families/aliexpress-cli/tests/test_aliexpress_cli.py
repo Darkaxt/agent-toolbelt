@@ -89,8 +89,9 @@ class AliExpressCLIBridgeTests(unittest.TestCase):
         )
 
         self.assertEqual(command[:5], ["uv.exe", "tool", "run", "--from", str(client_home)])
+        self.assertEqual(command[5:7], ["--with-editable", str(client_home)])
         self.assertNotIn("--no-project", command)
-        self.assertEqual(command[5], "aliexpress-cli")
+        self.assertEqual(command[7], "aliexpress-cli")
         self.assertEqual(command[-2:], ["search", "30L trash bin"])
 
     def test_bundled_client_declares_managed_session_dependency(self):
