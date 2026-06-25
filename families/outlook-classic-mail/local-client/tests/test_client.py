@@ -70,6 +70,26 @@ class FakeAttachments(list):
 
 
 @dataclass
+class FakeRecipient:
+    Name: str
+    Address: str
+    Type: int = 1
+    Resolved: bool = True
+
+
+class FakeRecipients(list):
+    @property
+    def Count(self) -> int:
+        return len(self)
+
+    def Item(self, index):
+        return self[index - 1]
+
+    def ResolveAll(self):
+        return all(getattr(recipient, "Resolved", False) for recipient in self)
+
+
+@dataclass
 class FakeReply:
     Subject: str
     To: str
@@ -81,6 +101,7 @@ class FakeReply:
     reject_send_using: bool = False
     saved: bool = False
     Attachments: FakeAttachments = field(default_factory=FakeAttachments)
+    Recipients: FakeRecipients = field(default_factory=FakeRecipients)
 
     def __setattr__(self, name, value):
         if name == "SendUsingAccount" and getattr(self, "reject_send_using", False):
@@ -1025,6 +1046,39 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         self.assertEqual(result["draft_recipients"]["requested"]["to"], "primary@example.com")
         self.assertEqual(result["draft_recipients"]["actual"]["cc"], "cc@example.com")
 
+    def test_draft_reply_all_normalizes_outlook_display_names_to_smtp_addresses(self):
+        message = self.session.GetItemFromID("msg-1")
+
+        def reply_all_with_display_names():
+            message.last_reply = FakeReply(Subject=f"RE: {message.Subject}", To="Alice Example; Demo User", CC="Manager")
+            message.last_reply.Recipients.extend(
+                [
+                    FakeRecipient(Name="Alice Example", Address="alice@example.com", Type=1),
+                    FakeRecipient(Name="Demo User", Address="user@example.com", Type=1),
+                    FakeRecipient(Name="Manager", Address="manager@example.com", Type=2),
+                ]
+            )
+            return message.last_reply
+
+        message.ReplyAll = reply_all_with_display_names
+
+        result = client.draft_reply(
+            self.session,
+            account_selector="demo@example.com",
+            message_id="msg-1",
+            instruction="Reply all with SMTP recipients.",
+            body="Final reply.",
+            create_draft=True,
+            confirm=True,
+            reply_mode="all",
+        )
+
+        draft = message.last_reply
+        self.assertEqual(draft.To, "alice@example.com; user@example.com")
+        self.assertEqual(draft.CC, "manager@example.com")
+        self.assertEqual(result["draft_recipients"]["actual"]["to"], "alice@example.com; user@example.com")
+        self.assertIn("recipients_normalized_to_smtp", result["draft_recipients"]["warnings"])
+
     def test_draft_reply_reconstructs_thread_when_native_reply_is_empty(self):
         message = self.session.GetItemFromID("msg-1")
         message.HTMLBody = "<html><body><p>Original thread HTML</p></body></html>"
@@ -1265,6 +1319,19 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         self.assertEqual(draft.CC, "copy@example.com")
         self.assertEqual(draft.BCC, "blind@example.com")
         self.assertEqual(result["draft_recipients"]["actual"]["bcc"], "blind@example.com")
+
+    def test_draft_reply_rejects_explicit_display_name_recipient_without_email(self):
+        with self.assertRaisesRegex(ValueError, "Explicit recipients must include SMTP email addresses"):
+            client.draft_reply(
+                self.session,
+                account_selector="demo@example.com",
+                message_id="msg-1",
+                instruction="Reply with a bad explicit recipient.",
+                body="Final reply.",
+                create_draft=True,
+                confirm=True,
+                to="Broken Display Name",
+            )
 
     def test_edit_draft_updates_existing_draft_body_with_confirmation(self):
         account = client.resolve_account(self.session, "demo@example.com")
