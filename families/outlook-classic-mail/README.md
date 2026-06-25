@@ -96,8 +96,11 @@ generic `apply-action --action create-draft`; the threaded commands use the
 anchor message as the quote source. `--account` resolves the original message.
 Use `--reply-mode all` when the user wants the full Outlook thread recipient
 set, and use explicit `--to`, `--cc`, or `--bcc` when the user names a specific
-recipient set. Use `--send-using-account` when the outgoing draft should be
-sent from a different configured Outlook account.
+recipient set. The helper normalizes native Outlook reply-all recipients to
+SMTP addresses when Outlook exposes them through the Recipients collection, and
+explicit recipient flags must contain SMTP email addresses rather than display
+names. Use `--send-using-account` when the outgoing draft should be sent from a
+different configured Outlook account.
 
 `--instruction` is guidance for the agent and diagnostics only; it is never used
 as the saved draft body. To create a draft, pass the final reply/forward text in

@@ -1934,6 +1934,104 @@ def attach_draft_files(draft: Any, draft_attachments: dict[str, Any]) -> None:
         item["attached"] = True
 
 
+EMAIL_PATTERN = re.compile(r"[\w.+%-]+@[\w.-]+\.[A-Za-z]{2,}")
+PR_SMTP_ADDRESS = "http://schemas.microsoft.com/mapi/proptag/0x39FE001E"
+
+
+def email_addresses_from_text(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return EMAIL_PATTERN.findall(value)
+
+
+def normalize_explicit_recipient_value(value: str | None) -> str | None:
+    if value is None:
+        return None
+    emails = email_addresses_from_text(value)
+    if not emails and value.strip():
+        raise ValueError(f"Explicit recipients must include SMTP email addresses: {value}")
+    return "; ".join(emails)
+
+
+def recipient_smtp_address(recipient: Any) -> str:
+    address = str(safe_get(recipient, "Address", "") or "")
+    if EMAIL_PATTERN.fullmatch(address.strip()):
+        return address.strip()
+
+    address_entry = safe_get(recipient, "AddressEntry")
+    exchange_user = safe_get(address_entry, "GetExchangeUser")
+    if callable(exchange_user):
+        user = exchange_user()
+        primary = str(safe_get(user, "PrimarySmtpAddress", "") or "")
+        if EMAIL_PATTERN.fullmatch(primary.strip()):
+            return primary.strip()
+
+    property_accessor = safe_get(address_entry, "PropertyAccessor")
+    get_property = safe_get(property_accessor, "GetProperty")
+    if callable(get_property):
+        try:
+            smtp = str(get_property(PR_SMTP_ADDRESS) or "")
+        except Exception:
+            smtp = ""
+        if EMAIL_PATTERN.fullmatch(smtp.strip()):
+            return smtp.strip()
+
+    text_candidates = [
+        str(safe_get(recipient, "Address", "") or ""),
+        str(safe_get(recipient, "Name", "") or ""),
+    ]
+    for candidate in text_candidates:
+        emails = email_addresses_from_text(candidate)
+        if emails:
+            return emails[0]
+    return ""
+
+
+def normalize_native_recipients_to_smtp(
+    draft: Any,
+    warnings: list[str],
+    *,
+    skip_attributes: set[str] | None = None,
+) -> None:
+    recipients = safe_get(draft, "Recipients")
+    count = int(safe_get(recipients, "Count", 0) or 0)
+    if count <= 0:
+        return
+
+    resolve_all = safe_get(recipients, "ResolveAll")
+    if callable(resolve_all):
+        try:
+            if not resolve_all():
+                add_unique_warning(warnings, "recipient_resolution_incomplete")
+        except Exception:
+            add_unique_warning(warnings, "recipient_resolution_failed")
+
+    grouped: dict[int, list[str]] = {1: [], 2: [], 3: []}
+    unresolved = 0
+    for recipient in iterate_collection(recipients, count):
+        smtp = recipient_smtp_address(recipient)
+        if not smtp:
+            unresolved += 1
+            continue
+        recipient_type = int(safe_get(recipient, "Type", 1) or 1)
+        grouped.setdefault(recipient_type, []).append(smtp)
+
+    protected = skip_attributes or set()
+    for attribute, recipient_type in (("To", 1), ("CC", 2), ("BCC", 3)):
+        if attribute in protected:
+            continue
+        values = grouped.get(recipient_type) or []
+        if not values:
+            continue
+        normalized = "; ".join(dict.fromkeys(values))
+        if str(safe_get(draft, attribute, "") or "") != normalized:
+            setattr(draft, attribute, normalized)
+            add_unique_warning(warnings, "recipients_normalized_to_smtp")
+
+    if unresolved:
+        add_unique_warning(warnings, "recipient_smtp_unresolved")
+
+
 def apply_recipient_fields(
     draft: Any,
     *,
@@ -1941,15 +2039,27 @@ def apply_recipient_fields(
     cc: str | None = None,
     bcc: str | None = None,
 ) -> dict[str, Any]:
-    requested = {"to": to, "cc": cc, "bcc": bcc}
+    normalized_to = normalize_explicit_recipient_value(to)
+    normalized_cc = normalize_explicit_recipient_value(cc)
+    normalized_bcc = normalize_explicit_recipient_value(bcc)
+    requested = {"to": normalized_to, "cc": normalized_cc, "bcc": normalized_bcc}
     warnings: list[str] = []
-    for attribute, value in (("To", to), ("CC", cc), ("BCC", bcc)):
+    for attribute, value in (("To", normalized_to), ("CC", normalized_cc), ("BCC", normalized_bcc)):
         if value is None:
             continue
         try:
             setattr(draft, attribute, value)
         except Exception:
             add_unique_warning(warnings, f"{attribute.lower()}_unset")
+    normalize_native_recipients_to_smtp(
+        draft,
+        warnings,
+        skip_attributes={
+            attribute
+            for attribute, value in (("To", normalized_to), ("CC", normalized_cc), ("BCC", normalized_bcc))
+            if value is not None
+        },
+    )
     return {
         "requested": {key: value for key, value in requested.items() if value is not None},
         "actual": {
