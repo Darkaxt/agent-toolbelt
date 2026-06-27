@@ -17,6 +17,12 @@ JSONL records. Index builds are coordinated with a per-thread lock file in that
 same cache directory so concurrent callers wait briefly, reclaim stale locks,
 and fail closed with `index_busy` instead of hanging indefinitely.
 
+Schema v9 keeps rollout JSONL files as the raw source of truth. SQLite stores
+compact metadata, semantic facets, bounded excerpts, FTS search text, and byte
+offsets back into the rollout file; it no longer stores full raw transcript
+text. `grep --include-noise` expands raw evidence from the rollout source on
+demand using those offsets.
+
 `status` is intentionally lightweight and non-mutating: it resolves the thread,
 reports cache freshness/lock/collector diagnostics, and does not build or append
 the index. Use `collect` to warm caches explicitly, or let `recall`, `grep`,
@@ -62,6 +68,14 @@ Phase 9 improves audit search quality:
 - `grep` and `worklog` keep literal substring search by default and add opt-in `--query-mode fts` for SQLite FTS5/BM25 phrase, boolean, and prefix queries.
 - `grep` results include match snippets and stable `entry_ref` values, and `--context <n>` returns bounded neighboring evidence around each result.
 - `status` reports FTS availability, FTS row health, supported query modes, and cache health so corrupted search indexes rebuild instead of silently degrading.
+
+Schema v9 changes the cache from raw transcript storage to source-referenced
+index storage:
+
+- `entries` stores rollout path ids, line numbers, byte offsets, compact metadata, facets, and excerpts.
+- `entries` does not store `raw_text` or full `search_text`.
+- `entries_fts` indexes bounded `search_text` only; raw/noise matching reopens the rollout JSONL source on demand.
+- Missing rollout files leave semantic index rows usable but raw evidence expansion unavailable.
 
 Phase 10 adds portable memory bundles as an explicit separate workflow:
 

@@ -509,15 +509,26 @@ class ThreadRecallTests(unittest.TestCase):
                 rollout_columns = {
                     row[1] for row in conn.execute("pragma table_info(rollout_indexes)").fetchall()
                 }
+                entry_columns = {
+                    row[1] for row in conn.execute("pragma table_info(entries)").fetchall()
+                }
+                fts_columns = {
+                    row[1] for row in conn.execute("pragma table_info(entries_fts)").fetchall()
+                }
                 table_names = {
                     row[0] for row in conn.execute("select name from sqlite_master where type = 'table'").fetchall()
                 }
             finally:
                 conn.close()
 
-        self.assertTrue({"schema_version", "last_indexed_offset", "last_indexed_line", "last_indexed_entry"}.issubset(rollout_columns))
+        self.assertTrue({"schema_version", "rollout_path_id", "last_indexed_offset", "last_indexed_line", "last_indexed_entry"}.issubset(rollout_columns))
+        self.assertTrue({"rollout_path_id", "byte_start", "byte_end", "excerpt"}.issubset(entry_columns))
+        self.assertNotIn("raw_text", entry_columns)
+        self.assertNotIn("search_text", entry_columns)
+        self.assertEqual({"entry_id", "thread_id", "search_text"}, fts_columns)
         self.assertTrue(
             {
+                "rollout_paths",
                 "entry_paths",
                 "entry_blockers",
                 "entry_retry_signals",
@@ -1702,6 +1713,42 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertEqual(len(no_noise["results"]), 0)
         self.assertGreater(len(with_noise["results"]), 0)
 
+    def test_grep_include_noise_reads_raw_rollout_source_without_cached_raw_text(self):
+        raw_only_marker = "RAW-SOURCE-ONLY-MARKER-1199"
+        entries = [
+            make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "agent_message", "text": "Published `artifact-visible`."}),
+            make_entry(
+                "2026-04-25T08:01:00Z",
+                "response_item",
+                {
+                    "type": "function_call_output",
+                    "output": json.dumps({"stdout": ("noise " * 3000) + raw_only_marker, "stderr": ""}),
+                },
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            with self.with_env(codex_home):
+                payload = thread_recall.grep_rollout(pattern=raw_only_marker, include_noise=True, limit=10)
+
+            cache_db = codex_home / "cache" / "codex-thread-recall" / "index.sqlite"
+            conn = sqlite3.connect(cache_db)
+            try:
+                entry_columns = {
+                    row[1] for row in conn.execute("pragma table_info(entries)").fetchall()
+                }
+                fts_columns = {
+                    row[1] for row in conn.execute("pragma table_info(entries_fts)").fetchall()
+                }
+            finally:
+                conn.close()
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["returned_matches"], 1)
+        self.assertIn(raw_only_marker, payload["results"][0]["match"]["snippet"])
+        self.assertNotIn("raw_text", entry_columns)
+        self.assertNotIn("raw_text", fts_columns)
+
     def test_grep_fts_mode_supports_boolean_prefix_and_match_metadata(self):
         entries = [
             make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Plan `artifact-search` audit search support."}),
@@ -2036,7 +2083,7 @@ class ThreadRecallTests(unittest.TestCase):
             42,
         )
 
-        self.assertEqual(compacted["raw_text"], "Context compacted.")
+        self.assertNotIn("raw_text", compacted)
         self.assertEqual(compacted["excerpt"], "Context compacted.")
         self.assertEqual(compacted["noise_reason"], "compaction-marker")
         self.assertEqual(compacted["entities"], [])
@@ -2059,7 +2106,7 @@ class ThreadRecallTests(unittest.TestCase):
 
         self.assertTrue(any("Permission denied" in item for item in oversized["blockers"]))
 
-    def test_oversized_noise_entries_use_bounded_storage(self):
+    def test_oversized_noise_entries_do_not_store_raw_text(self):
         huge_output = ("alpha " * 4000) + "artifact-omega"
         oversized = thread_recall.normalize_entry(
             {
@@ -2076,7 +2123,8 @@ class ThreadRecallTests(unittest.TestCase):
 
         self.assertTrue(oversized["is_noise"])
         self.assertEqual(oversized["noise_reason"], "oversized-output")
-        self.assertLess(len(oversized["raw_text"]), len(huge_output))
+        self.assertNotIn("raw_text", oversized)
+        self.assertEqual(oversized["search_text"], "")
 
     def test_transcript_dump_rows_are_classified_and_suppressed_by_default(self):
         transcript_dump = thread_recall.normalize_entry(

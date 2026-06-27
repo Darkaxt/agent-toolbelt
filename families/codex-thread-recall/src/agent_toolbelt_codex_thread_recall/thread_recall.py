@@ -134,7 +134,7 @@ ENTITY_SOURCE_STRENGTH = {
     "qualified_id_prefix": 4,
 }
 CONTENT_CLASSES = {"work", "meta", "command_output", "transcript_dump", "compaction"}
-CACHE_SCHEMA_VERSION = 8
+CACHE_SCHEMA_VERSION = 9
 MEMORY_BUNDLE_FORMAT = "codex-thread-recall.memory_bundle.v1"
 MEMORY_BUNDLE_MAX_BYTES = 5_000_000
 TEXT_SCAN_LIMIT = 2000
@@ -1147,19 +1147,27 @@ def classify_search_text(
     return compact
 
 
-def normalize_entry(entry: dict[str, Any], entry_index: int, line_number: int) -> dict[str, Any]:
+def normalize_entry(
+    entry: dict[str, Any],
+    entry_index: int,
+    line_number: int,
+    *,
+    byte_start: int = 0,
+    byte_end: int = 0,
+) -> dict[str, Any]:
     payload = entry.get("payload") or {}
     if entry.get("type") == "compacted":
         return {
             "timestamp": entry.get("timestamp"),
             "entry_index": entry_index,
             "rollout_line": line_number,
+            "byte_start": byte_start,
+            "byte_end": byte_end,
             "entry_type": entry.get("type"),
             "payload_type": payload.get("type"),
             "role": None,
             "content_class": "compaction",
             "command": None,
-            "raw_text": "Context compacted.",
             "search_text": "",
             "excerpt": "Context compacted.",
             "paths": [],
@@ -1246,20 +1254,18 @@ def normalize_entry(entry: dict[str, Any], entry_index: int, line_number: int) -
         content_class=content_class,
         is_noise=is_noise,
     )
-    raw_text = combined_text
-    if is_noise and len(raw_text) > RAW_TEXT_STORE_LIMIT:
-        raw_text = bounded_analysis_text(raw_text, limit=RAW_TEXT_STORE_LIMIT)
 
     return {
         "timestamp": entry.get("timestamp"),
         "entry_index": entry_index,
         "rollout_line": line_number,
+        "byte_start": byte_start,
+        "byte_end": byte_end,
         "entry_type": entry.get("type"),
         "payload_type": payload.get("type"),
         "role": role,
         "content_class": content_class,
         "command": command,
-        "raw_text": raw_text,
         "search_text": search_text,
         "excerpt": summarize_text(search_text or analysis_text) if (search_text or analysis_text) else "",
         "paths": paths,
@@ -1317,7 +1323,15 @@ def load_rollout_delta(
                 continue
 
             current_entry += 1
-            normalized.append(normalize_entry(entry, current_entry, current_line))
+            normalized.append(
+                normalize_entry(
+                    entry,
+                    current_entry,
+                    current_line,
+                    byte_start=line_offset,
+                    byte_end=committed_offset,
+                )
+            )
     return normalized, warnings, committed_offset, current_line, current_entry
 
 
@@ -1449,6 +1463,7 @@ def drop_cache_schema(conn: sqlite3.Connection) -> None:
         drop table if exists entry_event_kinds;
         drop table if exists entries;
         drop table if exists rollout_indexes;
+        drop table if exists rollout_paths;
         """
     )
 
@@ -1461,6 +1476,7 @@ def ensure_cache_schema(conn: sqlite3.Connection) -> None:
         rollout_columns = {row["name"] for row in conn.execute("pragma table_info(rollout_indexes)").fetchall()}
         required_rollout_columns = {
             "schema_version",
+            "rollout_path_id",
             "last_indexed_offset",
             "last_indexed_line",
             "last_indexed_entry",
@@ -1477,21 +1493,27 @@ def ensure_cache_schema(conn: sqlite3.Connection) -> None:
         required_entry_columns = {
             "id",
             "thread_id",
+            "rollout_path_id",
             "entry_index",
             "rollout_line",
+            "byte_start",
+            "byte_end",
             "timestamp",
             "entry_type",
             "payload_type",
             "role",
             "content_class",
             "command",
-            "raw_text",
-            "search_text",
             "excerpt",
             "is_noise",
             "noise_reason",
         }
-        if "paths_json" in entry_columns or not required_entry_columns.issubset(entry_columns):
+        if (
+            "paths_json" in entry_columns
+            or "raw_text" in entry_columns
+            or "search_text" in entry_columns
+            or not required_entry_columns.issubset(entry_columns)
+        ):
             drop_cache_schema(conn)
 
     episodes_exists = conn.execute(
@@ -1548,10 +1570,15 @@ def ensure_cache_schema(conn: sqlite3.Connection) -> None:
 
     conn.executescript(
         """
+        create table if not exists rollout_paths (
+            id integer primary key,
+            path text not null unique
+        );
+
         create table if not exists rollout_indexes (
             thread_id text primary key,
             schema_version integer not null,
-            rollout_path text not null,
+            rollout_path_id integer not null references rollout_paths(id),
             rollout_size integer not null,
             rollout_mtime_ns integer not null,
             last_indexed_offset integer not null,
@@ -1566,15 +1593,16 @@ def ensure_cache_schema(conn: sqlite3.Connection) -> None:
         create table if not exists entries (
             id integer primary key,
             thread_id text not null,
+            rollout_path_id integer not null references rollout_paths(id),
             entry_index integer not null,
             rollout_line integer not null,
+            byte_start integer not null,
+            byte_end integer not null,
             timestamp text,
             entry_type text,
             payload_type text,
             role text,
             command text,
-            raw_text text,
-            search_text text,
             excerpt text,
             is_noise integer not null,
             noise_reason text,
@@ -1623,6 +1651,7 @@ def ensure_cache_schema(conn: sqlite3.Connection) -> None:
         )
 
     conn.execute("create index if not exists idx_entries_thread on entries(thread_id, entry_index)")
+    conn.execute("create index if not exists idx_entries_rollout_path on entries(rollout_path_id, rollout_line)")
     conn.execute("create index if not exists idx_entries_timestamp on entries(thread_id, timestamp)")
     conn.execute("create index if not exists idx_entries_role on entries(thread_id, role, entry_index)")
     conn.execute("create index if not exists idx_entries_type on entries(thread_id, entry_type, payload_type, entry_index)")
@@ -1642,8 +1671,7 @@ def ensure_cache_schema(conn: sqlite3.Connection) -> None:
             create virtual table if not exists entries_fts using fts5(
                 entry_id unindexed,
                 thread_id unindexed,
-                search_text,
-                raw_text
+                search_text
             )
             """
         )
@@ -1657,11 +1685,12 @@ def rollout_signature(rollout_path: Path) -> tuple[int, int]:
 def cache_metadata_row(conn: sqlite3.Connection, thread_id: str) -> sqlite3.Row | None:
     return conn.execute(
         """
-        select schema_version, rollout_path, rollout_size, rollout_mtime_ns,
-               last_indexed_offset, last_indexed_line, last_indexed_entry,
-               built_at, entry_count, noise_filtered_count, last_rebuild_reason
-        from rollout_indexes
-        where thread_id = ?
+        select ri.schema_version, ri.rollout_path_id, rp.path as rollout_path, ri.rollout_size, ri.rollout_mtime_ns,
+               ri.last_indexed_offset, ri.last_indexed_line, ri.last_indexed_entry,
+               ri.built_at, ri.entry_count, ri.noise_filtered_count, ri.last_rebuild_reason
+        from rollout_indexes ri
+        join rollout_paths rp on rp.id = ri.rollout_path_id
+        where ri.thread_id = ?
         """,
         (thread_id,),
     ).fetchone()
@@ -1677,6 +1706,15 @@ def clear_thread_cache(conn: sqlite3.Connection, thread_id: str) -> None:
     conn.execute("delete from episodes where thread_id = ?", (thread_id,))
     conn.execute("delete from entries where thread_id = ?", (thread_id,))
     conn.execute("delete from rollout_indexes where thread_id = ?", (thread_id,))
+
+
+def upsert_rollout_path(conn: sqlite3.Connection, rollout_path: str | Path) -> int:
+    path = str(rollout_path)
+    conn.execute("insert or ignore into rollout_paths (path) values (?)", (path,))
+    row = conn.execute("select id from rollout_paths where path = ?", (path,)).fetchone()
+    if row is None:
+        raise RuntimeError(f"rollout path was not persisted: {path}")
+    return int(row["id"])
 
 
 def insert_entry_facets(conn: sqlite3.Connection, entry_id: int, entry: dict[str, Any]) -> None:
@@ -1724,15 +1762,14 @@ def insert_entry_fts(conn: sqlite3.Connection, *, entry_id: int, thread_id: str,
         return
     conn.execute(
         """
-        insert into entries_fts (rowid, entry_id, thread_id, search_text, raw_text)
-        values (?, ?, ?, ?, ?)
+        insert into entries_fts (rowid, entry_id, thread_id, search_text)
+        values (?, ?, ?, ?)
         """,
         (
             entry_id,
             entry_id,
             thread_id,
             entry["search_text"] or "",
-            entry["raw_text"] or "",
         ),
     )
 
@@ -1741,28 +1778,31 @@ def insert_entries(
     conn: sqlite3.Connection,
     *,
     thread_id: str,
+    rollout_path_id: int,
     entries: list[dict[str, Any]],
 ) -> None:
     for entry in entries:
         cursor = conn.execute(
             """
             insert into entries (
-                thread_id, entry_index, rollout_line, timestamp, entry_type, payload_type, role, content_class,
-                command, raw_text, search_text, excerpt, is_noise, noise_reason
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                thread_id, rollout_path_id, entry_index, rollout_line, byte_start, byte_end,
+                timestamp, entry_type, payload_type, role, content_class,
+                command, excerpt, is_noise, noise_reason
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 thread_id,
+                rollout_path_id,
                 entry["entry_index"],
                 entry["rollout_line"],
+                entry["byte_start"],
+                entry["byte_end"],
                 entry["timestamp"],
                 entry["entry_type"],
                 entry["payload_type"],
                 entry["role"],
                 entry["content_class"],
                 entry["command"],
-                entry["raw_text"],
-                entry["search_text"],
                 entry["excerpt"],
                 int(entry["is_noise"]),
                 entry["noise_reason"],
@@ -1776,11 +1816,13 @@ def insert_entries(
 def all_entries_for_thread(conn: sqlite3.Connection, thread_id: str) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
-        select id, thread_id, entry_index, rollout_line, timestamp, entry_type, payload_type, role, content_class,
-               command, raw_text, search_text, excerpt, is_noise, noise_reason
-        from entries
-        where thread_id = ?
-        order by entry_index
+        select e.id, e.thread_id, e.rollout_path_id, rp.path as rollout_path, e.entry_index, e.rollout_line,
+               e.byte_start, e.byte_end, e.timestamp, e.entry_type, e.payload_type, e.role, e.content_class,
+               e.command, e.excerpt, e.is_noise, e.noise_reason
+        from entries e
+        join rollout_paths rp on rp.id = e.rollout_path_id
+        where e.thread_id = ?
+        order by e.entry_index
         """,
         (thread_id,),
     ).fetchall()
@@ -2058,11 +2100,13 @@ def entries_for_tail_rebuild(
 ) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
-        select id, thread_id, entry_index, rollout_line, timestamp, entry_type, payload_type, role, content_class,
-               command, raw_text, search_text, excerpt, is_noise, noise_reason
-        from entries
-        where thread_id = ? and entry_index >= ?
-        order by entry_index
+        select e.id, e.thread_id, e.rollout_path_id, rp.path as rollout_path, e.entry_index, e.rollout_line,
+               e.byte_start, e.byte_end, e.timestamp, e.entry_type, e.payload_type, e.role, e.content_class,
+               e.command, e.excerpt, e.is_noise, e.noise_reason
+        from entries e
+        join rollout_paths rp on rp.id = e.rollout_path_id
+        where e.thread_id = ? and e.entry_index >= ?
+        order by e.entry_index
         """,
         (thread_id, start_entry_index),
     ).fetchall()
@@ -2132,16 +2176,17 @@ def upsert_rollout_index(
     last_rebuild_reason: str | None,
     built_at: str | None = None,
 ) -> None:
+    rollout_path_id = upsert_rollout_path(conn, thread["rollout_path"])
     conn.execute(
         """
         insert into rollout_indexes (
-            thread_id, schema_version, rollout_path, rollout_size, rollout_mtime_ns,
+            thread_id, schema_version, rollout_path_id, rollout_size, rollout_mtime_ns,
             last_indexed_offset, last_indexed_line, last_indexed_entry,
             built_at, entry_count, noise_filtered_count, last_rebuild_reason
         ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         on conflict(thread_id) do update set
             schema_version = excluded.schema_version,
-            rollout_path = excluded.rollout_path,
+            rollout_path_id = excluded.rollout_path_id,
             rollout_size = excluded.rollout_size,
             rollout_mtime_ns = excluded.rollout_mtime_ns,
             last_indexed_offset = excluded.last_indexed_offset,
@@ -2155,7 +2200,7 @@ def upsert_rollout_index(
         (
             thread["id"],
             CACHE_SCHEMA_VERSION,
-            thread["rollout_path"],
+            rollout_path_id,
             rollout_size,
             rollout_mtime_ns,
             last_indexed_offset,
@@ -2182,7 +2227,8 @@ def rebuild_index(
     rebuild_reason: str,
 ) -> None:
     clear_thread_cache(conn, thread["id"])
-    insert_entries(conn, thread_id=thread["id"], entries=entries)
+    rollout_path_id = upsert_rollout_path(conn, thread["rollout_path"])
+    insert_entries(conn, thread_id=thread["id"], rollout_path_id=rollout_path_id, entries=entries)
     rebuild_thread_episodes(conn, thread_id=thread["id"])
     upsert_rollout_index(
         conn,
@@ -2212,7 +2258,8 @@ def append_index(
     last_indexed_entry: int,
     rebuild_reason: str,
 ) -> None:
-    insert_entries(conn, thread_id=thread["id"], entries=new_entries)
+    rollout_path_id = upsert_rollout_path(conn, thread["rollout_path"])
+    insert_entries(conn, thread_id=thread["id"], rollout_path_id=rollout_path_id, entries=new_entries)
     try:
         rebuild_tail_thread_episodes(conn, thread_id=thread["id"])
     except TailEpisodeRebuildError:
@@ -2653,16 +2700,18 @@ def entry_from_row(row: sqlite3.Row, facets: dict[str, list[Any]]) -> dict[str, 
     return {
         "id": int(row["id"]),
         "thread_id": row["thread_id"],
+        "rollout_path_id": int(row["rollout_path_id"]),
+        "rollout_path": row["rollout_path"],
         "entry_index": int(row["entry_index"]),
         "rollout_line": int(row["rollout_line"]),
+        "byte_start": int(row["byte_start"]),
+        "byte_end": int(row["byte_end"]),
         "timestamp": row["timestamp"],
         "entry_type": row["entry_type"],
         "payload_type": row["payload_type"],
         "role": row["role"],
         "content_class": row["content_class"],
         "command": row["command"],
-        "raw_text": row["raw_text"] or "",
-        "search_text": row["search_text"] or "",
         "excerpt": row["excerpt"] or "",
         "is_noise": bool(row["is_noise"]),
         "noise_reason": row["noise_reason"],
@@ -2679,10 +2728,12 @@ def fetch_entry_rows_by_ids(conn: sqlite3.Connection, entry_ids: list[int]) -> l
         rows.extend(
             conn.execute(
                 f"""
-                select id, thread_id, entry_index, rollout_line, timestamp, entry_type, payload_type, role, content_class,
-                       command, raw_text, search_text, excerpt, is_noise, noise_reason
-                from entries
-                where id in ({placeholders})
+                select e.id, e.thread_id, e.rollout_path_id, rp.path as rollout_path, e.entry_index, e.rollout_line,
+                       e.byte_start, e.byte_end, e.timestamp, e.entry_type, e.payload_type, e.role, e.content_class,
+                       e.command, e.excerpt, e.is_noise, e.noise_reason
+                from entries e
+                join rollout_paths rp on rp.id = e.rollout_path_id
+                where e.id in ({placeholders})
                 """,
                 entry_id_chunk,
             ).fetchall()
@@ -2726,11 +2777,11 @@ def fts_search_order_sql(sort: str) -> str:
 
 
 def fts_column(search_column: str) -> str:
-    return "raw_text" if search_column == "raw_text" else "search_text"
+    return "search_text"
 
 
 def fts_snippet_column(search_column: str) -> int:
-    return 3 if search_column == "raw_text" else 2
+    return 2
 
 
 def fts_query_from_patterns(patterns: list[str]) -> str:
@@ -2768,6 +2819,40 @@ def literal_snippet(text: str, patterns: list[str], *, radius: int = 90) -> str:
     if window_end < len(text):
         snippet += "..."
     return " ".join(snippet.split())
+
+
+def rollout_source_text_for_entry(entry: dict[str, Any]) -> tuple[str, str | None]:
+    rollout_path = Path(str(entry.get("rollout_path") or ""))
+    if not rollout_path.is_file():
+        return "", "rollout_source_missing"
+    byte_start = int(entry.get("byte_start") or 0)
+    byte_end = int(entry.get("byte_end") or 0)
+    if byte_end <= byte_start:
+        return "", "rollout_source_offset_invalid"
+    try:
+        with rollout_path.open("rb") as handle:
+            handle.seek(byte_start)
+            raw_line = handle.read(byte_end - byte_start)
+    except OSError:
+        return "", "rollout_source_unreadable"
+
+    line = raw_line.decode("utf-8", errors="replace").strip()
+    if not line:
+        return "", "rollout_source_empty"
+    try:
+        source_entry = json.loads(line)
+    except json.JSONDecodeError:
+        return line, "rollout_source_malformed_json"
+    if source_entry.get("type") == "compacted":
+        return "Context compacted.", None
+
+    payload = source_entry.get("payload") or {}
+    flattened = flatten_content(payload)
+    combined_text = " ".join(part for part in flattened if part).strip()
+    command = command_from_payload(payload)
+    if command and command not in combined_text:
+        combined_text = f"{command}\n{combined_text}".strip()
+    return combined_text, None
 
 
 def substantive_match_sql(*, alias: str = "e") -> str:
@@ -2830,8 +2915,9 @@ def build_search_where(
     if substantive_only:
         where_clauses.append(substantive_match_sql(alias="e"))
     if patterns:
+        text_expr = "entries_fts.search_text" if search_column == "search_text" else f"e.{search_column}"
         where_clauses.append(
-            "(" + " or ".join(f"instr(lower(coalesce(e.{search_column}, '')), lower(?)) > 0" for _ in patterns) + ")"
+            "(" + " or ".join(f"instr(lower(coalesce({text_expr}, '')), lower(?)) > 0" for _ in patterns) + ")"
         )
         params.extend(patterns)
     return where_clauses, params
@@ -2868,7 +2954,7 @@ def search_candidate_rows(
     rows = conn.execute(
         f"""
         select e.id, e.thread_id, e.entry_index, e.rollout_line, e.timestamp, e.entry_type, e.payload_type, e.role,
-               e.{search_column} as match_text,
+               entries_fts.search_text as match_text,
                ((select count(*) from entry_entities en where en.entry_id = e.id)
                 + (select count(*) from entry_repos rp where rp.entry_id = e.id)
                 + (select count(*) from entry_pr_numbers pn where pn.entry_id = e.id)
@@ -2876,6 +2962,7 @@ def search_candidate_rows(
                 + (select count(*) from entry_qualified_ids qi where qi.entry_id = e.id)
                 + (select count(*) from entry_event_kinds ek where ek.entry_id = e.id)) as facet_score
         from entries e
+        join entries_fts on entries_fts.entry_id = e.id
         where {' and '.join(where_clauses)}
         order by {order_sql}
         """,
@@ -2887,6 +2974,7 @@ def search_candidate_rows(
             {
                 **dict(row),
                 "_query_mode": "literal",
+                "_match_text": row["match_text"] or "",
                 "_matched_patterns": literal_matched_patterns(row["match_text"] or "", patterns),
                 "_match_snippet": literal_snippet(row["match_text"] or "", patterns),
                 "_fts_rank": None,
@@ -2954,6 +3042,7 @@ def fts_search_candidate_rows(
         {
             **dict(row),
             "_query_mode": "fts",
+            "_match_text": "",
             "_matched_patterns": patterns,
             "_match_snippet": row["match_snippet"] or "",
             "_fts_rank": float(row["fts_rank"]) if row["fts_rank"] is not None else None,
@@ -2978,8 +3067,8 @@ def collapse_candidate_rank(entry: dict[str, Any]) -> int | None:
 def collapse_entry_text(entry: dict[str, Any]) -> str:
     return " ".join(
         (
-            entry.get("search_text")
-            or entry.get("raw_text")
+            entry.get("_raw_source_text")
+            or entry.get("_match_text")
             or entry.get("excerpt")
             or ""
         ).split()
@@ -3636,11 +3725,21 @@ def search_entry_payload(
     include_noise: bool,
     thread_map: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    haystack = entry["raw_text"] if include_noise else entry["search_text"]
+    haystack = (
+        entry.get("_raw_source_text")
+        or entry.get("_match_text")
+        or entry.get("excerpt")
+        or ""
+    )
     payload = {
         "entry_ref": f"{entry['thread_id']}#{entry['entry_index']}",
         "entry_index": entry["entry_index"],
         "rollout_line": entry["rollout_line"],
+        "source": {
+            "rollout_path": entry.get("rollout_path"),
+            "byte_start": entry.get("byte_start"),
+            "byte_end": entry.get("byte_end"),
+        },
         "timestamp": entry["timestamp"],
         "entry_type": entry["entry_type"],
         "payload_type": entry["payload_type"],
@@ -3656,8 +3755,74 @@ def search_entry_payload(
         }
         if entry.get("_fts_rank") is not None:
             match_payload["fts_rank"] = entry["_fts_rank"]
+        if entry.get("_source_warning"):
+            match_payload["source_warning"] = entry["_source_warning"]
         payload["match"] = match_payload
     return apply_thread_context(payload, thread_id=entry["thread_id"], thread_map=thread_map)
+
+
+def raw_source_logical_entries(
+    conn: sqlite3.Connection,
+    *,
+    thread_ids: list[str],
+    patterns: list[str],
+    scope_info: dict[str, Any],
+    role: str | None = None,
+    entry_type: str | None = None,
+    payload_type: str | None = None,
+    after: str | None = None,
+    before: str | None = None,
+    substantive_only: bool = False,
+    sort: str = "relevance",
+) -> tuple[list[dict[str, Any]], int]:
+    where_clauses, params = build_search_where(
+        thread_ids=thread_ids,
+        search_column="raw_text",
+        patterns=[],
+        scope_info=scope_info,
+        role=role,
+        entry_type=entry_type,
+        payload_type=payload_type,
+        after=after,
+        before=before,
+        substantive_only=substantive_only,
+    )
+    order_sql = search_order_sql(sort)
+    rows = conn.execute(
+        f"""
+        select e.id,
+               ((select count(*) from entry_entities en where en.entry_id = e.id)
+                + (select count(*) from entry_repos rp where rp.entry_id = e.id)
+                + (select count(*) from entry_pr_numbers pn where pn.entry_id = e.id)
+                + (select count(*) from entry_commit_oids co where co.entry_id = e.id)
+                + (select count(*) from entry_qualified_ids qi where qi.entry_id = e.id)
+                + (select count(*) from entry_event_kinds ek where ek.entry_id = e.id)) as facet_score
+        from entries e
+        where {' and '.join(where_clauses)}
+        order by {order_sql}
+        """,
+        params,
+    ).fetchall()
+    entry_ids = [int(row["id"]) for row in rows]
+    facet_scores = {int(row["id"]): int(row["facet_score"] or 0) for row in rows}
+    candidates = fetch_entry_rows_by_ids(conn, entry_ids)
+    matched_entries: list[dict[str, Any]] = []
+    for entry in candidates:
+        raw_text, source_warning = rollout_source_text_for_entry(entry)
+        matched = literal_matched_patterns(raw_text, patterns)
+        if not matched:
+            continue
+        entry["_facet_score"] = facet_scores.get(int(entry["id"]), 0)
+        entry["_query_mode"] = "literal"
+        entry["_matched_patterns"] = matched
+        entry["_match_snippet"] = literal_snippet(raw_text, patterns)
+        entry["_raw_source_text"] = raw_text
+        entry["_source_warning"] = source_warning
+        matched_entries.append(entry)
+
+    collapsed_entries, collapsed_count = collapse_mirror_entries(matched_entries)
+    search_entry_sort_in_place(collapsed_entries, sort=sort)
+    return collapsed_entries, collapsed_count
 
 
 def logical_search_entries(
@@ -3677,6 +3842,22 @@ def logical_search_entries(
     sort: str = "relevance",
     query_mode: str = "literal",
 ) -> tuple[list[dict[str, Any]], int]:
+    if search_column == "raw_text":
+        if query_mode == "fts":
+            raise InvalidSearchQueryError("raw include-noise search uses literal rollout-source scanning; use query_mode=literal")
+        return raw_source_logical_entries(
+            conn,
+            thread_ids=thread_ids,
+            patterns=patterns,
+            scope_info=scope_info,
+            role=role,
+            entry_type=entry_type,
+            payload_type=payload_type,
+            after=after,
+            before=before,
+            substantive_only=substantive_only,
+            sort=sort,
+        )
     if query_mode == "fts":
         rows = fts_search_candidate_rows(
             conn,
@@ -3714,6 +3895,7 @@ def logical_search_entries(
         entry = dict(entries[int(row["id"])])
         entry["_facet_score"] = int(row["facet_score"] or 0)
         entry["_query_mode"] = row.get("_query_mode")
+        entry["_match_text"] = row.get("_match_text") or ""
         entry["_matched_patterns"] = row.get("_matched_patterns") or []
         entry["_match_snippet"] = row.get("_match_snippet")
         entry["_fts_rank"] = row.get("_fts_rank")
@@ -3780,7 +3962,7 @@ def evidence_entry_ids(conn: sqlite3.Connection, *, thread_ids: list[str], profi
             or exists (select 1 from entry_retry_signals rs where rs.entry_id = e.id)
         """
     else:
-        where_sql = "e.entry_type = 'compacted' or (e.content_class = 'work' and e.search_text != '' and e.is_noise = 0)"
+        where_sql = "e.entry_type = 'compacted' or (e.content_class = 'work' and e.excerpt != '' and e.is_noise = 0)"
 
     scoped_sql, scoped_params = scope_clause(scope_info, alias="e")
     thread_sql, thread_params = thread_filter_sql(thread_ids, alias="e")
