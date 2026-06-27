@@ -959,6 +959,70 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertIn("index.sqlite", payload["cache"]["path"])
         self.assertIn(payload["cache"]["lock_state"]["state"], {"unlocked", "not-needed", "acquired"})
 
+    def test_status_handles_legacy_v8_cache_without_rollout_paths_table(self):
+        entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "hello"})]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, rollout_path = make_codex_home(temp_dir, rollout_entries=entries)
+            cache_db = codex_home / "cache" / "codex-thread-recall" / "index.sqlite"
+            cache_db.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(cache_db)
+            try:
+                conn.executescript(
+                    """
+                    create table rollout_indexes (
+                        thread_id text primary key,
+                        schema_version integer not null,
+                        rollout_path text not null,
+                        rollout_size integer not null,
+                        rollout_mtime_ns integer not null,
+                        last_indexed_offset integer not null,
+                        last_indexed_line integer not null,
+                        last_indexed_entry integer not null,
+                        built_at text not null,
+                        entry_count integer not null,
+                        noise_filtered_count integer not null,
+                        last_rebuild_reason text
+                    );
+                    create table entries (
+                        id integer primary key,
+                        thread_id text not null,
+                        entry_index integer not null,
+                        rollout_line integer not null,
+                        timestamp text,
+                        entry_type text,
+                        payload_type text,
+                        role text,
+                        command text,
+                        raw_text text,
+                        search_text text,
+                        excerpt text,
+                        is_noise integer not null,
+                        noise_reason text,
+                        content_class text not null
+                    );
+                    """
+                )
+                conn.execute(
+                    """
+                    insert into rollout_indexes (
+                        thread_id, schema_version, rollout_path, rollout_size, rollout_mtime_ns,
+                        last_indexed_offset, last_indexed_line, last_indexed_entry,
+                        built_at, entry_count, noise_filtered_count, last_rebuild_reason
+                    ) values (?, 8, ?, 10, 20, 10, 1, 1, ?, 0, 0, 'test-legacy')
+                    """,
+                    (THREAD_ID, str(rollout_path), "2026-04-25T08:00:00+00:00"),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            with self.with_env(codex_home):
+                payload = thread_recall.status()
+
+        self.assertTrue(payload["ok"], payload)
+        self.assertEqual(payload["cache"]["schema_version"], 8)
+        self.assertEqual(payload["cache"]["freshness"]["state"], "stale")
+
     def test_status_reports_fts_health_and_collector_self_heals_missing_fts_rows(self):
         entries = [
             make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "Plan `artifact-health`."}),

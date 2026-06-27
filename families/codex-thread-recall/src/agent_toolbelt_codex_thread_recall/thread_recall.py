@@ -1683,6 +1683,22 @@ def rollout_signature(rollout_path: Path) -> tuple[int, int]:
 
 
 def cache_metadata_row(conn: sqlite3.Connection, thread_id: str) -> sqlite3.Row | None:
+    if not table_exists(conn, "rollout_indexes"):
+        return None
+    rollout_columns = {row["name"] for row in conn.execute("pragma table_info(rollout_indexes)").fetchall()}
+    if "rollout_path_id" not in rollout_columns:
+        return conn.execute(
+            """
+            select schema_version, null as rollout_path_id, rollout_path, rollout_size, rollout_mtime_ns,
+                   last_indexed_offset, last_indexed_line, last_indexed_entry,
+                   built_at, entry_count, noise_filtered_count, last_rebuild_reason
+            from rollout_indexes
+            where thread_id = ?
+            """,
+            (thread_id,),
+        ).fetchone()
+    if not table_exists(conn, "rollout_paths"):
+        return None
     return conn.execute(
         """
         select ri.schema_version, ri.rollout_path_id, rp.path as rollout_path, ri.rollout_size, ri.rollout_mtime_ns,
