@@ -55,12 +55,19 @@ The helper keeps an append-aware cache under `CODEX_HOME/cache/codex-thread-reca
 The first run may build or rebuild the index; later runs should be warm and only
 index newly appended committed JSONL lines. Cache mutation is protected by a
 per-thread lock file in that same cache directory, so concurrent callers wait
-briefly, reclaim stale locks, and fail closed with `index_busy` instead of
-hanging indefinitely.
+briefly, reclaim stale locks, and avoid hanging indefinitely. If a read command
+overlaps another live process and a prior cache exists, it uses that existing
+stale cache with a `busy-using-stale-cache` diagnostic instead of failing with
+`index_busy`. If no cache exists yet, it still fails closed with `index_busy`.
 The v9 cache is a compact index, not a second transcript store: rollout JSONL
 files remain the raw source of truth, SQLite stores byte offsets plus facets and
 bounded excerpts/search text, and `grep --include-noise` expands raw evidence
 from the rollout source on demand.
+When the scheduled collector has recently covered the current thread, foreground
+read commands may also return an existing stale cache with
+`refresh-deferred-using-stale-cache` instead of doing a slow append refresh in
+the agent command path. Treat that as usable recall evidence and let the
+collector catch up; do not abandon recall solely because that diagnostic appears.
 `status` is fast and non-mutating by default. It reports cache freshness and
 collector diagnostics but does not build or append the index. Use `collect` to
 warm caches explicitly, or let the command you actually need (`recall`, `grep`,
