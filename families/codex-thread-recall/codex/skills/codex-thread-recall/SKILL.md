@@ -2,8 +2,8 @@
 name: codex-thread-recall
 description: Use `scripts/invoke_codex_thread_recall.py` to inspect the current Codex thread's own raw rollout history before broad repo or web exploration on long-running or resumed work.
 license: MIT
-compatibility: Codex only. Requires CODEX_THREAD_ID, local Codex state_5.sqlite, and readable rollout JSONL files.
 metadata:
+  compatibility: Codex only. Requires CODEX_THREAD_ID, local Codex state_5.sqlite, and readable rollout JSONL files.
   version: "0.1.0"
 ---
 
@@ -19,7 +19,7 @@ Use `scripts/invoke_codex_thread_recall.py` when long-running or resumed work ri
 4. If the question is about prior shipped or merged work, run `timeline --kind shipped --group entity` first.
 5. Run `recall --profile general|shipping|debug` to get a bounded brief with decisions, known facts, touched paths, commands, blockers, open questions, and evidence pointers into the rollout JSONL.
 6. If one detail is still missing, run `grep --pattern <term>` with structured filters against this same thread before looking elsewhere.
-7. If the question is “when did we work on X?” or “what was the first/last span for X?”, use `worklog --pattern <term>` instead of hand-assembling a grep span.
+7. If the question is "when did we work on X?" or "what was the first/last span for X?", use `worklog --pattern <term>` instead of hand-assembling a grep span.
 8. If you need broader operational context from the same workspace, opt into `--thread-source workspace --max-threads <n>`; this only includes threads whose normalized `cwd` exactly matches the current one.
 9. If you need to carry distilled context elsewhere, explicitly use the `memory` subcommands. Imported memory bundles are not searched by default and are not source-of-truth rollout recall.
 10. Only do broad repo or web exploration after current-thread recall fails to answer it.
@@ -57,6 +57,10 @@ index newly appended committed JSONL lines. Cache mutation is protected by a
 per-thread lock file in that same cache directory, so concurrent callers wait
 briefly, reclaim stale locks, and fail closed with `index_busy` instead of
 hanging indefinitely.
+The v9 cache is a compact index, not a second transcript store: rollout JSONL
+files remain the raw source of truth, SQLite stores byte offsets plus facets and
+bounded excerpts/search text, and `grep --include-noise` expands raw evidence
+from the rollout source on demand.
 `status` is fast and non-mutating by default. It reports cache freshness and
 collector diagnostics but does not build or append the index. Use `collect` to
 warm caches explicitly, or let the command you actually need (`recall`, `grep`,
