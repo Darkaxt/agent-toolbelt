@@ -29,6 +29,17 @@ def main(argv: list[str] | None = None) -> int:
             playlist_items=args.playlist_items,
             timeout_sec=args.timeout_sec,
         )
+    elif args.operation == "prepare-analysis":
+        result = media.invoke_prepare_analysis(
+            url=args.url,
+            output_dir=args.output_dir,
+            subtitle_langs=args.subtitle_langs,
+            include_visuals=args.include_visuals,
+            include_audio=args.include_audio,
+            max_height=args.max_height,
+            frame_interval_sec=args.frame_interval_sec,
+            max_frames=args.max_frames,
+        )
     elif args.operation == "probe":
         result = media.invoke_probe(input_path=args.input, timeout_sec=args.timeout_sec)
     elif args.operation == "clip":

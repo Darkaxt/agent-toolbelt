@@ -162,6 +162,46 @@ class FamilyCLITests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["operation"], "download")
 
+    def test_media_cli_routes_prepare_analysis_command(self):
+        cli = import_family_cli("media")
+        captured = {}
+
+        original_prepare = cli.media.invoke_prepare_analysis
+
+        def fake_prepare(**kwargs):
+            captured.update(kwargs)
+            return {
+                "ok": True,
+                "tool": "yt-dlp+ffmpeg",
+                "operation": "prepare-analysis",
+                "exit_code": 0,
+                "stderr": "",
+                "artifacts": ["D:\\analysis\\analysis-manifest.json"],
+                "metadata": {"analysis_ready": True},
+            }
+
+        cli.media.invoke_prepare_analysis = fake_prepare
+        try:
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                exit_code = cli.main(
+                    [
+                        "prepare-analysis",
+                        "--url",
+                        "https://example.com/video",
+                        "--include-visuals",
+                        "--max-height",
+                        "360",
+                    ]
+                )
+                payload = json.loads(buffer.getvalue())
+        finally:
+            cli.media.invoke_prepare_analysis = original_prepare
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["operation"], "prepare-analysis")
+        self.assertTrue(captured["include_visuals"])
+        self.assertEqual(captured["max_height"], 360)
+
     def test_outlook_classic_mail_cli_routes_accounts_command(self):
         cli = import_family_cli("outlook-classic-mail")
 

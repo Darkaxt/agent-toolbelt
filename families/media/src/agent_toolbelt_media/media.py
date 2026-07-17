@@ -4,9 +4,12 @@
 # ///
 
 import argparse
+import html
 import ipaddress
 import json
+import re
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -44,6 +47,9 @@ AUDIO_CODEC_SETTINGS = {
     "wav": {"args": ["-c:a", "pcm_s16le"], "extension": ".wav"},
     "opus": {"args": ["-c:a", "libopus", "-b:a", "160k"], "extension": ".opus"},
 }
+
+VIDEO_EXTENSIONS = {".avi", ".m4v", ".mkv", ".mov", ".mp4", ".webm"}
+SUBTITLE_EXTENSIONS = {".srt", ".vtt"}
 
 
 def make_result(
@@ -324,6 +330,65 @@ def parse_download_artifacts(stdout: str, output_dir: Path) -> list[str]:
     return artifacts
 
 
+def clean_vtt_text(raw_text: str) -> str:
+    cleaned_lines: list[str] = []
+    skip_block = False
+    for raw_line in raw_text.replace("\ufeff", "").splitlines():
+        line = raw_line.strip()
+        if line.startswith(("NOTE", "STYLE", "REGION")):
+            skip_block = True
+            continue
+        if skip_block:
+            if not line:
+                skip_block = False
+            continue
+        if not line or line == "WEBVTT" or "-->" in line:
+            continue
+        if line.startswith(("Kind:", "Language:")) or line.isdigit():
+            continue
+        line = html.unescape(re.sub(r"<[^>]+>", "", line)).strip()
+        if line and (not cleaned_lines or cleaned_lines[-1] != line):
+            cleaned_lines.append(line)
+    return "\n".join(cleaned_lines) + ("\n" if cleaned_lines else "")
+
+
+def analysis_run_directory(output_dir: str | None, source_id: str | None) -> Path:
+    base_dir = Path(output_dir).expanduser().resolve() if output_dir else (Path.cwd() / "media-analysis").resolve()
+    safe_id = re.sub(r"[^A-Za-z0-9._-]+", "-", source_id or "media").strip("-.") or "media"
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    candidate = base_dir / f"analysis-{safe_id}-{timestamp}"
+    suffix = 2
+    while candidate.exists():
+        candidate = base_dir / f"analysis-{safe_id}-{timestamp}-{suffix}"
+        suffix += 1
+    candidate.mkdir(parents=True, exist_ok=False)
+    return candidate
+
+
+def paths_with_extensions(directory: Path, extensions: set[str]) -> list[Path]:
+    return sorted(
+        path.resolve()
+        for path in directory.rglob("*")
+        if path.is_file() and path.suffix.lower() in extensions
+    )
+
+
+def first_media_artifact(stdout: str, analysis_dir: Path) -> Path | None:
+    reported = [Path(path) for path in parse_download_artifacts(stdout, analysis_dir)]
+    candidates = [*reported, *paths_with_extensions(analysis_dir, VIDEO_EXTENSIONS)]
+    for path in candidates:
+        resolved = path.expanduser().resolve()
+        if resolved.is_file() and resolved.suffix.lower() in VIDEO_EXTENSIONS:
+            return resolved
+    return None
+
+
+def write_analysis_manifest(analysis_dir: Path, manifest: dict[str, Any]) -> Path:
+    manifest_path = analysis_dir / "analysis-manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return manifest_path.resolve()
+
+
 def missing_binary_result(tool: str, operation: str) -> dict[str, Any]:
     return make_result(
         ok=False,
@@ -568,6 +633,362 @@ def invoke_formats(
         operation="formats",
         exit_code=0,
         metadata=metadata,
+    )
+
+
+def invoke_prepare_analysis(
+    *,
+    url: str,
+    output_dir: str | None,
+    subtitle_langs: str,
+    include_visuals: bool,
+    include_audio: bool,
+    max_height: int,
+    frame_interval_sec: float,
+    max_frames: int,
+) -> dict[str, Any]:
+    if max_height < 144:
+        return make_result(
+            ok=False,
+            tool="yt-dlp+ffmpeg",
+            operation="prepare-analysis",
+            exit_code=2,
+            stderr="--max-height must be at least 144.",
+        )
+    if frame_interval_sec <= 0:
+        return make_result(
+            ok=False,
+            tool="yt-dlp+ffmpeg",
+            operation="prepare-analysis",
+            exit_code=2,
+            stderr="--frame-interval-sec must be greater than zero.",
+        )
+    if max_frames < 2:
+        return make_result(
+            ok=False,
+            tool="yt-dlp+ffmpeg",
+            operation="prepare-analysis",
+            exit_code=2,
+            stderr="--max-frames must be at least 2.",
+        )
+
+    validated_url, validation_error = validate_url_for_operation(url, "prepare-analysis")
+    if validation_error is not None:
+        validation_error["tool"] = "yt-dlp+ffmpeg"
+        return validation_error
+    ytdlp = resolve_binary("yt-dlp")
+    if ytdlp is None:
+        missing = missing_binary_result("yt-dlp", "prepare-analysis")
+        missing["tool"] = "yt-dlp+ffmpeg"
+        return missing
+
+    metadata_command = [
+        ytdlp,
+        "--dump-single-json",
+        "--no-warnings",
+        "--no-playlist",
+        validated_url,
+    ]
+    metadata_run = run_process(metadata_command, timeout_sec=None)
+    if metadata_run.returncode != 0:
+        return make_result(
+            ok=False,
+            tool="yt-dlp+ffmpeg",
+            operation="prepare-analysis",
+            exit_code=metadata_run.returncode,
+            stderr=contextualize_download_error(validated_url, metadata_run.stderr),
+        )
+    try:
+        source_payload = parse_json_output(metadata_run.stdout)
+    except json.JSONDecodeError:
+        return make_result(
+            ok=False,
+            tool="yt-dlp+ffmpeg",
+            operation="prepare-analysis",
+            exit_code=1,
+            stderr="Failed to parse yt-dlp metadata JSON output.",
+        )
+
+    source = normalize_download_metadata(source_payload)
+    source["chapters"] = source_payload.get("chapters") if isinstance(source_payload.get("chapters"), list) else []
+    analysis_dir = analysis_run_directory(output_dir, source.get("id"))
+    warnings: list[str] = []
+    requested_failures: list[str] = []
+    evidence: dict[str, Any] = {
+        "subtitles": [],
+        "transcript": None,
+        "media": None,
+        "audio": None,
+        "interval_frames": [],
+        "scene_frames": [],
+        "manifest": None,
+    }
+    stage_results: dict[str, Any] = {}
+
+    subtitle_command = [
+        ytdlp,
+        "--no-playlist",
+        "--no-progress",
+        "--skip-download",
+        "--write-subs",
+        "--write-auto-subs",
+        "--sub-langs",
+        subtitle_langs,
+        "--sub-format",
+        "vtt",
+        "--paths",
+        str(analysis_dir),
+        "-o",
+        DEFAULT_OUTPUT_TEMPLATE,
+        validated_url,
+    ]
+    subtitle_run = run_process(subtitle_command, timeout_sec=None, cwd=str(analysis_dir))
+    subtitle_paths = paths_with_extensions(analysis_dir, SUBTITLE_EXTENSIONS)
+    evidence["subtitles"] = [str(path) for path in subtitle_paths]
+    stage_results["subtitles"] = {
+        "exit_code": subtitle_run.returncode,
+        "artifact_count": len(subtitle_paths),
+    }
+    if subtitle_run.returncode != 0:
+        warnings.append(
+            "Subtitle acquisition failed: "
+            + (summarize_stderr(subtitle_run.stderr, success=False) or "yt-dlp subtitle request failed.")
+        )
+    if not subtitle_paths:
+        warnings.append("No subtitles were available for the requested language selector.")
+    else:
+        preferred_vtt = next((path for path in subtitle_paths if path.suffix.lower() == ".vtt"), None)
+        if preferred_vtt is not None:
+            transcript_text = clean_vtt_text(preferred_vtt.read_text(encoding="utf-8", errors="replace"))
+            if transcript_text:
+                transcript_path = analysis_dir / "transcript.txt"
+                transcript_path.write_text(transcript_text, encoding="utf-8")
+                evidence["transcript"] = str(transcript_path.resolve())
+            else:
+                warnings.append("The selected subtitle artifact did not contain readable transcript text.")
+
+    media_path: Path | None = None
+    if include_visuals:
+        visual_format = (
+            f"bestvideo[height<={max_height}]+bestaudio/"
+            f"best[height<={max_height}]"
+        )
+        visual_command = [
+            ytdlp,
+            "--no-playlist",
+            "--no-progress",
+            "--newline",
+            "--paths",
+            str(analysis_dir),
+            "-o",
+            DEFAULT_OUTPUT_TEMPLATE,
+            "--print",
+            "after_move:filepath",
+            "-f",
+            visual_format,
+            validated_url,
+        ]
+        visual_run = run_process(visual_command, timeout_sec=None, cwd=str(analysis_dir))
+        media_path = first_media_artifact(visual_run.stdout, analysis_dir)
+        stage_results["visual_media"] = {
+            "exit_code": visual_run.returncode,
+            "artifact_count": 1 if media_path else 0,
+            "max_height": max_height,
+        }
+        if visual_run.returncode != 0 or media_path is None:
+            message = contextualize_download_error(validated_url, visual_run.stderr)
+            requested_failures.append(message or "Requested visual media could not be prepared.")
+        else:
+            evidence["media"] = str(media_path)
+            ffmpeg = resolve_binary("ffmpeg")
+            if ffmpeg is None:
+                requested_failures.append("ffmpeg is unavailable, so requested visual frames could not be extracted.")
+            else:
+                frames_dir = analysis_dir / "frames"
+                frames_dir.mkdir(parents=True, exist_ok=True)
+                interval_limit = max(1, max_frames // 2)
+                scene_limit = max_frames - interval_limit
+                interval_pattern = frames_dir / "interval-%03d.jpg"
+                interval_command = [
+                    ffmpeg,
+                    "-y",
+                    "-i",
+                    str(media_path),
+                    "-vf",
+                    f"fps=1/{frame_interval_sec:g}",
+                    "-frames:v",
+                    str(interval_limit),
+                    str(interval_pattern),
+                ]
+                interval_run = run_process(interval_command, timeout_sec=None, cwd=str(analysis_dir))
+                evidence["interval_frames"] = [
+                    str(path) for path in sorted(frames_dir.glob("interval-*.jpg"))[:interval_limit]
+                ]
+                stage_results["interval_frames"] = {
+                    "exit_code": interval_run.returncode,
+                    "artifact_count": len(evidence["interval_frames"]),
+                    "limit": interval_limit,
+                }
+                if interval_run.returncode != 0:
+                    warnings.append(
+                        "Interval frame extraction failed: "
+                        + (summarize_stderr(interval_run.stderr, success=False) or "ffmpeg failed.")
+                    )
+
+                scene_pattern = frames_dir / "scene-%03d.jpg"
+                scene_command = [
+                    ffmpeg,
+                    "-y",
+                    "-i",
+                    str(media_path),
+                    "-vf",
+                    "select=gt(scene\\,0.35)",
+                    "-fps_mode",
+                    "vfr",
+                    "-frames:v",
+                    str(scene_limit),
+                    str(scene_pattern),
+                ]
+                scene_run = run_process(scene_command, timeout_sec=None, cwd=str(analysis_dir))
+                evidence["scene_frames"] = [
+                    str(path) for path in sorted(frames_dir.glob("scene-*.jpg"))[:scene_limit]
+                ]
+                stage_results["scene_frames"] = {
+                    "exit_code": scene_run.returncode,
+                    "artifact_count": len(evidence["scene_frames"]),
+                    "limit": scene_limit,
+                }
+                if scene_run.returncode != 0:
+                    warnings.append(
+                        "Scene frame extraction failed: "
+                        + (summarize_stderr(scene_run.stderr, success=False) or "ffmpeg failed.")
+                    )
+                if not evidence["interval_frames"] and not evidence["scene_frames"]:
+                    requested_failures.append("Requested visual frames were not created.")
+
+    if include_audio:
+        if media_path is not None:
+            ffmpeg = resolve_binary("ffmpeg")
+            audio_path = analysis_dir / "audio.mp3"
+            if ffmpeg is None:
+                audio_run = subprocess.CompletedProcess([], 127, stdout="", stderr="ffmpeg is unavailable.")
+            else:
+                audio_command = [
+                    ffmpeg,
+                    "-y",
+                    "-i",
+                    str(media_path),
+                    "-vn",
+                    "-c:a",
+                    "libmp3lame",
+                    "-b:a",
+                    "128k",
+                    str(audio_path),
+                ]
+                audio_run = run_process(audio_command, timeout_sec=None, cwd=str(analysis_dir))
+        else:
+            audio_command = [
+                ytdlp,
+                "--no-playlist",
+                "--no-progress",
+                "--newline",
+                "--paths",
+                str(analysis_dir),
+                "-o",
+                DEFAULT_OUTPUT_TEMPLATE,
+                "--print",
+                "after_move:filepath",
+                "-f",
+                "bestaudio/best",
+                "-x",
+                "--audio-format",
+                "mp3",
+                validated_url,
+            ]
+            audio_run = run_process(audio_command, timeout_sec=None, cwd=str(analysis_dir))
+            reported_audio = [Path(path) for path in parse_download_artifacts(audio_run.stdout, analysis_dir)]
+            audio_path = next(
+                (path.resolve() for path in reported_audio if path.resolve().is_file() and path.suffix.lower() == ".mp3"),
+                analysis_dir / "missing-audio.mp3",
+            )
+        if audio_run.returncode == 0 and audio_path.is_file():
+            evidence["audio"] = str(audio_path.resolve())
+        else:
+            requested_failures.append(
+                summarize_stderr(audio_run.stderr, success=False) or "Requested audio could not be prepared."
+            )
+        stage_results["audio"] = {
+            "exit_code": audio_run.returncode,
+            "artifact_count": 1 if evidence["audio"] else 0,
+        }
+
+    analysis_ready = bool(
+        evidence["transcript"]
+        or evidence["media"]
+        or evidence["audio"]
+        or evidence["interval_frames"]
+        or evidence["scene_frames"]
+    )
+    next_steps: list[str] = []
+    if evidence["transcript"]:
+        next_steps.append("Read the cleaned transcript before acquiring heavier media artifacts.")
+    else:
+        next_steps.append("No transcript was prepared; request audio for transcription or visual frames as needed.")
+    if not include_visuals:
+        next_steps.append("Rerun with --include-visuals when visual context is material to the question.")
+    elif evidence["interval_frames"] or evidence["scene_frames"]:
+        next_steps.append("Inspect interval and scene frames alongside transcript evidence.")
+    if evidence["audio"]:
+        next_steps.append("Transcribe the prepared audio locally when spoken content is required.")
+
+    manifest = {
+        "operation": "prepare-analysis",
+        "source": source,
+        "analysis_dir": str(analysis_dir),
+        "analysis_ready": analysis_ready,
+        "requested": {
+            "subtitle_langs": subtitle_langs,
+            "include_visuals": include_visuals,
+            "include_audio": include_audio,
+            "max_height": max_height,
+            "frame_interval_sec": frame_interval_sec,
+            "max_frames": max_frames,
+        },
+        "evidence": evidence,
+        "stages": stage_results,
+        "warnings": warnings,
+        "requested_failures": requested_failures,
+        "recommended_next_steps": next_steps,
+    }
+    manifest_path = write_analysis_manifest(analysis_dir, manifest)
+    evidence["manifest"] = str(manifest_path)
+    manifest["evidence"]["manifest"] = str(manifest_path)
+    write_analysis_manifest(analysis_dir, manifest)
+
+    artifacts: list[str] = []
+    for key in ("subtitles", "interval_frames", "scene_frames"):
+        artifacts.extend(evidence[key])
+    for key in ("transcript", "media", "audio", "manifest"):
+        if evidence[key]:
+            artifacts.append(evidence[key])
+
+    ok = not requested_failures
+    return make_result(
+        ok=ok,
+        tool="yt-dlp+ffmpeg",
+        operation="prepare-analysis",
+        exit_code=0 if ok else 1,
+        stderr="\n".join(requested_failures),
+        artifacts=list(dict.fromkeys(artifacts)),
+        metadata={
+            "analysis_ready": analysis_ready,
+            "analysis_dir": str(analysis_dir),
+            "source": source,
+            "evidence": evidence,
+            "stages": stage_results,
+            "warnings": warnings,
+            "recommended_next_steps": next_steps,
+        },
     )
 
 
@@ -916,6 +1337,19 @@ def build_parser() -> argparse.ArgumentParser:
     download_parser.add_argument("--playlist-mode", choices=["single", "full"], default="single")
     download_parser.add_argument("--playlist-items")
     download_parser.add_argument("--timeout-sec", type=int, default=DEFAULT_DOWNLOAD_TIMEOUT_SEC)
+
+    prepare_analysis_parser = subparsers.add_parser(
+        "prepare-analysis",
+        help="Prepare transcript-first local evidence for public video analysis.",
+    )
+    prepare_analysis_parser.add_argument("--url", required=True)
+    prepare_analysis_parser.add_argument("--output-dir")
+    prepare_analysis_parser.add_argument("--subtitle-langs", default="en.*,en")
+    prepare_analysis_parser.add_argument("--include-visuals", action="store_true")
+    prepare_analysis_parser.add_argument("--include-audio", action="store_true")
+    prepare_analysis_parser.add_argument("--max-height", type=int, default=480)
+    prepare_analysis_parser.add_argument("--frame-interval-sec", type=float, default=30.0)
+    prepare_analysis_parser.add_argument("--max-frames", type=int, default=24)
 
     probe_parser = subparsers.add_parser("probe", help="Inspect a local media file with ffprobe.")
     probe_parser.add_argument("--input", required=True)

@@ -13,7 +13,7 @@ Start by choosing the one family you actually need:
 | Everything | global filename and path lookup | `families/everything` | `agent-toolbelt-everything` |
 | Gemini | public URL inspection and Codex research cross-checks | `families/gemini` | `agent-toolbelt-gemini` |
 | LinkedIn CV | local read-only LinkedIn profile evidence capture and CV/profile gap comparisons | `families/linkedin-cv` | `agent-toolbelt-linkedin-cv` |
-| Media | public media download and local media file operations | `families/media` | `agent-toolbelt-media` |
+| Media | transcript-first public video analysis preparation and local media operations | `families/media` | `agent-toolbelt-media` |
 | Observable Reputation | passive reputation checks for URL, domain, and IP observables | `families/observable-reputation` | `agent-toolbelt-observable-reputation` |
 | Outlook Classic Mail | local mail access through Outlook Classic COM with multi-account support | `families/outlook-classic-mail` | `agent-toolbelt-outlook-classic-mail` |
 | Mail Domain Quarantine | Outlook mail domain-risk reports and confirmed quarantine moves | `families/mail-domain-quarantine` | `agent-toolbelt-mail-domain-quarantine` |

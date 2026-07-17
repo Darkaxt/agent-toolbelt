@@ -40,7 +40,7 @@ npx skills update
 | `gemini-cli` | Public URL inspection | Node.js/npm and `npx @google/gemini-cli` | Do not use for local files, private URLs, or private-network targets without explicit approval. |
 | `linkedin-cv` | Local LinkedIn profile evidence capture and CV/profile comparison | Local package install and one explicit accessible LinkedIn profile capture | Read-only by default; no search traversal, scraping, content generation, or engagement automation. |
 | `mail-domain-quarantine` | Windows Outlook Classic | Outlook Classic, mailbox access, RDAP/DNS reputation dependencies | Dry-run by default; mailbox moves require explicit confirmation. |
-| `yt-dlp-ffmpeg` | Public media and local file operations | `yt-dlp`, `ffmpeg`, and `ffprobe` | Do not use to bypass access controls or private media restrictions. |
+| `yt-dlp-ffmpeg` | Transcript-first public video analysis preparation and local media operations | `yt-dlp`, `ffmpeg`, and `ffprobe` | Model-free evidence preparation; do not bypass access controls or private media restrictions. |
 | `observable-reputation` | Passive OSINT only | Provider access as configured by the family | No active scans, URL submissions, file uploads, or phishing reports. |
 | `outlook-classic-mail` | Windows Outlook Classic COM | Outlook Classic desktop profile and mailbox access | Reply, forward, move, and other mailbox actions require explicit confirmation. |
 | `whatsapp-wacli` | Experimental local WhatsApp adapter | Local `wacli` setup and active WhatsApp session | WhatsApp-visible sends require explicit confirmation. |
