@@ -18,6 +18,198 @@ from agent_toolbelt_media import cli, media
 
 
 class MediaTests(unittest.TestCase):
+    def test_prepare_analysis_operation_is_exposed(self):
+        parser = media.build_parser()
+        subparsers_action = next(
+            action for action in parser._actions if isinstance(action, media.argparse._SubParsersAction)
+        )
+
+        self.assertIn("prepare-analysis", subparsers_action.choices)
+        self.assertTrue(callable(getattr(media, "invoke_prepare_analysis", None)))
+
+    def test_prepare_analysis_prefers_subtitles_and_writes_clean_transcript(self):
+        calls = []
+
+        def fake_run_process(command, **kwargs):
+            calls.append(command)
+            if "--dump-single-json" in command:
+                return media.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "id": "abc123",
+                            "title": "Demo",
+                            "duration": 95,
+                            "extractor": "youtube",
+                            "webpage_url": "https://www.youtube.com/watch?v=abc123",
+                        }
+                    ),
+                    stderr="",
+                )
+            if "--skip-download" in command:
+                target_dir = Path(command[command.index("--paths") + 1])
+                subtitle_path = target_dir / "Demo [abc123].en.vtt"
+                subtitle_path.write_text(
+                    "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\n<c>Welcome</c>\n"
+                    "Welcome\n\n00:00:02.000 --> 00:00:04.000\nSecond line\n",
+                    encoding="utf-8",
+                )
+                return media.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+            raise AssertionError(f"Unexpected command: {command}")
+
+        original_run = media.run_process
+        original_resolve = media.resolve_binary
+        media.run_process = fake_run_process
+        media.resolve_binary = lambda name, explicit_path=None: f"C:/Tools/{name}.exe"
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                result = media.invoke_prepare_analysis(
+                    url="https://www.youtube.com/watch?v=abc123",
+                    output_dir=temp_dir,
+                    subtitle_langs="en.*,en",
+                    include_visuals=False,
+                    include_audio=False,
+                    max_height=480,
+                    frame_interval_sec=30,
+                    max_frames=12,
+                )
+                transcript_path = Path(result["metadata"]["evidence"]["transcript"])
+                manifest_path = Path(result["metadata"]["evidence"]["manifest"])
+                transcript_text = transcript_path.read_text(encoding="utf-8")
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        finally:
+            media.run_process = original_run
+            media.resolve_binary = original_resolve
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["metadata"]["analysis_ready"])
+        self.assertEqual(transcript_text, "Welcome\nSecond line\n")
+        self.assertEqual(manifest["source"]["id"], "abc123")
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(any("--skip-download" in command for command in calls))
+        self.assertFalse(any("-f" in command for command in calls))
+
+    def test_prepare_analysis_visuals_are_height_and_frame_bounded(self):
+        calls = []
+
+        def fake_run_process(command, **kwargs):
+            calls.append(command)
+            if "--dump-single-json" in command:
+                return media.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "id": "visual1",
+                            "title": "Visual Demo",
+                            "duration": 300,
+                            "extractor": "youtube",
+                            "webpage_url": "https://youtu.be/visual1",
+                        }
+                    ),
+                    stderr="",
+                )
+            if "--skip-download" in command:
+                return media.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+            if command[0].endswith("yt-dlp.exe") and "-f" in command:
+                target_dir = Path(command[command.index("--paths") + 1])
+                media_path = target_dir / "Visual Demo [visual1].mp4"
+                media_path.write_bytes(b"video")
+                return media.subprocess.CompletedProcess(command, 0, stdout=f"{media_path}\n", stderr="")
+            if command[0].endswith("ffmpeg.exe"):
+                output_pattern = Path(command[-1])
+                prefix = "interval" if "interval" in output_pattern.name else "scene"
+                (output_pattern.parent / f"{prefix}-001.jpg").write_bytes(b"frame")
+                return media.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+            raise AssertionError(f"Unexpected command: {command}")
+
+        original_run = media.run_process
+        original_resolve = media.resolve_binary
+        media.run_process = fake_run_process
+        media.resolve_binary = lambda name, explicit_path=None: f"C:/Tools/{name}.exe"
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                result = media.invoke_prepare_analysis(
+                    url="https://youtu.be/visual1",
+                    output_dir=temp_dir,
+                    subtitle_langs="en.*,en",
+                    include_visuals=True,
+                    include_audio=False,
+                    max_height=360,
+                    frame_interval_sec=20,
+                    max_frames=6,
+                )
+        finally:
+            media.run_process = original_run
+            media.resolve_binary = original_resolve
+
+        media_download = next(command for command in calls if command[0].endswith("yt-dlp.exe") and "-f" in command)
+        ffmpeg_calls = [command for command in calls if command[0].endswith("ffmpeg.exe")]
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            media_download[media_download.index("-f") + 1],
+            "bestvideo[height<=360]+bestaudio/best[height<=360]",
+        )
+        self.assertEqual(len(ffmpeg_calls), 2)
+        self.assertTrue(all(command[command.index("-frames:v") + 1] == "3" for command in ffmpeg_calls))
+        self.assertEqual(len(result["metadata"]["evidence"]["interval_frames"]), 1)
+        self.assertEqual(len(result["metadata"]["evidence"]["scene_frames"]), 1)
+
+    def test_prepare_analysis_audio_is_explicit_and_manifested(self):
+        calls = []
+
+        def fake_run_process(command, **kwargs):
+            calls.append(command)
+            if "--dump-single-json" in command:
+                return media.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "id": "audio1",
+                            "title": "Audio Demo",
+                            "duration": 45,
+                            "extractor": "youtube",
+                            "webpage_url": "https://youtu.be/audio1",
+                        }
+                    ),
+                    stderr="",
+                )
+            if "--skip-download" in command:
+                return media.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+            if "--audio-format" in command:
+                target_dir = Path(command[command.index("--paths") + 1])
+                audio_path = target_dir / "Audio Demo [audio1].mp3"
+                audio_path.write_bytes(b"audio")
+                return media.subprocess.CompletedProcess(command, 0, stdout=f"{audio_path}\n", stderr="")
+            raise AssertionError(f"Unexpected command: {command}")
+
+        original_run = media.run_process
+        original_resolve = media.resolve_binary
+        media.run_process = fake_run_process
+        media.resolve_binary = lambda name, explicit_path=None: f"C:/Tools/{name}.exe"
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                result = media.invoke_prepare_analysis(
+                    url="https://youtu.be/audio1",
+                    output_dir=temp_dir,
+                    subtitle_langs="en.*,en",
+                    include_visuals=False,
+                    include_audio=True,
+                    max_height=480,
+                    frame_interval_sec=30,
+                    max_frames=12,
+                )
+        finally:
+            media.run_process = original_run
+            media.resolve_binary = original_resolve
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["metadata"]["evidence"]["audio"].endswith(".mp3"))
+        self.assertTrue(any("--audio-format" in command for command in calls))
+        self.assertFalse(any(command[0].endswith("ffmpeg.exe") for command in calls))
+
     def test_resolve_binary_prefers_explicit_paths(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             yt = Path(temp_dir) / "yt-dlp.exe"
@@ -451,6 +643,22 @@ class MediaTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 1)
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["operation"], "metadata")
+        self.assertIn("Only public http(s) URLs are allowed", payload["stderr"])
+
+    def test_codex_skill_wrapper_routes_prepare_analysis_validation_errors(self):
+        script = REPO_ROOT / "families" / "media" / "codex" / "skills" / "yt-dlp-ffmpeg" / "scripts" / "invoke_media_tool.py"
+        completed = subprocess.run(
+            [sys.executable, str(script), "prepare-analysis", "--url", "file:///tmp/demo.mp4"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(completed.returncode, 1)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["operation"], "prepare-analysis")
         self.assertIn("Only public http(s) URLs are allowed", payload["stderr"])
 
 

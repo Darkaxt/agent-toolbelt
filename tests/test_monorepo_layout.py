@@ -214,6 +214,23 @@ class MonorepoLayoutTests(unittest.TestCase):
                 self.assertIn("bootstrap_agent_toolbelt", text)
                 self.assertNotIn("bootstrap_core_src", text)
 
+    def test_codex_media_wrapper_works_from_installed_skill_root(self):
+        wrapper = (
+            REPO_ROOT
+            / "families"
+            / "media"
+            / "codex"
+            / "skills"
+            / "yt-dlp-ffmpeg"
+            / "scripts"
+            / "invoke_media_tool.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("DEFAULT_AGENT_TOOLBELT_HOME", wrapper)
+        self.assertIn("AGENT_TOOLBELT_HOME", wrapper)
+        self.assertIn("bootstrap_agent_toolbelt", wrapper)
+        self.assertNotIn("bootstrap_core_src", wrapper)
+
     def test_claude_plugin_skills_keep_critical_runtime_guidance(self):
         media_skill = (
             REPO_ROOT
@@ -224,6 +241,15 @@ class MonorepoLayoutTests(unittest.TestCase):
             / "agent-toolbelt-local"
             / "plugins"
             / "yt-dlp-ffmpeg"
+            / "skills"
+            / "yt-dlp-ffmpeg"
+            / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        media_codex_skill = (
+            REPO_ROOT
+            / "families"
+            / "media"
+            / "codex"
             / "skills"
             / "yt-dlp-ffmpeg"
             / "SKILL.md"
@@ -245,6 +271,11 @@ class MonorepoLayoutTests(unittest.TestCase):
         self.assertIn("AGENT_TOOLBELT_HOME", media_skill)
         self.assertIn("scripts/invoke_media_tool.py", media_skill)
         self.assertIn("Some unauthenticated YouTube downloads may still fail", media_skill)
+        for skill_text in (media_skill, media_codex_skill):
+            self.assertIn("prepare-analysis", skill_text)
+            self.assertIn("analysis-manifest.json", skill_text)
+            self.assertIn("transcript", skill_text.lower())
+            self.assertNotIn("Use the Gemini skill", skill_text)
 
         self.assertIn("--send-using-account", outlook_skill)
         self.assertIn("inspect-domains", outlook_skill)
