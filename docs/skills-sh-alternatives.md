@@ -21,7 +21,7 @@ and safety gates count as first-class features for local-first skills.
 | `amazon-cli` | Strong direct competitors exist | Keep. Integrate product-API/no-captcha ideas only if they fit the local retail workflow. |
 | `codex-thread-recall` | Strong direct competitors exist | Keep. Public recall tools are stronger for broad cross-session search; ours is stronger for current-thread episode/timeline/worklog semantics. |
 | `everything-search` | No meaningful direct alternative found | Keep. Public hits are generic file/content search, not Windows Everything `es.exe`. |
-| `antigravity-cli` | Partial alternatives exist | Keep as an isolated exact-model packet reviewer; use official Google skills for Gemini API/app development and `yt-dlp-ffmpeg` for public-video evidence preparation. |
+| `antigravity-cli` | Partial alternatives exist | Keep as an isolated exact-model packet/public-evidence analyzer; use official Google skills for Gemini API/app development and `yt-dlp-ffmpeg` for public-video evidence preparation. |
 | `linkedin-cv` | Partial alternatives exist | Keep, but position around local read-only capture/comparison. Public skills are better for generic profile advice. |
 | `mail-domain-quarantine` | No meaningful direct alternative found | Keep. No public hit matched RDAP/blocklist-driven Outlook quarantine. |
 | `yt-dlp-ffmpeg` | Strong direct competitors exist | Keep unless we want to depend on multiple public skills. Public skills cover pieces; ours combines download/probe/clip/remux/transcode with stricter safety. |
@@ -142,9 +142,9 @@ not Everything search skills.
 ## 4. `antigravity-cli`
 
 The former `gemini-cli` public URL inspector was retired after its individual
-account tier became unusable. `antigravity-cli` replaces it with a narrower
-workflow: independent review of one explicit local packet through a
-helper-owned, exact-model Antigravity runtime.
+account tier became unusable. `antigravity-cli` replaces it with independent
+review of explicit packets and bounded public-page or prepared-video evidence
+through a helper-owned, exact-model Antigravity runtime.
 
 Verdict: partial alternatives exist. Official Google skills remain better for
 Gemini API/application development, and public URL/video skills remain better
@@ -152,8 +152,9 @@ for evidence acquisition. This skill is differentiated by isolated OAuth and
 runtime state, no general proxy surface, no tools, exact model attribution, and
 fail-closed behavior on fallback.
 
-Recommendation: keep for plan/design/code/evidence review. Route public-video
-preparation to `yt-dlp-ffmpeg`, and do not restore broad URL inspection here.
+Recommendation: keep for plan/design/code/evidence review and bounded public
+page analysis. Route public-video preparation to `yt-dlp-ffmpeg`, then analyze
+the explicit transcript/frame manifest with `antigravity-cli`.
 
 Relevant candidates:
 

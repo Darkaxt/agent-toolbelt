@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import proxy, runtime
+from . import evidence, proxy, runtime
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -30,6 +30,36 @@ def build_parser() -> argparse.ArgumentParser:
     review_parser.add_argument("--packet", type=Path, required=True)
     review_parser.add_argument("--instruction", required=True)
     review_parser.add_argument("--model", required=True)
+    analyze_url_parser = subparsers.add_parser(
+        "analyze-url",
+        help="Fetch bounded public web evidence and analyze it with an exact model.",
+    )
+    analyze_url_parser.add_argument("--url", required=True)
+    analyze_url_parser.add_argument("--instruction", required=True)
+    analyze_url_parser.add_argument("--model", required=True)
+    analyze_url_parser.add_argument(
+        "--max-chars",
+        type=int,
+        default=evidence.DEFAULT_MAX_WEB_CHARS,
+        help="Maximum extracted source characters sent for analysis.",
+    )
+    analyze_video_parser = subparsers.add_parser(
+        "analyze-video",
+        help="Analyze a yt-dlp-ffmpeg prepare-analysis manifest with an exact model.",
+    )
+    analyze_video_parser.add_argument("--manifest", type=Path, required=True)
+    analyze_video_parser.add_argument("--instruction", required=True)
+    analyze_video_parser.add_argument("--model", required=True)
+    analyze_video_parser.add_argument(
+        "--max-transcript-chars",
+        type=int,
+        default=evidence.DEFAULT_MAX_TRANSCRIPT_CHARS,
+    )
+    analyze_video_parser.add_argument(
+        "--max-images",
+        type=int,
+        default=evidence.DEFAULT_MAX_IMAGES,
+    )
     return parser
 
 
@@ -56,6 +86,23 @@ def main(argv: list[str] | None = None) -> int:
             packet=args.packet,
             instruction=args.instruction,
             model=args.model,
+        )
+    elif args.command == "analyze-url":
+        result = evidence.analyze_public_url(
+            url=args.url,
+            instruction=args.instruction,
+            model=args.model,
+            max_text_chars=args.max_chars,
+            paths=runtime.RuntimePaths.default(),
+        )
+    elif args.command == "analyze-video":
+        result = evidence.analyze_video_manifest(
+            manifest=args.manifest,
+            instruction=args.instruction,
+            model=args.model,
+            max_transcript_chars=args.max_transcript_chars,
+            max_images=args.max_images,
+            paths=runtime.RuntimePaths.default(),
         )
     else:  # pragma: no cover - argparse enforces known commands.
         raise AssertionError(f"Unhandled command: {args.command}")

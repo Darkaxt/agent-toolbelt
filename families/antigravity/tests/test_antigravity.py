@@ -128,6 +128,96 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(payload["operation"], "status")
 
 
+class EvidenceCliTests(unittest.TestCase):
+    def test_cli_routes_public_url_analysis(self):
+        captured = {}
+        original = cli.evidence.analyze_public_url
+
+        def fake_analyze(**kwargs):
+            captured.update(kwargs)
+            return {"ok": True, "operation": "analyze-url", "model_verified": True}
+
+        cli.evidence.analyze_public_url = fake_analyze
+        try:
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                exit_code = cli.main(
+                    [
+                        "analyze-url",
+                        "--url",
+                        "https://example.com/article",
+                        "--instruction",
+                        "Summarize.",
+                        "--model",
+                        "gemini-3.1-pro-low",
+                    ]
+                )
+                payload = json.loads(buffer.getvalue())
+        finally:
+            cli.evidence.analyze_public_url = original
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["operation"], "analyze-url")
+        self.assertEqual(captured["url"], "https://example.com/article")
+        self.assertEqual(captured["model"], "gemini-3.1-pro-low")
+
+    def test_cli_routes_prepared_video_analysis(self):
+        captured = {}
+        original = cli.evidence.analyze_video_manifest
+
+        def fake_analyze(**kwargs):
+            captured.update(kwargs)
+            return {"ok": True, "operation": "analyze-video", "model_verified": True}
+
+        cli.evidence.analyze_video_manifest = fake_analyze
+        try:
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                exit_code = cli.main(
+                    [
+                        "analyze-video",
+                        "--manifest",
+                        "analysis-manifest.json",
+                        "--instruction",
+                        "Analyze.",
+                        "--model",
+                        "gemini-3.1-pro-low",
+                    ]
+                )
+                payload = json.loads(buffer.getvalue())
+        finally:
+            cli.evidence.analyze_video_manifest = original
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["operation"], "analyze-video")
+        self.assertEqual(captured["manifest"], Path("analysis-manifest.json"))
+
+
+class SkillTextTests(unittest.TestCase):
+    def test_codex_and_claude_skills_document_public_and_video_evidence_lanes(self):
+        paths = [
+            REPO_ROOT / "families" / "antigravity" / "codex" / "skills" / "antigravity-cli" / "SKILL.md",
+            REPO_ROOT
+            / "families"
+            / "antigravity"
+            / "claude"
+            / "marketplaces"
+            / "agent-toolbelt-local"
+            / "plugins"
+            / "antigravity-cli"
+            / "skills"
+            / "antigravity-cli"
+            / "SKILL.md",
+        ]
+
+        for path in paths:
+            with self.subTest(path=path):
+                text = path.read_text(encoding="utf-8")
+                self.assertIn("analyze-url", text)
+                self.assertIn("analyze-video", text)
+                self.assertIn("prepare-analysis", text)
+                self.assertIn("untrusted", text.casefold())
+                self.assertIn("model_verified", text)
+
+
 class UpdateTests(unittest.TestCase):
     def test_helper_cleanup_retries_transient_windows_file_lock(self):
         calls = []

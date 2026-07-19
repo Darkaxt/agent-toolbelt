@@ -7,9 +7,9 @@ Replace the retired individual-tier `gemini-cli` skill with a bounded
 CLIProxyAPI only as a private, short-lived protocol adapter so agents receive
 structured JSON without receiving a general-purpose local model proxy.
 
-The helper is reviewer-first. It accepts an explicit packet file and exact
-model, sends no tools, verifies the returned model, and fails closed on model
-fallback or missing attribution.
+The helper is reviewer-first. It accepts an explicit packet file or bounded
+public evidence and exact model, sends no tools, verifies the returned model,
+and fails closed on model fallback or missing attribution.
 
 ## Non-Interference Contract
 
@@ -53,6 +53,8 @@ agent-toolbelt-antigravity update [--check] [--version <version>]
 agent-toolbelt-antigravity login [--no-browser]
 agent-toolbelt-antigravity models
 agent-toolbelt-antigravity review --packet <path> --instruction <text> --model <exact-model>
+agent-toolbelt-antigravity analyze-url --url <public-url> --instruction <text> --model <exact-model>
+agent-toolbelt-antigravity analyze-video --manifest <analysis-manifest> --instruction <text> --model <exact-model>
 ```
 
 All commands emit one JSON document. `login` is the only command that may open
@@ -103,8 +105,10 @@ before readiness, the command returns a structured startup failure.
 ## Review Contract
 
 `review` reads one explicit packet file and combines it with the explicit
-instruction. It does not crawl the workspace, fetch URLs, expose filesystem
-tools, or send shell tools.
+instruction. `analyze-url` acquires bounded public HTML/text after DNS and
+redirect validation. `analyze-video` reads an explicit media analysis manifest,
+bounded transcript, and selected prepared frame images. None of these commands
+crawl the workspace, expose filesystem tools, or send shell tools.
 
 The request uses an OpenAI-compatible non-streaming endpoint with no `tools`
 field. The normalized result includes:
@@ -145,6 +149,23 @@ and stops the owned process.
 
 Starts an ephemeral helper proxy, performs one exact-model request, validates
 model attribution, returns normalized JSON, and stops the owned process.
+
+### `analyze-url`
+
+Validates a user-named public HTTP(S) URL and every redirect against local,
+private, reserved, or otherwise non-public destinations. It downloads at most
+2 MiB, extracts bounded HTML/text without active content, labels the material
+as untrusted evidence, performs one exact-model request, and stops the owned
+process. YouTube URLs fail closed with `youtube_evidence_required` so video
+evidence is prepared explicitly rather than inferred from a watch page.
+
+### `analyze-video`
+
+Reads one explicit `yt-dlp-ffmpeg prepare-analysis` manifest. Transcript and
+image paths must remain inside the manifest's analysis directory. The helper
+sends bounded transcript text and at most eight prepared JPEG/PNG/WebP frames,
+never the source media, audio, cookies, or downloader state. The model receives
+no tools and its exact reported identity remains a success condition.
 
 ### `update`
 
@@ -189,3 +210,10 @@ all Gemini CLI use has been removed.
 9. The installed local skill resolves its repo-backed wrapper successfully.
 10. GitHub is synchronized and the final local branch tracks clean
     `origin/main`.
+11. `analyze-url` rejects private-network and unsafe redirect targets, strips
+    active HTML content, and bounds downloaded/extracted evidence.
+12. `analyze-video` accepts only an explicit prepared-analysis manifest,
+    confines evidence paths to its analysis directory, and bounds transcript
+    and frame inputs.
+13. Live smoke checks prove exact-model public-page, transcript-only video, and
+    transcript-plus-frame review without exposing model tools.

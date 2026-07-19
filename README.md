@@ -6,7 +6,7 @@ Start by choosing the one family you actually need:
 
 | Family | Use it for | Folder | Primary CLI |
 | --- | --- | --- | --- |
-| Antigravity Review | independent exact-model review of explicit plan, design, code, or evidence packets | `families/antigravity` | `agent-toolbelt-antigravity` |
+| Antigravity Review | independent exact-model review plus bounded public-page and prepared-video evidence analysis | `families/antigravity` | `agent-toolbelt-antigravity` |
 | Amazon CLI | Amazon product search, specs, reviews, offers, and managed session workflows through a bundled Amazon CLI client | `families/amazon-cli` | `agent-toolbelt-amazon-cli` |
 | Skroutz CLI | Skroutz.cy product search, offers, reviews, comparisons, and safe cart workflows | `families/skroutz-cli` | `agent-toolbelt-skroutz-cli` |
 | AliExpress CLI | AliExpress product search, item details, reviews/comments, price and delivery evidence, and optional managed logged-in read-only browsing | `families/aliexpress-cli` | `agent-toolbelt-aliexpress-cli` |
