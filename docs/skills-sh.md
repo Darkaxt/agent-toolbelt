@@ -32,12 +32,12 @@ npx skills update
 
 | Skill | Compatibility | Local prerequisites | Safety notes |
 | --- | --- | --- | --- |
+| `antigravity-cli` | Windows/local exact-model packet review | Helper-owned CLIProxyAPI runtime and explicit Antigravity OAuth login | Explicit packet only; no model fallback, general proxy, persistence, or access to Claude's proxy state. |
 | `amazon-cli` | Windows/local CLI oriented | `agent-toolbelt-amazon-cli`; Amazon session setup for authenticated workflows | Authenticated retail or business sessions are user-managed. |
 | `skroutz-cli` | Windows/local CLI oriented | `agent-toolbelt-skroutz-cli`; optional managed Skroutz session for cart workflows | Cart list is read-only; add/remove require explicit confirmation; no checkout or buy workflows. |
 | `aliexpress-cli` | Windows/local CLI oriented | `agent-toolbelt-aliexpress-cli`; optional managed AliExpress session for logged-in read visibility | Read-only discovery only; no cart, checkout, buy, payment, address, order, wishlist, or review submission workflows. |
 | `codex-thread-recall` | Codex only | `CODEX_THREAD_ID`, local Codex `state_5.sqlite`, readable rollout JSONL files | Current-thread first; workspace expansion is explicit. |
 | `everything-search` | Windows only | Everything and `es.exe` for best results | Falls back safely when Everything is unavailable. |
-| `gemini-cli` | Public URL inspection | Node.js/npm and `npx @google/gemini-cli` | Do not use for local files, private URLs, or private-network targets without explicit approval. |
 | `linkedin-cv` | Local LinkedIn profile evidence capture and CV/profile comparison | Local package install and one explicit accessible LinkedIn profile capture | Read-only by default; no search traversal, scraping, content generation, or engagement automation. |
 | `mail-domain-quarantine` | Windows Outlook Classic | Outlook Classic, mailbox access, RDAP/DNS reputation dependencies | Dry-run by default; mailbox moves require explicit confirmation. |
 | `yt-dlp-ffmpeg` | Transcript-first public video analysis preparation and local media operations | `yt-dlp`, `ffmpeg`, and `ffprobe` | Model-free evidence preparation; do not bypass access controls or private media restrictions. |

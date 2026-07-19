@@ -1,6 +1,0 @@
-interface:
-  display_name: "Gemini CLI"
-  short_description: "Inspect public URLs or run an independent Gemini research cross-check."
-  default_prompt: "Use $gemini-cli to inspect this public URL or run an independent Gemini research cross-check when a second pass would improve a public-web research task."
-policy:
-  allow_implicit_invocation: true

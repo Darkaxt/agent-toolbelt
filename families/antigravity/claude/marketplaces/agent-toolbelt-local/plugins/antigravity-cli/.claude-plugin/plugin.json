@@ -1,0 +1,16 @@
+{
+  "name": "antigravity-cli",
+  "version": "0.1.0",
+  "description": "Runs exact-model independent review over one explicit packet.",
+  "author": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "antigravity",
+    "review",
+    "planning",
+    "exact-model"
+  ]
+}

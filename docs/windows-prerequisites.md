@@ -2,7 +2,7 @@
 
 ## Choose the family first
 
-- `families/gemini`: Node.js plus authenticated access for `@google/gemini-cli`
+- `families/antigravity`: helper-owned CLIProxyAPI runtime installed with `agent-toolbelt-antigravity update`, plus explicit Antigravity OAuth login
 - `families/everything`: `es.exe` available on `PATH`
 - `families/media`: `yt-dlp`, `ffmpeg`, and `ffprobe` available on `PATH`
 - `families/outlook-classic-mail`: Outlook Classic installed and configured locally, `uv` available on `PATH`, and a local Outlook COM client project
@@ -30,12 +30,12 @@ Project-style clients such as Outlook, WhatsApp, Amazon, Skroutz, and AliExpress
 - `AGENT_TOOLBELT_FFMPEG`
 - `AGENT_TOOLBELT_FFPROBE`
 
-## Gemini notes
+## Antigravity notes
 
-- The Gemini family calls `npx @google/gemini-cli` in headless JSON mode.
-- Authenticate Gemini CLI before using the Gemini family commands.
-- URL inspection stays public-web only.
-- The research companion remains Codex-only in v1.
+- The Antigravity family downloads a versioned Windows AMD64 CLIProxyAPI release under `%LOCALAPPDATA%\Tools\antigravity-review` and verifies the GitHub-provided SHA-256 digest.
+- Run `update --check`, then `update` when setup or refresh is needed. Run `login` interactively and never terminate an active OAuth flow.
+- `models` and `review` use a helper-owned ephemeral loopback process. They never reuse or modify Claude's CLIProxyAPI binary, auth, configuration, process, or port `8317`.
+- Use `yt-dlp-ffmpeg` for public-video evidence preparation. Antigravity accepts only an explicitly named packet file for independent review.
 
 ## Amazon notes
 
