@@ -7,6 +7,7 @@ import re
 import shutil
 import socket
 import subprocess
+import time
 import uuid
 import zipfile
 from dataclasses import dataclass
@@ -321,6 +322,23 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temporary, path)
 
 
+def _remove_tree_when_released(
+    path: Path,
+    *,
+    remover: Callable[[Path], Any] = shutil.rmtree,
+    heartbeat: Callable[[float], Any] = time.sleep,
+) -> None:
+    while True:
+        try:
+            remover(path)
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            # Windows can retain the executable mapping briefly after `-help` exits.
+            heartbeat(0.1)
+
+
 def _current_version(paths: RuntimePaths) -> str | None:
     active, _ = _read_active_release(paths)
     if not active:
@@ -428,7 +446,7 @@ def install_release(
         }
     finally:
         if staging_root.exists():
-            shutil.rmtree(staging_root)
+            _remove_tree_when_released(staging_root)
 
 
 def run_update(

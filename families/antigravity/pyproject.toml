@@ -6,7 +6,10 @@ build-backend = "hatchling.build"
 name = "agent-toolbelt-antigravity"
 version = "0.1.0"
 description = "Bounded exact-model Antigravity review helper."
+readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Darkaxt" }]
 
 [project.scripts]
 agent-toolbelt-antigravity = "agent_toolbelt_antigravity.cli:entrypoint"

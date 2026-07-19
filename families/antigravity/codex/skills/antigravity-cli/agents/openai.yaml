@@ -1,0 +1,6 @@
+interface:
+  display_name: "Antigravity CLI"
+  short_description: "Run exact-model independent review over one explicit packet."
+  default_prompt: "Use $antigravity-cli to review an explicit plan or evidence packet with a user-selected exact Antigravity model and fail closed on fallback."
+policy:
+  allow_implicit_invocation: true

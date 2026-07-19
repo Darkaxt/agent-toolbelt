@@ -4,7 +4,7 @@ Each family ships its own Codex skill bundle. Install only the family you want.
 
 ## Skill locations
 
-- Gemini: `families/gemini/codex/skills/gemini-cli`
+- Antigravity Review: `families/antigravity/codex/skills/antigravity-cli`
 - Everything: `families/everything/codex/skills/everything-search`
 - Media: `families/media/codex/skills/yt-dlp-ffmpeg`
 - Outlook Classic Mail: `families/outlook-classic-mail/codex/skills/outlook-classic-mail`

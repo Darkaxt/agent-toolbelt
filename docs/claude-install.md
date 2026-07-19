@@ -4,7 +4,7 @@ Each family ships its own self-contained local marketplace with one plugin.
 
 ## Marketplace locations
 
-- Gemini: `families/gemini/claude/marketplaces/agent-toolbelt-local`
+- Antigravity Review: `families/antigravity/claude/marketplaces/agent-toolbelt-local`
 - Everything: `families/everything/claude/marketplaces/agent-toolbelt-local`
 - Media: `families/media/claude/marketplaces/agent-toolbelt-local`
 - Outlook Classic Mail: `families/outlook-classic-mail/claude/marketplaces/agent-toolbelt-local`

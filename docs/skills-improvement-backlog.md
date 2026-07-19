@@ -105,11 +105,11 @@ or skills.sh alternative review.
 - Completed work: added wrapper diagnostics that distinguish local Outlook Classic COM/client failures from cloud connector availability while keeping the skill local-first.
 - Follow-up: optional Graph/M365 fallback remains a separate design if needed.
 
-### `gemini-cli`
+### `antigravity-cli`
 
-- Decision: improved in this repo.
-- Completed work: clarified routing to official Google Gemini skills for API/app development and documented URL-to-Markdown/browser fallback for inaccessible public non-YouTube pages.
-- Follow-up: keep this skill focused on public URL inspection and public-web research cross-checks.
+- Decision: replaced the retired individual-tier `gemini-cli` skill with an isolated exact-model packet-review helper.
+- Completed work: helper-owned CLIProxyAPI updates/auth/runtime, foreground unbounded login, ephemeral loopback review, exact model-attribution checks, and explicit packet-only input.
+- Follow-up: migrate Amazon's separately vendored Gemini CLI intent resolver only through a dedicated behavior-compatible design; do not imply it was changed here.
 
 ### `everything-search`
 

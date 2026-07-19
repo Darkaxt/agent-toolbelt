@@ -266,7 +266,7 @@ def _json_request(
         except OSError:
             detail = ""
         raise ProxyError(
-            "upstream_request_failed",
+            classify_http_failure(exc.code, detail),
             f"Proxy request failed: HTTP {exc.code} {detail}",
         ) from exc
     except (OSError, ValueError) as exc:
@@ -274,6 +274,19 @@ def _json_request(
     if not isinstance(result, dict):
         raise ProxyError("invalid_response", "Proxy response was not a JSON object.")
     return result
+
+
+def classify_http_failure(status_code: int, detail: str) -> str:
+    normalized = detail.casefold()
+    if status_code in {401, 403}:
+        return "auth_error"
+    if any(token in normalized for token in ("quota", "exhausted", "usage limit")):
+        return "quota_exhausted"
+    if status_code in {429, 503} or any(
+        token in normalized for token in ("capacity", "overloaded", "temporarily unavailable")
+    ):
+        return "capacity_unavailable"
+    return "upstream_request_failed"
 
 
 def prepare_review(*, packet: Path, instruction: str, model: str) -> PreparedReview:
@@ -479,10 +492,13 @@ def run_review(
 
 
 def _failure(operation: str, failure_kind: str, message: str, **extra: Any) -> dict[str, Any]:
+    retry_recommended = failure_kind in {"quota_exhausted", "capacity_unavailable"}
     return {
         "ok": False,
         "operation": operation,
         "failure_kind": failure_kind,
+        "retry_recommended": retry_recommended,
+        "safe_to_continue": False,
         **extra,
         "claude_proxy_untouched": True,
         "warnings": [],

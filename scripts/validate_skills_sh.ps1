@@ -7,7 +7,7 @@ $ExpectedSkills = @(
   @{ Name = "aliexpress-cli"; Path = "families/aliexpress-cli/codex/skills/aliexpress-cli/SKILL.md" },
   @{ Name = "codex-thread-recall"; Path = "families/codex-thread-recall/codex/skills/codex-thread-recall/SKILL.md" },
   @{ Name = "everything-search"; Path = "families/everything/codex/skills/everything-search/SKILL.md" },
-  @{ Name = "gemini-cli"; Path = "families/gemini/codex/skills/gemini-cli/SKILL.md" },
+  @{ Name = "antigravity-cli"; Path = "families/antigravity/codex/skills/antigravity-cli/SKILL.md" },
   @{ Name = "linkedin-cv"; Path = "families/linkedin-cv/codex/skills/linkedin-cv/SKILL.md" },
   @{ Name = "mail-domain-quarantine"; Path = "families/mail-domain-quarantine/codex/skills/mail-domain-quarantine/SKILL.md" },
   @{ Name = "yt-dlp-ffmpeg"; Path = "families/media/codex/skills/yt-dlp-ffmpeg/SKILL.md" },

@@ -6,10 +6,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 EXPECTED_FAMILIES = {
-    "gemini": {
-        "project_name": "agent-toolbelt-gemini",
-        "script_name": "agent-toolbelt-gemini",
-        "package_dir": "agent_toolbelt_gemini",
+    "antigravity": {
+        "project_name": "agent-toolbelt-antigravity",
+        "script_name": "agent-toolbelt-antigravity",
+        "package_dir": "agent_toolbelt_antigravity",
     },
     "everything": {
         "project_name": "agent-toolbelt-everything",
@@ -96,7 +96,7 @@ class MonorepoLayoutTests(unittest.TestCase):
             pyproject["tool"]["uv"]["workspace"]["members"],
             [
                 "packages/core",
-                "families/gemini",
+                "families/antigravity",
                 "families/everything",
                 "families/media",
                 "families/outlook-classic-mail",
@@ -155,6 +155,39 @@ class MonorepoLayoutTests(unittest.TestCase):
 
     def test_root_runtime_package_is_removed(self):
         self.assertFalse((REPO_ROOT / "src" / "agent_toolbelt").exists())
+
+    def test_antigravity_replaces_retired_gemini_public_skill(self):
+        self.assertFalse((REPO_ROOT / "families" / "gemini").exists())
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        codex_skill = (
+            REPO_ROOT
+            / "families"
+            / "antigravity"
+            / "codex"
+            / "skills"
+            / "antigravity-cli"
+            / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        claude_skill = (
+            REPO_ROOT
+            / "families"
+            / "antigravity"
+            / "claude"
+            / "marketplaces"
+            / "agent-toolbelt-local"
+            / "plugins"
+            / "antigravity-cli"
+            / "skills"
+            / "antigravity-cli"
+            / "SKILL.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("`antigravity-cli`", readme)
+        self.assertNotIn("`gemini-cli`", readme)
+        for skill_text in (codex_skill, claude_skill):
+            self.assertIn("exact model", skill_text.lower())
+            self.assertIn("`8317`", skill_text)
+            self.assertIn("never", skill_text.lower())
 
     def test_linkedin_skill_bundles_have_frontmatter(self):
         skill_paths = [

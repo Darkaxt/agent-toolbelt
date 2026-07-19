@@ -10,9 +10,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 FAMILY_IMPORTS = {
-    "gemini": (
-        REPO_ROOT / "families" / "gemini" / "src",
-        "agent_toolbelt_gemini.cli",
+    "antigravity": (
+        REPO_ROOT / "families" / "antigravity" / "src",
+        "agent_toolbelt_antigravity.cli",
     ),
     "everything": (
         REPO_ROOT / "families" / "everything" / "src",
@@ -75,47 +75,31 @@ def import_family_cli(name: str):
 
 
 class FamilyCLITests(unittest.TestCase):
-    def test_gemini_cli_routes_url_and_research_commands(self):
-        cli = import_family_cli("gemini")
+    def test_antigravity_cli_routes_status_command(self):
+        cli = import_family_cli("antigravity")
 
-        original_url = cli.gemini.invoke_gemini_url
-        original_research = cli.gemini.invoke_gemini_research
-        cli.gemini.invoke_gemini_url = lambda **kwargs: {
+        original_status = cli.runtime.collect_status
+        cli.runtime.collect_status = lambda paths: {
             "ok": True,
-            "response": "url",
-            "stats": {},
-            "stderr": "",
-            "exit_code": 0,
-            "source_type": "web",
-        }
-        cli.gemini.invoke_gemini_research = lambda **kwargs: {
-            "ok": True,
-            "response": "research",
-            "stats": {},
-            "stderr": "",
-            "exit_code": 0,
-            "mode": "research",
-            "original_question": "q",
-            "normalized_question": "q",
+            "operation": "status",
+            "runtime_root": "C:/helper",
+            "active_release": None,
+            "auth": {"configured": False, "file_count": 0},
+            "claude_proxy": {"detected": True, "port": 8317},
+            "claude_proxy_untouched": True,
+            "warnings": [],
+            "errors": [],
         }
         try:
             with io.StringIO() as buffer, redirect_stdout(buffer):
-                exit_code = cli.main(
-                    ["url", "--url", "https://example.com", "--instruction", "Summarize it."]
-                )
-                url_payload = json.loads(buffer.getvalue())
-
-            with io.StringIO() as buffer, redirect_stdout(buffer):
-                research_exit_code = cli.main(["research", "--question", "q"])
-                research_payload = json.loads(buffer.getvalue())
+                exit_code = cli.main(["status"])
+                payload = json.loads(buffer.getvalue())
         finally:
-            cli.gemini.invoke_gemini_url = original_url
-            cli.gemini.invoke_gemini_research = original_research
+            cli.runtime.collect_status = original_status
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual(url_payload["source_type"], "web")
-        self.assertEqual(research_exit_code, 0)
-        self.assertEqual(research_payload["mode"], "research")
+        self.assertEqual(payload["operation"], "status")
+        self.assertTrue(payload["claude_proxy_untouched"])
 
     def test_everything_cli_routes_lookup_command(self):
         cli = import_family_cli("everything")

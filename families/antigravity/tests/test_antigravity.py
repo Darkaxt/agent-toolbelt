@@ -129,6 +129,24 @@ class StatusTests(unittest.TestCase):
 
 
 class UpdateTests(unittest.TestCase):
+    def test_helper_cleanup_retries_transient_windows_file_lock(self):
+        calls = []
+        sleeps = []
+
+        def remover(path):
+            calls.append(path)
+            if len(calls) == 1:
+                raise PermissionError(32, "file is in use")
+
+        runtime._remove_tree_when_released(
+            Path("C:/helper/staging"),
+            remover=remover,
+            heartbeat=lambda seconds: sleeps.append(seconds),
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(sleeps, [0.1])
+
     def test_release_parser_selects_windows_amd64_and_preserves_digest(self):
         payload = {
             "tag_name": "v7.2.88",

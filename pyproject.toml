@@ -1,7 +1,7 @@
 [tool.uv.workspace]
 members = [
   "packages/core",
-  "families/gemini",
+  "families/antigravity",
   "families/everything",
   "families/media",
   "families/outlook-classic-mail",

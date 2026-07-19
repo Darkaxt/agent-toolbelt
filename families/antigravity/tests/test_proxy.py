@@ -1,8 +1,14 @@
 import hashlib
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+FAMILY_SRC = REPO_ROOT / "families" / "antigravity" / "src"
+sys.path.insert(0, str(FAMILY_SRC))
 
 from agent_toolbelt_antigravity import cli, proxy, runtime
 
@@ -79,6 +85,20 @@ class LoginTests(unittest.TestCase):
 
 
 class ReviewContractTests(unittest.TestCase):
+    def test_upstream_failures_distinguish_auth_quota_and_capacity(self):
+        self.assertEqual(
+            proxy.classify_http_failure(401, "invalid authentication"),
+            "auth_error",
+        )
+        self.assertEqual(
+            proxy.classify_http_failure(429, "quota exhausted for this account"),
+            "quota_exhausted",
+        )
+        self.assertEqual(
+            proxy.classify_http_failure(503, "model capacity temporarily unavailable"),
+            "capacity_unavailable",
+        )
+
     def test_review_payload_contains_no_tools_and_hashes_explicit_packet(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             packet = Path(temp_dir) / "packet.md"
