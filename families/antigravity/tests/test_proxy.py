@@ -85,6 +85,67 @@ class LoginTests(unittest.TestCase):
 
 
 class ReviewContractTests(unittest.TestCase):
+    def test_model_catalog_waits_for_async_registration(self):
+        responses = [
+            {"data": []},
+            {"data": []},
+            {"data": [{"id": "gemini-pro-agent", "object": "model"}]},
+        ]
+        sleeps = []
+
+        def request_json(**kwargs):
+            self.assertEqual(kwargs["method"], "GET")
+            self.assertEqual(kwargs["url"], "http://127.0.0.1:41321/v1/models")
+            self.assertEqual(kwargs["api_key"], "test-key")
+            return responses.pop(0)
+
+        service = proxy.ProxyService(
+            invocation_id="test-invocation",
+            pid=4242,
+            port=41321,
+            api_key="test-key",
+            binary=Path("cli-proxy-api.exe"),
+            version="7.2.88",
+        )
+
+        models, attempts = proxy.wait_for_model_catalog(
+            service,
+            request_json=request_json,
+            sleeper=sleeps.append,
+        )
+
+        self.assertEqual(models, [{"id": "gemini-pro-agent", "object": "model"}])
+        self.assertEqual(attempts, 3)
+        self.assertEqual(sleeps, [0.5, 0.5])
+
+    def test_model_catalog_rejects_malformed_response(self):
+        service = proxy.ProxyService(
+            invocation_id="test-invocation",
+            pid=4242,
+            port=41321,
+            api_key="test-key",
+            binary=Path("cli-proxy-api.exe"),
+            version="7.2.88",
+        )
+
+        with self.assertRaises(proxy.ProxyError) as raised:
+            proxy.wait_for_model_catalog(
+                service,
+                request_json=lambda **kwargs: {"models": []},
+                sleeper=lambda seconds: None,
+            )
+
+        self.assertEqual(raised.exception.failure_kind, "invalid_response")
+
+    def test_exact_review_model_must_exist_in_loaded_catalog(self):
+        with self.assertRaises(proxy.ProxyError) as raised:
+            proxy.require_catalog_model(
+                [{"id": "gemini-pro-agent"}, {"id": "claude-sonnet-4-6"}],
+                "gemini-3.1-pro-high",
+            )
+
+        self.assertEqual(raised.exception.failure_kind, "model_unavailable")
+
     def test_upstream_failures_distinguish_auth_quota_and_capacity(self):
         self.assertEqual(
             proxy.classify_http_failure(401, "invalid authentication"),
