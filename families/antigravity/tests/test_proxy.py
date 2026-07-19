@@ -160,6 +160,15 @@ class ReviewContractTests(unittest.TestCase):
             "capacity_unavailable",
         )
 
+    def test_upstream_error_detail_is_bounded(self):
+        detail = "request rejected: " + ("x" * 20_000)
+
+        bounded = proxy._bounded_error_detail(detail)
+
+        self.assertLessEqual(len(bounded), proxy.MAX_ERROR_DETAIL_CHARS + 32)
+        self.assertTrue(bounded.endswith("[truncated]"))
+        self.assertNotEqual(bounded, detail)
+
     def test_review_payload_contains_no_tools_and_hashes_explicit_packet(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             packet = Path(temp_dir) / "packet.md"
@@ -182,6 +191,26 @@ class ReviewContractTests(unittest.TestCase):
                 prepared.request_payload["messages"][0],
                 {"role": "system", "content": "Review for requirement drift."},
             )
+
+    def test_text_review_payload_can_include_bounded_images_without_tools(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image = Path(temp_dir) / "frame.png"
+            image.write_bytes(b"png-data")
+
+            prepared = proxy.prepare_text_review(
+                packet_text="# Evidence\nVisible frame.",
+                instruction="Analyze the supplied evidence only.",
+                model="gemini-3.1-pro-low",
+                image_paths=[image],
+            )
+
+        user_content = prepared.request_payload["messages"][1]["content"]
+        self.assertNotIn("tools", prepared.request_payload)
+        self.assertIsInstance(user_content, list)
+        self.assertEqual(user_content[0], {"type": "text", "text": "# Evidence\nVisible frame."})
+        self.assertEqual(user_content[1]["type"], "image_url")
+        self.assertTrue(user_content[1]["image_url"]["url"].startswith("data:image/png;base64,"))
+        self.assertEqual(len(prepared.image_sha256s), 1)
 
     def test_exact_reported_model_is_required(self):
         result = proxy.normalize_review_response(
@@ -276,7 +305,7 @@ class OwnedProcessTests(unittest.TestCase):
 
 
 class CliParserTests(unittest.TestCase):
-    def test_parser_accepts_login_models_and_exact_review(self):
+    def test_parser_accepts_login_models_review_and_evidence_analysis(self):
         parser = cli.build_parser()
 
         login = parser.parse_args(["login", "--no-browser"])
@@ -292,10 +321,38 @@ class CliParserTests(unittest.TestCase):
                 "gemini-3.1-pro-high",
             ]
         )
+        analyze_url = parser.parse_args(
+            [
+                "analyze-url",
+                "--url",
+                "https://example.com/article",
+                "--instruction",
+                "Summarize.",
+                "--model",
+                "gemini-3.1-pro-low",
+                "--max-chars",
+                "12000",
+            ]
+        )
+        analyze_video = parser.parse_args(
+            [
+                "analyze-video",
+                "--manifest",
+                "analysis-manifest.json",
+                "--instruction",
+                "Analyze.",
+                "--model",
+                "gemini-3.1-pro-low",
+                "--max-images",
+                "4",
+            ]
+        )
 
         self.assertTrue(login.no_browser)
         self.assertEqual(models.command, "models")
         self.assertEqual(review.model, "gemini-3.1-pro-high")
+        self.assertEqual(analyze_url.max_chars, 12000)
+        self.assertEqual(analyze_video.max_images, 4)
 
 
 if __name__ == "__main__":

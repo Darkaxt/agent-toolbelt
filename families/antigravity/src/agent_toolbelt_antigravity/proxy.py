@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -18,6 +19,7 @@ from . import runtime
 
 
 WINDOWS_CREATE_NO_WINDOW = 0x08000000
+MAX_ERROR_DETAIL_CHARS = 4_000
 
 
 class ProxyError(RuntimeError):
@@ -30,9 +32,10 @@ class ProxyError(RuntimeError):
 
 @dataclass(frozen=True)
 class PreparedReview:
-    packet_path: Path
+    packet_path: Path | None
     packet_sha256: str
     request_payload: dict[str, Any]
+    image_sha256s: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -254,7 +257,7 @@ def _json_request(
             "Accept": "application/json",
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "User-Agent": "agent-toolbelt-antigravity/0.1.0",
+            "User-Agent": "agent-toolbelt-antigravity/0.2.0",
         },
     )
     try:
@@ -267,13 +270,19 @@ def _json_request(
             detail = ""
         raise ProxyError(
             classify_http_failure(exc.code, detail),
-            f"Proxy request failed: HTTP {exc.code} {detail}",
+            f"Proxy request failed: HTTP {exc.code} {_bounded_error_detail(detail)}",
         ) from exc
     except (OSError, ValueError) as exc:
         raise ProxyError("proxy_request_failed", f"Proxy request failed: {exc}") from exc
     if not isinstance(result, dict):
         raise ProxyError("invalid_response", "Proxy response was not a JSON object.")
     return result
+
+
+def _bounded_error_detail(detail: str) -> str:
+    if len(detail) <= MAX_ERROR_DETAIL_CHARS:
+        return detail
+    return f"{detail[:MAX_ERROR_DETAIL_CHARS]}...[truncated]"
 
 
 def classify_http_failure(status_code: int, detail: str) -> str:
@@ -326,30 +335,89 @@ def require_catalog_model(models: list[Any], requested_model: str) -> None:
         )
 
 
-def prepare_review(*, packet: Path, instruction: str, model: str) -> PreparedReview:
-    resolved = packet.expanduser().resolve(strict=False)
-    if not resolved.is_file():
-        raise ProxyError("packet_unavailable", f"Review packet does not exist: {resolved}")
+def prepare_text_review(
+    *,
+    packet_text: str,
+    instruction: str,
+    model: str,
+    image_paths: list[Path] | tuple[Path, ...] = (),
+    packet_path: Path | None = None,
+) -> PreparedReview:
     if not instruction.strip():
         raise ProxyError("invalid_request", "Review instruction cannot be empty.")
     if not model.strip():
         raise ProxyError("invalid_request", "An exact model identifier is required.")
-    raw_packet = resolved.read_bytes()
-    try:
-        packet_text = raw_packet.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise ProxyError("packet_invalid", "Review packet must be UTF-8 text.") from exc
+    if not packet_text.strip():
+        raise ProxyError("packet_invalid", "Review packet cannot be empty.")
+    if len(image_paths) > 8:
+        raise ProxyError("packet_invalid", "A review packet can include at most 8 images.")
+
+    content: str | list[dict[str, Any]] = packet_text
+    image_sha256s: list[str] = []
+    if image_paths:
+        content = [{"type": "text", "text": packet_text}]
+        mime_types = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".webp": "image/webp",
+        }
+        for image_path in image_paths:
+            resolved_image = image_path.expanduser().resolve(strict=False)
+            mime_type = mime_types.get(resolved_image.suffix.casefold())
+            if mime_type is None:
+                raise ProxyError(
+                    "packet_invalid",
+                    f"Unsupported review image type: {resolved_image.suffix or '<none>'}",
+                )
+            if not resolved_image.is_file():
+                raise ProxyError("packet_unavailable", f"Review image does not exist: {resolved_image}")
+            raw_image = resolved_image.read_bytes()
+            if len(raw_image) > 5 * 1024 * 1024:
+                raise ProxyError(
+                    "packet_invalid",
+                    f"Review image exceeds the 5 MiB limit: {resolved_image}",
+                )
+            image_sha256s.append(hashlib.sha256(raw_image).hexdigest())
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mime_type};base64,{base64.b64encode(raw_image).decode('ascii')}"
+                    },
+                }
+            )
+
+    raw_packet = packet_text.encode("utf-8")
     return PreparedReview(
-        packet_path=resolved,
+        packet_path=packet_path,
         packet_sha256=hashlib.sha256(raw_packet).hexdigest(),
         request_payload={
             "model": model,
             "messages": [
                 {"role": "system", "content": instruction},
-                {"role": "user", "content": packet_text},
+                {"role": "user", "content": content},
             ],
             "stream": False,
         },
+        image_sha256s=tuple(image_sha256s),
+    )
+
+
+def prepare_review(*, packet: Path, instruction: str, model: str) -> PreparedReview:
+    resolved = packet.expanduser().resolve(strict=False)
+    if not resolved.is_file():
+        raise ProxyError("packet_unavailable", f"Review packet does not exist: {resolved}")
+    raw_packet = resolved.read_bytes()
+    try:
+        packet_text = raw_packet.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ProxyError("packet_invalid", "Review packet must be UTF-8 text.") from exc
+    return prepare_text_review(
+        packet_text=packet_text,
+        instruction=instruction,
+        model=model,
+        packet_path=resolved,
     )
 
 
@@ -475,23 +543,24 @@ def run_models(paths: runtime.RuntimePaths | None = None) -> dict[str, Any]:
         return _failure("models", failure_kind, str(exc))
 
 
-def run_review(
+def _run_prepared_review(
     *,
-    packet: Path,
-    instruction: str,
+    prepared: PreparedReview,
     model: str,
+    operation: str,
     paths: runtime.RuntimePaths | None = None,
 ) -> dict[str, Any]:
     paths = paths or runtime.RuntimePaths.default()
     try:
-        prepared = prepare_review(packet=packet, instruction=instruction, model=model)
         if not _has_helper_auth(paths):
             return _failure(
-                "review",
+                operation,
                 "auth_unavailable",
                 "No helper-owned Antigravity authentication is available; run login first.",
-                packet_path=str(prepared.packet_path),
+                packet_path=str(prepared.packet_path) if prepared.packet_path else None,
                 packet_sha256=prepared.packet_sha256,
+                image_count=len(prepared.image_sha256s),
+                image_sha256s=list(prepared.image_sha256s),
                 model_requested=model,
             )
         with ephemeral_proxy(paths) as service:
@@ -509,10 +578,12 @@ def run_review(
             )
             return {
                 **normalized,
-                "operation": "review",
+                "operation": operation,
                 "invocation_id": service.invocation_id,
-                "packet_path": str(prepared.packet_path),
+                "packet_path": str(prepared.packet_path) if prepared.packet_path else None,
                 "packet_sha256": prepared.packet_sha256,
+                "image_count": len(prepared.image_sha256s),
+                "image_sha256s": list(prepared.image_sha256s),
                 "proxy_version": service.version,
                 "proxy_pid": service.pid,
                 "proxy_port": service.port,
@@ -521,8 +592,53 @@ def run_review(
                 "claude_proxy_untouched": True,
             }
     except (OSError, ProxyError, runtime.IsolationError) as exc:
-        failure_kind = exc.failure_kind if isinstance(exc, ProxyError) else "review_failed"
-        return _failure("review", failure_kind, str(exc), model_requested=model)
+        failure_kind = exc.failure_kind if isinstance(exc, ProxyError) else f"{operation}_failed"
+        return _failure(operation, failure_kind, str(exc), model_requested=model)
+
+
+def run_review(
+    *,
+    packet: Path,
+    instruction: str,
+    model: str,
+    paths: runtime.RuntimePaths | None = None,
+) -> dict[str, Any]:
+    try:
+        prepared = prepare_review(packet=packet, instruction=instruction, model=model)
+    except ProxyError as exc:
+        return _failure("review", exc.failure_kind, str(exc), model_requested=model)
+    return _run_prepared_review(
+        prepared=prepared,
+        model=model,
+        operation="review",
+        paths=paths,
+    )
+
+
+def run_text_review(
+    *,
+    packet_text: str,
+    instruction: str,
+    model: str,
+    operation: str,
+    image_paths: list[Path] | tuple[Path, ...] = (),
+    paths: runtime.RuntimePaths | None = None,
+) -> dict[str, Any]:
+    try:
+        prepared = prepare_text_review(
+            packet_text=packet_text,
+            instruction=instruction,
+            model=model,
+            image_paths=image_paths,
+        )
+    except ProxyError as exc:
+        return _failure(operation, exc.failure_kind, str(exc), model_requested=model)
+    return _run_prepared_review(
+        prepared=prepared,
+        model=model,
+        operation=operation,
+        paths=paths,
+    )
 
 
 def _failure(operation: str, failure_kind: str, message: str, **extra: Any) -> dict[str, Any]:

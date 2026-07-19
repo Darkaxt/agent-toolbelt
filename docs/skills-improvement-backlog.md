@@ -107,8 +107,8 @@ or skills.sh alternative review.
 
 ### `antigravity-cli`
 
-- Decision: replaced the retired individual-tier `gemini-cli` skill with an isolated exact-model packet-review helper.
-- Completed work: helper-owned CLIProxyAPI updates/auth/runtime, foreground unbounded login, ephemeral loopback review, exact model-attribution checks, and explicit packet-only input.
+- Decision: replaced the retired individual-tier `gemini-cli` skill with an isolated exact-model packet/public-evidence helper.
+- Completed work: helper-owned CLIProxyAPI updates/auth/runtime, foreground unbounded login, ephemeral loopback review, exact model-attribution checks, bounded public-page extraction, and explicit transcript/frame manifests from `yt-dlp-ffmpeg prepare-analysis`.
 - Follow-up: migrate Amazon's separately vendored Gemini CLI intent resolver only through a dedicated behavior-compatible design; do not imply it was changed here.
 
 ### `everything-search`

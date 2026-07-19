@@ -1,9 +1,9 @@
 # Antigravity Review Helper
 
-`agent-toolbelt-antigravity` provides bounded, exact-model packet review through
-a helper-owned CLIProxyAPI runtime and Antigravity OAuth. It replaces the
-retired `gemini-cli` public skill; it is not a general model proxy or public URL
-inspector.
+`agent-toolbelt-antigravity` provides bounded, exact-model packet and public
+evidence analysis through a helper-owned CLIProxyAPI runtime and Antigravity
+OAuth. It replaces the retired `gemini-cli` skill without exposing a general
+model proxy or model-side browsing tools.
 
 ## Commands
 
@@ -14,11 +14,20 @@ agent-toolbelt-antigravity update
 agent-toolbelt-antigravity login
 agent-toolbelt-antigravity models
 agent-toolbelt-antigravity review --packet C:\path\review-packet.md --instruction "Review this plan for requirement drift." --model <exact-model-id>
+agent-toolbelt-antigravity analyze-url --url https://example.com/article --instruction "Summarize the evidence." --model <exact-model-id>
+agent-toolbelt-antigravity analyze-video --manifest C:\path\analysis-manifest.json --instruction "Analyze the transcript and frames." --model <exact-model-id>
 ```
 
 `review` reads only the explicit UTF-8 packet file, sends no tools, and succeeds
 only when the response reports the exact requested model. Use `models` to find
 the exact model id after login.
+
+`analyze-url` validates DNS and redirect targets, rejects local/private
+destinations, extracts bounded HTML/text, labels it as untrusted evidence, and
+then uses the same exact-model contract. YouTube URLs must first be prepared
+with `yt-dlp-ffmpeg prepare-analysis`; `analyze-video` reads the explicit
+manifest, bounded transcript, and up to eight prepared frame images. It never
+uploads the downloaded media or audio file automatically.
 
 ## Runtime Isolation
 

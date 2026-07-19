@@ -32,7 +32,7 @@ npx skills update
 
 | Skill | Compatibility | Local prerequisites | Safety notes |
 | --- | --- | --- | --- |
-| `antigravity-cli` | Windows/local exact-model packet review | Helper-owned CLIProxyAPI runtime and explicit Antigravity OAuth login | Explicit packet only; no model fallback, general proxy, persistence, or access to Claude's proxy state. |
+| `antigravity-cli` | Windows/local exact-model packet and public-evidence analysis | Helper-owned CLIProxyAPI runtime, explicit Antigravity OAuth login, and `yt-dlp-ffmpeg` for video preparation | Bounded public text or explicit transcript/frame manifests only; no model fallback, general proxy, persistence, or access to Claude's proxy state. |
 | `amazon-cli` | Windows/local CLI oriented | `agent-toolbelt-amazon-cli`; Amazon session setup for authenticated workflows | Authenticated retail or business sessions are user-managed. |
 | `skroutz-cli` | Windows/local CLI oriented | `agent-toolbelt-skroutz-cli`; optional managed Skroutz session for cart workflows | Cart list is read-only; add/remove require explicit confirmation; no checkout or buy workflows. |
 | `aliexpress-cli` | Windows/local CLI oriented | `agent-toolbelt-aliexpress-cli`; optional managed AliExpress session for logged-in read visibility | Read-only discovery only; no cart, checkout, buy, payment, address, order, wishlist, or review submission workflows. |
