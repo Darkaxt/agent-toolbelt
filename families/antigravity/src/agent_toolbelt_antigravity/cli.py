@@ -3,8 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
-from . import runtime
+from . import proxy, runtime
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -16,6 +17,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     update_parser.add_argument("--check", action="store_true", help="Check without installing.")
     update_parser.add_argument("--version", help="Install or check an exact CLIProxyAPI version.")
+    login_parser = subparsers.add_parser(
+        "login", help="Authenticate the helper-owned Antigravity runtime interactively."
+    )
+    login_parser.add_argument(
+        "--no-browser", action="store_true", help="Use the non-browser OAuth flow."
+    )
+    subparsers.add_parser("models", help="List models visible to helper-owned authentication.")
+    review_parser = subparsers.add_parser(
+        "review", help="Review one explicit packet with an exact model."
+    )
+    review_parser.add_argument("--packet", type=Path, required=True)
+    review_parser.add_argument("--instruction", required=True)
+    review_parser.add_argument("--model", required=True)
     return parser
 
 
@@ -28,6 +42,20 @@ def main(argv: list[str] | None = None) -> int:
             runtime.RuntimePaths.default(),
             check_only=args.check,
             version=args.version,
+        )
+    elif args.command == "login":
+        result = proxy.run_login(
+            runtime.RuntimePaths.default(),
+            no_browser=args.no_browser,
+        )
+    elif args.command == "models":
+        result = proxy.run_models(runtime.RuntimePaths.default())
+    elif args.command == "review":
+        result = proxy.run_review(
+            paths=runtime.RuntimePaths.default(),
+            packet=args.packet,
+            instruction=args.instruction,
+            model=args.model,
         )
     else:  # pragma: no cover - argparse enforces known commands.
         raise AssertionError(f"Unhandled command: {args.command}")
