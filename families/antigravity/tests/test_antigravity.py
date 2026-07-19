@@ -1,9 +1,12 @@
 import io
+import hashlib
 import json
+import shutil
 import socket
 import sys
 import tempfile
 import unittest
+import zipfile
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -123,6 +126,180 @@ class StatusTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["operation"], "status")
+
+
+class UpdateTests(unittest.TestCase):
+    def test_release_parser_selects_windows_amd64_and_preserves_digest(self):
+        payload = {
+            "tag_name": "v7.2.88",
+            "published_at": "2026-07-18T15:37:00Z",
+            "prerelease": False,
+            "assets": [
+                {
+                    "name": "CLIProxyAPI_7.2.88_windows_aarch64.zip",
+                    "size": 10,
+                    "browser_download_url": (
+                        "https://github.com/router-for-me/CLIProxyAPI/releases/download/"
+                        "v7.2.88/CLIProxyAPI_7.2.88_windows_aarch64.zip"
+                    ),
+                    "digest": "sha256:" + "a" * 64,
+                },
+                {
+                    "name": "CLIProxyAPI_7.2.88_windows_amd64.zip",
+                    "size": 20,
+                    "browser_download_url": (
+                        "https://github.com/router-for-me/CLIProxyAPI/releases/download/"
+                        "v7.2.88/CLIProxyAPI_7.2.88_windows_amd64.zip"
+                    ),
+                    "digest": "sha256:" + "b" * 64,
+                },
+            ],
+        }
+
+        release = runtime.parse_github_release(payload)
+
+        self.assertEqual(release.version, "7.2.88")
+        self.assertEqual(release.asset_name, "CLIProxyAPI_7.2.88_windows_amd64.zip")
+        self.assertEqual(release.sha256, "b" * 64)
+
+    def test_check_update_is_read_only(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = runtime.RuntimePaths.from_base(Path(temp_dir) / "helper")
+            release = runtime.ReleaseInfo(
+                version="7.2.88",
+                tag="v7.2.88",
+                published_at="2026-07-18T15:37:00Z",
+                asset_name="CLIProxyAPI_7.2.88_windows_amd64.zip",
+                asset_url="https://example.invalid/release.zip",
+                asset_size=20,
+                sha256="b" * 64,
+            )
+
+            result = runtime.check_update(paths, release)
+
+            self.assertFalse(paths.base.exists())
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["update_available"])
+            self.assertEqual(result["latest_version"], "7.2.88")
+
+    def test_install_release_verifies_digest_and_activates_atomically(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            paths = runtime.RuntimePaths.from_base(temp / "helper")
+            archive = self._make_archive(temp, b"fake-cli-binary")
+            release = self._release_for_archive("7.2.88", archive)
+
+            result = runtime.install_release(
+                paths,
+                release,
+                downloader=lambda url, destination: shutil.copyfile(archive, destination),
+                version_probe=lambda binary: "7.2.88",
+            )
+
+            current = json.loads(paths.current.read_text(encoding="utf-8"))
+            binary = Path(current["binary_path"])
+            manifest = json.loads(Path(current["manifest_path"]).read_text(encoding="utf-8"))
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["operation"], "update")
+            self.assertEqual(current["version"], "7.2.88")
+            self.assertTrue(binary.is_file())
+            self.assertEqual(manifest["archive_sha256"], release.sha256)
+            self.assertFalse((paths.state / "current.json.tmp").exists())
+
+    def test_install_release_rejects_digest_mismatch_before_activation(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            paths = runtime.RuntimePaths.from_base(temp / "helper")
+            archive = self._make_archive(temp, b"fake-cli-binary")
+            release = self._release_for_archive("7.2.88", archive)
+            release = runtime.ReleaseInfo(**{**release.__dict__, "sha256": "0" * 64})
+
+            with self.assertRaisesRegex(runtime.UpdateError, "digest"):
+                runtime.install_release(
+                    paths,
+                    release,
+                    downloader=lambda url, destination: shutil.copyfile(archive, destination),
+                    version_probe=lambda binary: "7.2.88",
+                )
+
+            self.assertFalse(paths.current.exists())
+
+    def test_install_release_rejects_archive_traversal(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            paths = runtime.RuntimePaths.from_base(temp / "helper")
+            archive = temp / "bad.zip"
+            with zipfile.ZipFile(archive, "w") as bundle:
+                bundle.writestr("../cli-proxy-api.exe", b"bad")
+            release = self._release_for_archive("7.2.88", archive)
+
+            with self.assertRaisesRegex(runtime.UpdateError, "unsafe archive"):
+                runtime.install_release(
+                    paths,
+                    release,
+                    downloader=lambda url, destination: shutil.copyfile(archive, destination),
+                    version_probe=lambda binary: "7.2.88",
+                )
+
+            self.assertFalse(paths.current.exists())
+
+    def test_install_release_rejects_reported_version_mismatch(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            paths = runtime.RuntimePaths.from_base(temp / "helper")
+            archive = self._make_archive(temp, b"fake-cli-binary")
+            release = self._release_for_archive("7.2.88", archive)
+
+            with self.assertRaisesRegex(runtime.UpdateError, "reported version"):
+                runtime.install_release(
+                    paths,
+                    release,
+                    downloader=lambda url, destination: shutil.copyfile(archive, destination),
+                    version_probe=lambda binary: "7.2.86",
+                )
+
+            self.assertFalse(paths.current.exists())
+
+    def test_install_release_retains_only_active_and_previous(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            paths = runtime.RuntimePaths.from_base(temp / "helper")
+            for version in ("7.2.86", "7.2.87", "7.2.88"):
+                archive = self._make_archive(temp, version.encode("ascii"), name=f"{version}.zip")
+                release = self._release_for_archive(version, archive)
+                runtime.install_release(
+                    paths,
+                    release,
+                    downloader=lambda url, destination, source=archive: shutil.copyfile(
+                        source, destination
+                    ),
+                    version_probe=lambda binary, value=version: value,
+                )
+
+            releases = sorted(path.name for path in paths.releases.iterdir() if path.is_dir())
+
+            self.assertEqual(releases, ["7.2.87", "7.2.88"])
+
+    @staticmethod
+    def _make_archive(temp: Path, binary: bytes, *, name: str = "release.zip") -> Path:
+        archive = temp / name
+        with zipfile.ZipFile(archive, "w") as bundle:
+            bundle.writestr("cli-proxy-api.exe", binary)
+        return archive
+
+    @staticmethod
+    def _release_for_archive(version: str, archive: Path) -> runtime.ReleaseInfo:
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        return runtime.ReleaseInfo(
+            version=version,
+            tag=f"v{version}",
+            published_at="2026-07-18T15:37:00Z",
+            asset_name=archive.name,
+            asset_url=f"https://example.invalid/{archive.name}",
+            asset_size=archive.stat().st_size,
+            sha256=digest,
+        )
 
 
 if __name__ == "__main__":
