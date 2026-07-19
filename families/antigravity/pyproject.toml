@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-toolbelt-antigravity"
+version = "0.1.0"
+description = "Bounded exact-model Antigravity review helper."
+requires-python = ">=3.11"
+
+[project.scripts]
+agent-toolbelt-antigravity = "agent_toolbelt_antigravity.cli:entrypoint"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_toolbelt_antigravity"]
