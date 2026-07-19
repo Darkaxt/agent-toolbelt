@@ -289,6 +289,43 @@ def classify_http_failure(status_code: int, detail: str) -> str:
     return "upstream_request_failed"
 
 
+def wait_for_model_catalog(
+    service: ProxyService,
+    *,
+    request_json: Callable[..., dict[str, Any]] = _json_request,
+    sleeper: Callable[[float], Any] = time.sleep,
+    poll_interval_seconds: float = 0.5,
+) -> tuple[list[Any], int]:
+    """Wait for CLIProxyAPI's asynchronous auth/model registration to finish."""
+    attempts = 0
+    while True:
+        attempts += 1
+        response = request_json(
+            method="GET",
+            url=f"http://127.0.0.1:{service.port}/v1/models",
+            api_key=service.api_key,
+        )
+        models = response.get("data")
+        if not isinstance(models, list):
+            raise ProxyError("invalid_response", "Model catalog did not contain a data list.")
+        if models:
+            return models, attempts
+        sleeper(poll_interval_seconds)
+
+
+def require_catalog_model(models: list[Any], requested_model: str) -> None:
+    model_ids = {
+        item.get("id")
+        for item in models
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    if requested_model not in model_ids:
+        raise ProxyError(
+            "model_unavailable",
+            f"The exact requested model is not available in the authenticated catalog: {requested_model}",
+        )
+
+
 def prepare_review(*, packet: Path, instruction: str, model: str) -> PreparedReview:
     resolved = packet.expanduser().resolve(strict=False)
     if not resolved.is_file():
@@ -417,20 +454,14 @@ def run_models(paths: runtime.RuntimePaths | None = None) -> dict[str, Any]:
         )
     try:
         with ephemeral_proxy(paths) as service:
-            response = _json_request(
-                method="GET",
-                url=f"http://127.0.0.1:{service.port}/v1/models",
-                api_key=service.api_key,
-            )
-            models = response.get("data")
-            if not isinstance(models, list):
-                raise ProxyError("invalid_response", "Model catalog did not contain a data list.")
+            models, catalog_wait_attempts = wait_for_model_catalog(service)
             return {
                 "ok": True,
                 "operation": "models",
                 "invocation_id": service.invocation_id,
                 "models": models,
                 "model_count": len(models),
+                "catalog_wait_attempts": catalog_wait_attempts,
                 "proxy_version": service.version,
                 "proxy_pid": service.pid,
                 "proxy_port": service.port,
@@ -464,6 +495,8 @@ def run_review(
                 model_requested=model,
             )
         with ephemeral_proxy(paths) as service:
+            models, catalog_wait_attempts = wait_for_model_catalog(service)
+            require_catalog_model(models, model)
             response = _json_request(
                 method="POST",
                 url=f"http://127.0.0.1:{service.port}/v1/chat/completions",
@@ -483,6 +516,7 @@ def run_review(
                 "proxy_version": service.version,
                 "proxy_pid": service.pid,
                 "proxy_port": service.port,
+                "catalog_wait_attempts": catalog_wait_attempts,
                 "claude_proxy_detected": runtime.detect_claude_proxy()["detected"],
                 "claude_proxy_untouched": True,
             }
