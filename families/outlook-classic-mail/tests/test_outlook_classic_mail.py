@@ -783,6 +783,8 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("--body \"<final draft text>\" [--attach <local-file>] --create-draft --confirm", skill_text)
         self.assertIn("edit-draft", skill_text)
         self.assertIn("Do not update draft bodies through ad hoc COM", skill_text)
+        self.assertIn("preserves the native quoted thread", skill_text)
+        self.assertIn("legacy threaded draft", skill_text)
 
     def test_codex_skill_documents_cache_and_sync_workflows(self):
         skill_path = (

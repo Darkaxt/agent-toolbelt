@@ -139,8 +139,13 @@ To update an existing draft, locate or read the draft first and use `edit-draft`
 with the fields that should change: `--body`, `--subject`, `--to`, `--cc`,
 `--bcc`, and repeatable `--attach`. The helper only edits items that are still
 in the selected account's Drafts folder and returns `draft_edit`,
-`draft_recipients`, and `draft_attachments` metadata. Do not use ad hoc COM
-scripts to update draft bodies, recipients, or attachments.
+`draft_recipients`, and `draft_attachments` metadata. Reply and forward drafts
+created by the helper mark only their authored section, so `edit-draft --body`
+replaces that section while preserving the native quoted thread and signature.
+Legacy threaded drafts without the marker fail closed and must be recreated
+through `draft-reply` or `draft-forward`; the helper will not replace their
+complete body. Do not use ad hoc COM scripts to update draft bodies, recipients,
+or attachments.
 
 When attachment files from an existing message are needed, use
 `save-attachments --account <smtp|store> --message-id <entry-id> --output-dir

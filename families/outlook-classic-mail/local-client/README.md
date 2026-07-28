@@ -82,6 +82,12 @@ include `draft_content.thread_content_included`,
 `draft_content.thread_content_source`, and warnings such as
 `thread_quote_fallback_used` or `thread_content_missing`.
 
+The helper wraps only the authored text of newly created replies/forwards in a
+local HTML marker. `edit-draft --body` replaces that marked section while
+preserving Outlook's native signature and quoted conversation. A legacy
+threaded draft without the marker fails closed and must be recreated; the
+client never replaces its complete body speculatively.
+
 `--instruction` is guidance only. It is preserved in the payload for audit/debug
 context, but it is never written into the saved draft body. Use `--body` for the
 final text that should be inserted into the draft. `--create-draft --confirm`
