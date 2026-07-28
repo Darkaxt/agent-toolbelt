@@ -1,4 +1,5 @@
 import contextlib
+import re
 import sys
 import tempfile
 import unittest
@@ -1368,6 +1369,101 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         self.assertEqual(result["draft_edit"]["body_source"], "body")
         self.assertEqual(result["draft_edit"]["body_format"], "html_and_plain")
         self.assertEqual(result["draft_edit"]["draft_folder_verified"], True)
+
+    def test_edit_draft_replaces_only_helper_authored_reply_body(self):
+        message = self.session.GetItemFromID("msg-1")
+
+        def reply_with_thread():
+            message.last_reply = FakeReply(
+                Subject=f"RE: {message.Subject}",
+                To=message.SenderEmailAddress,
+                Body=f"Quoted original\r\n{message.Body}",
+                HTMLBody=(
+                    "<html><body><div class='signature'>Regards, Demo</div>"
+                    "<div id='divRplyFwdMsg'>Original headers</div>"
+                    f"<p>{message.Body}</p></body></html>"
+                ),
+            )
+            return message.last_reply
+
+        message.Reply = reply_with_thread
+        client.draft_reply(
+            self.session,
+            account_selector="demo@example.com",
+            message_id="msg-1",
+            instruction="Create the first reply.",
+            body="First authored reply.",
+            create_draft=True,
+            confirm=True,
+        )
+        draft = message.last_reply
+        account = client.resolve_account(self.session, "demo@example.com")
+        drafts = client.resolve_folder(account, "drafts")
+        draft.Parent = drafts
+        drafts.Items.append(draft)
+        self.session._messages[draft.EntryID] = draft
+        self.assertIn('id="agent-toolbelt-authored-draft"', draft.HTMLBody)
+        draft.HTMLBody = draft.HTMLBody.replace(' data-agent-toolbelt-draft-body="1"', "")
+        draft.HTMLBody = draft.HTMLBody.replace(
+            "<p>First authored reply.</p>",
+            '<div class="MsoNormal">First authored reply.</div>',
+        )
+
+        result = client.edit_draft(
+            self.session,
+            account_selector="demo@example.com",
+            message_id=draft.EntryID,
+            body="Corrected authored reply.",
+            confirm=True,
+        )
+
+        self.assertNotIn("First authored reply.", draft.HTMLBody)
+        self.assertIn("Corrected authored reply.", draft.HTMLBody)
+        self.assertIn("Regards, Demo", draft.HTMLBody)
+        self.assertIn("divRplyFwdMsg", draft.HTMLBody)
+        self.assertIn(message.Body, draft.HTMLBody)
+        self.assertEqual(
+            len(re.findall(r"<div\b", draft.HTMLBody, flags=re.IGNORECASE)),
+            len(re.findall(r"</div\s*>", draft.HTMLBody, flags=re.IGNORECASE)),
+        )
+        self.assertEqual(result["draft_edit"]["body_edit_strategy"], "replace_helper_authored_section")
+        self.assertTrue(result["draft_edit"]["thread_content_preserved"])
+
+    def test_edit_draft_refuses_ambiguous_legacy_thread_body(self):
+        account = client.resolve_account(self.session, "demo@example.com")
+        drafts = client.resolve_folder(account, "drafts")
+        draft = FakeMessage(
+            EntryID="legacy-thread-draft",
+            Subject="RE: Existing conversation",
+            SenderName="User",
+            SenderEmailAddress="demo@example.com",
+            To="alice@example.com",
+            ReceivedTime=datetime.now().replace(microsecond=0),
+            UnRead=False,
+            Body="Old reply\r\n\r\nOriginal conversation",
+            HTMLBody=(
+                "<html><body><p>Old reply</p>"
+                "<div id='divRplyFwdMsg'>Original conversation</div></body></html>"
+            ),
+            ConversationID="conv-legacy",
+            ConversationTopic="Existing conversation",
+        )
+        draft.Parent = drafts
+        drafts.Items.append(draft)
+        self.session._messages[draft.EntryID] = draft
+        original_html = draft.HTMLBody
+
+        with self.assertRaisesRegex(ValueError, "lacks a safe authored-body marker"):
+            client.edit_draft(
+                self.session,
+                account_selector="demo@example.com",
+                message_id=draft.EntryID,
+                body="Replacement that must not erase the thread.",
+                confirm=True,
+            )
+
+        self.assertEqual(draft.HTMLBody, original_html)
+        self.assertFalse(draft.saved)
 
     def test_edit_draft_updates_recipients_subject_and_attachments(self):
         account = client.resolve_account(self.session, "demo@example.com")

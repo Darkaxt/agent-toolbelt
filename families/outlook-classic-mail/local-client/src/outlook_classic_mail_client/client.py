@@ -2113,8 +2113,21 @@ def text_to_html_fragment(text: str) -> str:
     return "".join(paragraphs)
 
 
+AUTHORED_DRAFT_BODY_ATTRIBUTE = 'data-agent-toolbelt-draft-body="1"'
+AUTHORED_DRAFT_BODY_ID = "agent-toolbelt-authored-draft"
+
+
+def authored_draft_html(draft_text: str) -> str:
+    return (
+        f'<div id="{AUTHORED_DRAFT_BODY_ID}" class="agent-toolbelt-authored-draft" '
+        f"{AUTHORED_DRAFT_BODY_ATTRIBUTE}>"
+        f"{text_to_html_fragment(draft_text)}"
+        "</div>"
+    )
+
+
 def prepend_html_body(*, existing_html: str, draft_text: str) -> str:
-    draft_html = text_to_html_fragment(draft_text)
+    draft_html = authored_draft_html(draft_text)
     if not draft_html:
         return existing_html
 
@@ -2776,10 +2789,74 @@ def folder_paths_match(left: Any, right: Any) -> bool:
     return bool(left_path and right_path and left_path == right_path)
 
 
-def set_draft_body(item: Any, body: str) -> str:
+def replace_helper_authored_html(existing_html: str, body: str) -> tuple[str, bool] | None:
+    opening_matches = [
+        match
+        for pattern in (
+            r'<div\b[^>]*\bid\s*=\s*(["\'])agent-toolbelt-authored-draft\1[^>]*>',
+            r'<div\b[^>]*\bdata-agent-toolbelt-draft-body\s*=\s*(["\'])1\1[^>]*>',
+        )
+        if (match := re.search(pattern, existing_html, flags=re.IGNORECASE)) is not None
+    ]
+    opening = min(opening_matches, key=lambda match: match.start()) if opening_matches else None
+    if opening is None:
+        return None
+    depth = 1
+    closing_end = None
+    for tag in re.finditer(r"</?div\b[^>]*>", existing_html[opening.end() :], flags=re.IGNORECASE):
+        if tag.group(0).lstrip().startswith("</"):
+            depth -= 1
+        else:
+            depth += 1
+        if depth == 0:
+            closing_end = opening.end() + tag.end()
+            break
+    if closing_end is None:
+        raise ValueError("Draft authored-body marker is malformed; refusing to replace the complete body.")
+    preserved_suffix = existing_html[closing_end:]
+    replacement = f"{existing_html[:opening.start()]}{authored_draft_html(body)}{preserved_suffix}"
+    preserved_text = normalize_body_text(text_from_html(preserved_suffix))
+    return replacement, bool(preserved_text)
+
+
+def appears_to_be_threaded_draft(item: Any) -> bool:
+    subject = str(safe_get(item, "Subject", "") or "")
+    html_body = str(safe_get(item, "HTMLBody", "") or "")
+    plain_body = str(safe_get(item, "Body", "") or "")
+    return bool(
+        re.match(r"^\s*(?:re|fw|fwd)\s*:", subject, flags=re.IGNORECASE)
+        or re.search(r"\bid\s*=\s*([\"'])divRplyFwdMsg\1", html_body, flags=re.IGNORECASE)
+        or "agent-toolbelt-quoted-thread" in html_body
+        or re.search(r"^-{2,}\s*original message\s*-{2,}$", plain_body, flags=re.IGNORECASE | re.MULTILINE)
+    )
+
+
+def set_draft_body(item: Any, body: str) -> dict[str, Any]:
+    existing_html = str(safe_get(item, "HTMLBody", "") or "")
+    if existing_html:
+        replacement = replace_helper_authored_html(existing_html, body)
+        if replacement is not None:
+            replaced_html, thread_content_preserved = replacement
+            item.HTMLBody = replaced_html
+            return {
+                "body_format": "html",
+                "body_edit_strategy": "replace_helper_authored_section",
+                "thread_content_preserved": thread_content_preserved,
+                "warnings": [],
+            }
+    if appears_to_be_threaded_draft(item):
+        raise ValueError(
+            "Draft appears to contain a reply/forward thread but lacks a safe authored-body marker; "
+            "recreate it with draft-reply or draft-forward before editing the body."
+        )
     item.Body = body
     item.HTMLBody = f"<html><body>{text_to_html_fragment(body)}</body></html>"
-    return "html_and_plain"
+    return {
+        "body_format": "html_and_plain",
+        "body_edit_strategy": "replace_entire_standalone_body",
+        "thread_content_preserved": False,
+        "warnings": [],
+    }
 
 
 def edit_draft(
@@ -2810,9 +2887,9 @@ def edit_draft(
     if not folder_paths_match(parent_folder, drafts_folder):
         raise ValueError("Message is not in the selected account's Drafts folder; refusing to edit it as a draft.")
 
-    body_format = None
+    body_update: dict[str, Any] | None = None
     if body is not None:
-        body_format = set_draft_body(item, body)
+        body_update = set_draft_body(item, body)
     if subject is not None:
         item.Subject = subject
     recipient_summary = apply_recipient_fields(item, to=to, cc=cc, bcc=bcc)
@@ -2825,11 +2902,13 @@ def edit_draft(
         "updated": True,
         "draft_edit": {
             "body_source": "body" if body is not None else "unchanged",
-            "body_format": body_format or "unchanged",
+            "body_format": (body_update or {}).get("body_format", "unchanged"),
+            "body_edit_strategy": (body_update or {}).get("body_edit_strategy", "unchanged"),
+            "thread_content_preserved": (body_update or {}).get("thread_content_preserved"),
             "draft_folder": folder_summary(parent_folder),
             "target_drafts_folder": folder_summary(drafts_folder),
             "draft_folder_verified": True,
-            "warnings": [],
+            "warnings": (body_update or {}).get("warnings", []),
         },
         "draft_recipients": draft_recipients_summary(
             item,
@@ -3512,7 +3591,7 @@ def build_parser() -> argparse.ArgumentParser:
     move_message_parser.add_argument("--target-folder", required=True)
     move_message_parser.add_argument("--confirm", action="store_true")
 
-    edit_draft_parser = subparsers.add_parser("edit-draft", help="Replace the body of an existing draft.")
+    edit_draft_parser = subparsers.add_parser("edit-draft", help="Safely update an existing draft.")
     edit_draft_parser.add_argument("--account", required=True)
     edit_draft_parser.add_argument("--message-id", required=True)
     edit_draft_parser.add_argument("--body")

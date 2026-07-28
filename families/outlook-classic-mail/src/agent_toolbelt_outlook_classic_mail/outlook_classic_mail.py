@@ -431,7 +431,7 @@ def build_parser() -> argparse.ArgumentParser:
     move_message.add_argument("--target-folder", required=True)
     move_message.add_argument("--confirm", action="store_true")
 
-    edit_draft = subparsers.add_parser("edit-draft", help="Replace the body of an existing draft.")
+    edit_draft = subparsers.add_parser("edit-draft", help="Safely update an existing draft.")
     edit_draft.add_argument("--account", required=True)
     edit_draft.add_argument("--message-id", required=True)
     edit_draft.add_argument("--body")
