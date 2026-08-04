@@ -108,6 +108,13 @@ as the saved draft body. To create a draft, pass the final reply/forward text in
 returns `draft_status: needs_body` in preview mode and fails closed if draft
 creation is requested.
 
+`--body` is a plain-text contract. HTML-like tags and literal escape sequences
+such as `\n`, `\r`, `\t`, `\uXXXX`, or `\xNN` are preserved rather than decoded.
+The action still proceeds, but the result includes uppercase `WARNING:` entries
+at the operation and draft-diagnostics levels. Callers must correct and re-read
+the draft before claiming it is formatted properly. Real line breaks and real
+Unicode characters do not trigger these warnings.
+
 Pass each explicit local attachment with repeatable `--attach <local-file>`.
 Attachment paths are validated before the helper creates an Outlook draft, and
 missing files or directories fail closed instead of saving a partial draft. Do

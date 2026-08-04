@@ -964,6 +964,37 @@ class OutlookClassicMailClientTests(unittest.TestCase):
 
         self.assertIsNone(message.last_reply)
 
+    def test_draft_body_input_warnings_detect_html_and_literal_escapes(self):
+        warnings = client.draft_body_input_warnings(
+            r"<p>Hello</p>\nSecond line with \u00e9 and \x21."
+        )
+
+        self.assertEqual(len(warnings), 2)
+        self.assertIn("WARNING: HTML-LIKE TAGS", warnings[0])
+        self.assertIn("WARNING: LITERAL ESCAPE SEQUENCES", warnings[1])
+
+    def test_draft_body_input_warnings_allow_real_unicode_and_newlines(self):
+        warnings = client.draft_body_input_warnings("Hello, José.\nΚαλημέρα.\n你好。")
+
+        self.assertEqual(warnings, [])
+
+    def test_draft_reply_warns_but_still_creates_for_suspicious_plain_text(self):
+        result = client.draft_reply(
+            self.session,
+            account_selector="demo@example.com",
+            message_id="msg-1",
+            instruction="Create the requested reply.",
+            body=r"<p>Hello</p>\nSecond line with \u00e9.",
+            create_draft=True,
+            confirm=True,
+        )
+
+        self.assertTrue(result["created"])
+        self.assertEqual(len(result["warnings"]), 2)
+        self.assertTrue(all(warning.startswith("WARNING:") for warning in result["warnings"]))
+        self.assertIn(r"\n", result["suggested_body"])
+        self.assertIn("&lt;p&gt;Hello&lt;/p&gt;", self.session.GetItemFromID("msg-1").last_reply.HTMLBody)
+
     def test_draft_forward_requires_body_to_create_draft(self):
         message = self.session.GetItemFromID("msg-1")
 
@@ -1369,6 +1400,40 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         self.assertEqual(result["draft_edit"]["body_source"], "body")
         self.assertEqual(result["draft_edit"]["body_format"], "html_and_plain")
         self.assertEqual(result["draft_edit"]["draft_folder_verified"], True)
+
+    def test_edit_draft_warns_but_still_saves_suspicious_plain_text(self):
+        account = client.resolve_account(self.session, "demo@example.com")
+        drafts = client.resolve_folder(account, "drafts")
+        draft = FakeMessage(
+            EntryID="draft-warning",
+            Subject="Draft warning",
+            SenderName="User",
+            SenderEmailAddress="demo@example.com",
+            To="alice@example.com",
+            ReceivedTime=datetime.now().replace(microsecond=0),
+            UnRead=False,
+            Body="Old draft body",
+            HTMLBody="<html><body><p>Old draft body</p></body></html>",
+            ConversationID="conv-draft-warning",
+            ConversationTopic="Draft warning",
+        )
+        draft.Parent = drafts
+        drafts.Items.append(draft)
+        self.session._messages[draft.EntryID] = draft
+
+        result = client.edit_draft(
+            self.session,
+            account_selector="demo@example.com",
+            message_id=draft.EntryID,
+            body=r"<strong>Updated</strong>\nNext line.",
+            confirm=True,
+        )
+
+        self.assertTrue(result["updated"])
+        self.assertTrue(draft.saved)
+        self.assertEqual(len(result["draft_edit"]["warnings"]), 2)
+        self.assertTrue(all(warning.startswith("WARNING:") for warning in result["draft_edit"]["warnings"]))
+        self.assertIn("&lt;strong&gt;Updated&lt;/strong&gt;", draft.HTMLBody)
 
     def test_edit_draft_replaces_only_helper_authored_reply_body(self):
         message = self.session.GetItemFromID("msg-1")
@@ -1812,6 +1877,31 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertTrue(result["result"]["would_move"])
         self.assertFalse(result["result"]["moved"])
+
+    def test_dispatch_promotes_draft_body_input_warnings_to_top_level(self):
+        parser = client.build_parser()
+        args = parser.parse_args(
+            [
+                "draft-reply",
+                "--account",
+                "demo@example.com",
+                "--message-id",
+                "msg-1",
+                "--instruction",
+                "Create the reply.",
+                "--body",
+                r"<p>Hello</p>\nSecond line.",
+                "--create-draft",
+                "--confirm",
+            ]
+        )
+
+        result = client.dispatch_operation(args, application=None, session=self.session)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["warnings"], result["result"]["warnings"])
+        self.assertEqual(len(result["warnings"]), 2)
+        self.assertTrue(all(warning.startswith("WARNING:") for warning in result["warnings"]))
 
     def test_search_all_folders_hint_write_failures_become_warnings(self):
         original_remember = client.remember_folder_hints

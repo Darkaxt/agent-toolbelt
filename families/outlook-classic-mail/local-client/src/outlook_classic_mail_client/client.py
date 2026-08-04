@@ -1875,6 +1875,33 @@ def compose_draft_body(
     return ""
 
 
+HTML_LIKE_BODY_WARNING = (
+    "WARNING: HTML-LIKE TAGS WERE PASSED TO A PLAIN-TEXT DRAFT BODY. "
+    "THE TAGS WILL BE DISPLAYED LITERALLY; PASS FINAL PLAIN TEXT INSTEAD."
+)
+LITERAL_ESCAPE_BODY_WARNING = (
+    "WARNING: LITERAL ESCAPE SEQUENCES WERE PASSED TO A PLAIN-TEXT DRAFT BODY. "
+    "SEQUENCES SUCH AS \\n, \\r, \\t, \\uXXXX, AND \\xNN WILL NOT CREATE FORMATTING OR UNICODE CHARACTERS."
+)
+HTML_LIKE_BODY_PATTERN = re.compile(
+    r"(?is)<!--.*?-->|<!doctype\b[^>]*>|</?[A-Za-z][A-Za-z0-9:-]*(?:\s[^<>]*?)?\s*/?>"
+)
+LITERAL_ESCAPE_BODY_PATTERN = re.compile(
+    r"\\(?:[nrtbfv0]|u[0-9A-Fa-f]{4}|u\{[0-9A-Fa-f]{1,6}\}|U[0-9A-Fa-f]{8}|x[0-9A-Fa-f]{2}|N\{[^}\r\n]+\})"
+)
+
+
+def draft_body_input_warnings(body: str | None) -> list[str]:
+    if not body:
+        return []
+    warnings: list[str] = []
+    if HTML_LIKE_BODY_PATTERN.search(body):
+        warnings.append(HTML_LIKE_BODY_WARNING)
+    if LITERAL_ESCAPE_BODY_PATTERN.search(body):
+        warnings.append(LITERAL_ESCAPE_BODY_WARNING)
+    return warnings
+
+
 def require_final_draft_body(*, body: str | None, mode: str) -> None:
     if body is not None and body.strip():
         return
@@ -1889,7 +1916,7 @@ def draft_body_state(*, suggested_body: str, created: bool) -> dict[str, Any]:
         return {
             "draft_status": "created" if created else "ready_to_create",
             "draft_body_source": "body",
-            "warnings": [],
+            "warnings": draft_body_input_warnings(suggested_body),
         }
     return {
         "draft_status": "needs_body",
@@ -2434,6 +2461,7 @@ def create_target_store_draft(
     draft_attachments: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     warnings: list[str] = []
+    body_warnings = draft_body_input_warnings(body)
     target_folder = account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
     draft = create_mail_item_in_folder(target_folder)
     draft_recipients = apply_recipient_fields(draft, to=to, cc=cc, bcc=bcc)
@@ -2463,9 +2491,10 @@ def create_target_store_draft(
             "thread_content_included": False,
             "thread_content_source": "missing",
             "body_format": "plain" if body else "empty",
-            "warnings": [],
+            "warnings": body_warnings,
         },
         "draft_attachments": draft_attachments or prepare_draft_attachments([]),
+        "warnings": body_warnings,
     }
 
 
@@ -2832,6 +2861,7 @@ def appears_to_be_threaded_draft(item: Any) -> bool:
 
 
 def set_draft_body(item: Any, body: str) -> dict[str, Any]:
+    body_warnings = draft_body_input_warnings(body)
     existing_html = str(safe_get(item, "HTMLBody", "") or "")
     if existing_html:
         replacement = replace_helper_authored_html(existing_html, body)
@@ -2842,7 +2872,7 @@ def set_draft_body(item: Any, body: str) -> dict[str, Any]:
                 "body_format": "html",
                 "body_edit_strategy": "replace_helper_authored_section",
                 "thread_content_preserved": thread_content_preserved,
-                "warnings": [],
+                "warnings": body_warnings,
             }
     if appears_to_be_threaded_draft(item):
         raise ValueError(
@@ -2855,7 +2885,7 @@ def set_draft_body(item: Any, body: str) -> dict[str, Any]:
         "body_format": "html_and_plain",
         "body_edit_strategy": "replace_entire_standalone_body",
         "thread_content_preserved": False,
-        "warnings": [],
+        "warnings": body_warnings,
     }
 
 
@@ -3324,6 +3354,7 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
             account=payload["account"],
             store=payload["store"],
             result=payload,
+            warnings=payload["warnings"],
         )
 
     if args.operation == "draft-forward":
@@ -3347,6 +3378,7 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
             account=payload["account"],
             store=payload["store"],
             result=payload,
+            warnings=payload["warnings"],
         )
 
     if args.operation == "move-message":
@@ -3384,6 +3416,7 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
             account=payload["account"],
             store=payload["store"],
             result=payload,
+            warnings=payload["draft_edit"]["warnings"],
         )
 
     payload = apply_action(
@@ -3409,6 +3442,7 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
         account=payload.get("account"),
         store=payload.get("store"),
         result=payload,
+        warnings=payload.get("warnings", []),
     )
 
 
