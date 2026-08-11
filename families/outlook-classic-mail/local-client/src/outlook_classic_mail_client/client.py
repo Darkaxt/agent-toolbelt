@@ -4,6 +4,7 @@ import html
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -141,6 +142,201 @@ def outlook_process_running() -> bool | None:
     if "INFO:" in output:
         return False
     return "OUTLOOK.EXE" in output.upper()
+
+
+def outlook_visible_window() -> bool | None:
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        found = False
+        callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+        def inspect_window(hwnd, _lparam):
+            nonlocal found
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            class_name = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(hwnd, class_name, len(class_name))
+            if class_name.value.casefold() == "rctrl_renwnd32":
+                found = True
+                return False
+            return True
+
+        user32.EnumWindows(callback_type(inspect_window), 0)
+        return found
+    except Exception:
+        return None
+
+
+def outlook_runtime_state() -> dict[str, bool | None]:
+    return {
+        "process_running": outlook_process_running(),
+        "visible_window": outlook_visible_window(),
+    }
+
+
+def interactive_outlook_launch_allowed() -> bool:
+    if sys.platform != "win32":
+        return False
+    if os.getenv("OUTLOOK_CLASSIC_MAIL_BACKGROUND", "").strip().casefold() in {"1", "true", "yes"}:
+        return False
+    if os.getenv("OUTLOOK_CLASSIC_MAIL_NO_UI", "").strip().casefold() in {"1", "true", "yes"}:
+        return False
+    if Path(sys.executable).name.casefold() == "pythonw.exe":
+        return False
+    if input_desktop_accessible() is not True:
+        return False
+    current_session = process_session_id()
+    console_session = active_console_session_id()
+    if current_session is not None and console_session is not None and current_session != console_session:
+        return False
+    return True
+
+
+def resolve_outlook_executable() -> Path | None:
+    candidates: list[Path] = []
+    configured = os.getenv("OUTLOOK_CLASSIC_MAIL_EXE")
+    if configured:
+        candidates.append(Path(configured).expanduser())
+
+    on_path = shutil.which("OUTLOOK.EXE")
+    if on_path:
+        candidates.append(Path(on_path))
+
+    if sys.platform == "win32":
+        try:
+            import winreg
+
+            for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+                try:
+                    with winreg.OpenKey(root, r"Software\Microsoft\Windows\CurrentVersion\App Paths\OUTLOOK.EXE") as key:
+                        value, _ = winreg.QueryValueEx(key, None)
+                    if value:
+                        candidates.append(Path(value))
+                except OSError:
+                    continue
+        except ImportError:
+            pass
+
+    for env_name in ("ProgramFiles", "ProgramFiles(x86)"):
+        root = os.getenv(env_name)
+        if not root:
+            continue
+        candidates.extend(
+            [
+                Path(root) / "Microsoft Office" / "root" / "Office16" / "OUTLOOK.EXE",
+                Path(root) / "Microsoft Office" / "Office16" / "OUTLOOK.EXE",
+            ]
+        )
+
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve(strict=True)
+        except (OSError, RuntimeError):
+            continue
+        if resolved.is_file():
+            return resolved
+    return None
+
+
+def launch_outlook_desktop() -> dict[str, Any]:
+    executable = resolve_outlook_executable()
+    if executable is None:
+        raise FileNotFoundError("Outlook Classic executable could not be resolved.")
+    process = subprocess.Popen(
+        [str(executable)],
+        cwd=str(executable.parent),
+        close_fds=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return {
+        "executable": str(executable),
+        "pid": process.pid,
+    }
+
+
+def _raise_outlook_startup_error(
+    diagnostics: dict[str, Any] | None,
+    *,
+    failure_kind: str,
+    message: str,
+    exception: BaseException | None = None,
+) -> None:
+    if diagnostics is not None:
+        finish_client_diagnostics(diagnostics, failure_kind=failure_kind, exception=exception)
+    raise OutlookComUnavailableError(
+        message,
+        failure_kind=failure_kind,
+        diagnostics=diagnostics or {},
+    ) from exception
+
+
+def prepare_outlook_for_com(diagnostics: dict[str, Any] | None = None) -> None:
+    operation = str((diagnostics or {}).get("operation") or "unknown")
+    state = outlook_runtime_state()
+    process_running = state.get("process_running")
+    visible_window = state.get("visible_window")
+    interactive = interactive_outlook_launch_allowed()
+    startup = {
+        "policy": "interactive_desktop_launch_if_needed",
+        "interactive_launch_allowed": interactive,
+        "process_running_before": process_running,
+        "visible_window_before": visible_window,
+        "action": None,
+        "launch_executable": None,
+        "launch_pid": None,
+    }
+    if diagnostics is not None:
+        diagnostics["outlook_startup"] = startup
+
+    if visible_window is True:
+        startup["action"] = "existing_visible_instance"
+        return
+
+    if operation == "diagnostics-probe":
+        if process_running is True:
+            startup["action"] = "probe_existing_process"
+            return
+        startup["action"] = "probe_no_launch"
+        _raise_outlook_startup_error(
+            diagnostics,
+            failure_kind="outlook_not_running",
+            message="Outlook Classic is not running; diagnostics-probe does not launch desktop applications.",
+        )
+
+    if not interactive:
+        if process_running is True:
+            startup["action"] = "existing_background_process"
+            return
+        startup["action"] = "background_no_launch"
+        _raise_outlook_startup_error(
+            diagnostics,
+            failure_kind="outlook_interactive_session_required",
+            message=(
+                "Outlook Classic is not running and this invocation cannot open visible desktop applications. "
+                "Start Outlook in the interactive user session, then retry."
+            ),
+        )
+
+    try:
+        launch = launch_outlook_desktop()
+    except Exception as exc:
+        startup["action"] = "desktop_launch_failed"
+        _raise_outlook_startup_error(
+            diagnostics,
+            failure_kind="outlook_launch_failed",
+            message="Outlook Classic could not be launched in the interactive desktop session.",
+            exception=exc,
+        )
+
+    startup["action"] = "desktop_promotion_requested" if process_running is True else "desktop_launch_requested"
+    startup["launch_executable"] = launch.get("executable")
+    startup["launch_pid"] = launch.get("pid")
 
 
 def build_client_diagnostics(operation: str) -> dict[str, Any]:
@@ -293,6 +489,8 @@ def connect_outlook(diagnostics: dict[str, Any] | None = None):
         ) from exc
 
     mark_com_stage(diagnostics, "co_initialize", "ok")
+    if sys.platform == "win32":
+        prepare_outlook_for_com(diagnostics)
     try:
         application = win32com.client.Dispatch("Outlook.Application")
     except Exception as exc:
@@ -321,6 +519,10 @@ def connect_outlook(diagnostics: dict[str, Any] | None = None):
         ) from exc
 
     mark_com_stage(diagnostics, "session_access", "ok")
+    if diagnostics is not None and "outlook_startup" in diagnostics:
+        after = outlook_runtime_state()
+        diagnostics["outlook_startup"]["process_running_after_dispatch"] = after.get("process_running")
+        diagnostics["outlook_startup"]["visible_window_after_dispatch"] = after.get("visible_window")
     return application, session
 
 

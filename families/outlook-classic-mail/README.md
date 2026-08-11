@@ -66,7 +66,11 @@ For sender or service lookups such as "latest emails from X", prefer `find-folde
 
 For repeated contact or subject searches, use the metadata cache as a locator. `cache-refresh --all-accounts --days 90` builds a rolling cache of message IDs, contacts, subjects, timestamps, and folder paths. Search confirms cache candidates through live Outlook COM before returning messages. Use `--bypass-cache --broad-scan` when the user suspects a stale cache or asks to scan broadly.
 
-COM-backed commands enter a local FIFO queue before they touch Outlook. Do not launch many heavy Outlook queries in parallel expecting linear timeout inflation; queueing is the concurrency control layer. Use `--queue-timeout-sec` to control how long a call waits for its turn. Result payloads report `queue.used`, `queue.waited_seconds`, `queue.position_at_enqueue`, `queue.depth_at_enqueue`, and `queue.timeout_seconds`.
+COM-backed commands enter a local FIFO queue before they touch Outlook. Do not launch many heavy Outlook queries in parallel expecting linear timeout inflation; queueing is the concurrency control layer. Use `--queue-timeout-sec` to control how long a call waits for its turn. Result payloads report `queue.used`, `queue.waited_seconds`, `queue.position_at_enqueue`, `queue.depth_at_enqueue`, `queue.timeout_seconds`, and reclaimed expired/dead ticket counts. A non-expired ticket is reclaimed only when Windows PID liveness proves its owner is gone.
+
+After queue and COM-lock admission, interactive commands apply a desktop startup policy. If Outlook Classic is stopped, the helper resolves and launches the normal Outlook executable before COM dispatch. If only a hidden COM `-Embedding` instance exists, it requests a normal desktop launch to promote the existing instance instead of killing it. `client_diagnostics.outlook_startup` records the observed process/window state and action.
+
+`diagnostics-probe` never launches Outlook. Background invocations (`pythonw.exe`, `OUTLOOK_CLASSIC_MAIL_BACKGROUND=1`, or `OUTLOOK_CLASSIC_MAIL_NO_UI=1`) also never create a visible Outlook window; when Outlook is absent they fail with `outlook_interactive_session_required`. The helper never terminates Outlook or active client processes automatically.
 
 Wrapper responses also include `wrapper_diagnostics` so callers can distinguish
 local Outlook Classic COM/client failures from cloud connector availability. The

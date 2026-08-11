@@ -63,7 +63,11 @@ The mail metadata cache is stored under `state/mail_cache.sqlite`. It stores ide
 
 COM-backed commands now enter a local FIFO queue before the existing execution lock. Do not compensate by launching multiple heavy Outlook queries in parallel or by inflating timeouts linearly; prefer targeted or batched lookups and let the queue serialize them.
 
-The JSON result for queued commands includes `queue.used`, `queue.waited_seconds`, `queue.position_at_enqueue`, `queue.depth_at_enqueue`, and `queue.timeout_seconds`. `queue_timeout` means a command never reached its turn within `--queue-timeout-sec`; `outlook_busy` means queue admission succeeded but COM acquisition still failed unexpectedly.
+After queue and lock admission, an interactive command starts Outlook Classic normally when it is absent or requests a normal desktop launch when only a hidden COM `-Embedding` process exists. This prevents `Dispatch("Outlook.Application")` from being the first launcher and leaving Outlook available only as a headless automation server. Startup behavior is additive diagnostics under `client_diagnostics.outlook_startup`; the client does not kill Outlook or helper processes.
+
+`diagnostics-probe` is launch-free. A `pythonw.exe` process or an invocation with `OUTLOOK_CLASSIC_MAIL_BACKGROUND=1` / `OUTLOOK_CLASSIC_MAIL_NO_UI=1` will not open Outlook. If no existing Outlook process is available, background commands fail with `outlook_interactive_session_required` so scheduled work cannot create desktop popups.
+
+The JSON result for queued commands includes `queue.used`, `queue.waited_seconds`, `queue.position_at_enqueue`, `queue.depth_at_enqueue`, `queue.timeout_seconds`, `queue.reclaimed_dead_tickets`, and `queue.reclaimed_expired_tickets`. The queue reclaims a non-expired ticket only when PID liveness proves its owner process is gone, so an explicitly interrupted helper does not block the queue for the full lease. `queue_timeout` means a command never reached its turn within `--queue-timeout-sec`; `outlook_busy` means queue admission succeeded but COM acquisition still failed unexpectedly.
 
 For scheduled-task or background-session failures, run `diagnostics-probe` and
 then inspect `diagnostics-log --limit 20`. The diagnostics log is stored at
