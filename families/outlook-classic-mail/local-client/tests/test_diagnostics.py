@@ -6,6 +6,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 TOOL_ROOT = Path(__file__).resolve().parents[1]
@@ -76,10 +77,15 @@ class OutlookDiagnosticsTests(unittest.TestCase):
             "lock": client.outlook_com_lock,
             "log_path": client.DEFAULT_DIAGNOSTICS_LOG_PATH,
             "connect": client.connect_outlook,
+            "runtime_state": client.outlook_runtime_state,
         }
         client.outlook_operation_queue = lambda *args, **kwargs: fake_queue()
         client.outlook_com_lock = lambda *args, **kwargs: fake_lock()
         client.DEFAULT_DIAGNOSTICS_LOG_PATH = log_path
+        client.outlook_runtime_state = lambda: {
+            "process_running": True,
+            "visible_window": True,
+        }
         return originals
 
     def restore_runtime(self, originals):
@@ -87,6 +93,7 @@ class OutlookDiagnosticsTests(unittest.TestCase):
         client.outlook_com_lock = originals["lock"]
         client.DEFAULT_DIAGNOSTICS_LOG_PATH = originals["log_path"]
         client.connect_outlook = originals["connect"]
+        client.outlook_runtime_state = originals["runtime_state"]
         remove_fake_com()
 
     def test_dispatch_failure_returns_and_logs_structured_diagnostics(self):
@@ -210,6 +217,138 @@ class OutlookDiagnosticsTests(unittest.TestCase):
         self.assertIn("active_console_session_id", diagnostics)
         self.assertIn("input_desktop_accessible", diagnostics)
         self.assertIn("outlook_process_running", diagnostics)
+
+    def test_interactive_command_launches_desktop_outlook_before_com_dispatch(self):
+        events = []
+        diagnostics = client.build_client_diagnostics(operation="accounts")
+
+        original_state = client.outlook_runtime_state
+        original_allowed = client.interactive_outlook_launch_allowed
+        original_launch = client.launch_outlook_desktop
+        try:
+            client.outlook_runtime_state = lambda: {
+                "process_running": False,
+                "visible_window": False,
+            }
+            client.interactive_outlook_launch_allowed = lambda: True
+            client.launch_outlook_desktop = lambda: events.append("launch") or {
+                "executable": r"C:\Program Files\Microsoft Office\Root\Office16\OUTLOOK.EXE",
+                "pid": 4321,
+            }
+
+            install_fake_com()
+            original_dispatch = sys.modules["win32com.client"].Dispatch
+            sys.modules["win32com.client"].Dispatch = lambda name: events.append("dispatch") or original_dispatch(name)
+            application, session = client.connect_outlook(diagnostics=diagnostics)
+        finally:
+            client.outlook_runtime_state = original_state
+            client.interactive_outlook_launch_allowed = original_allowed
+            client.launch_outlook_desktop = original_launch
+            remove_fake_com()
+
+        self.assertIsNotNone(application)
+        self.assertIsNotNone(session)
+        self.assertEqual(events, ["launch", "dispatch"])
+        self.assertEqual(diagnostics["outlook_startup"]["action"], "desktop_launch_requested")
+        self.assertEqual(diagnostics["outlook_startup"]["launch_pid"], 4321)
+
+    def test_interactive_command_promotes_existing_hidden_outlook_without_killing_it(self):
+        diagnostics = client.build_client_diagnostics(operation="search")
+        launch_calls = []
+
+        original_state = client.outlook_runtime_state
+        original_allowed = client.interactive_outlook_launch_allowed
+        original_launch = client.launch_outlook_desktop
+        try:
+            client.outlook_runtime_state = lambda: {
+                "process_running": True,
+                "visible_window": False,
+            }
+            client.interactive_outlook_launch_allowed = lambda: True
+            client.launch_outlook_desktop = lambda: launch_calls.append("promote") or {
+                "executable": r"C:\Program Files\Microsoft Office\Root\Office16\OUTLOOK.EXE",
+                "pid": 9876,
+            }
+            install_fake_com()
+            client.connect_outlook(diagnostics=diagnostics)
+        finally:
+            client.outlook_runtime_state = original_state
+            client.interactive_outlook_launch_allowed = original_allowed
+            client.launch_outlook_desktop = original_launch
+            remove_fake_com()
+
+        self.assertEqual(launch_calls, ["promote"])
+        self.assertTrue(diagnostics["outlook_startup"]["process_running_before"])
+        self.assertFalse(diagnostics["outlook_startup"]["visible_window_before"])
+        self.assertEqual(diagnostics["outlook_startup"]["action"], "desktop_promotion_requested")
+
+    def test_diagnostics_probe_does_not_launch_outlook_when_process_is_absent(self):
+        diagnostics = client.build_client_diagnostics(operation="diagnostics-probe")
+        launch_calls = []
+
+        original_state = client.outlook_runtime_state
+        original_allowed = client.interactive_outlook_launch_allowed
+        original_launch = client.launch_outlook_desktop
+        try:
+            client.outlook_runtime_state = lambda: {
+                "process_running": False,
+                "visible_window": False,
+            }
+            client.interactive_outlook_launch_allowed = lambda: True
+            client.launch_outlook_desktop = lambda: launch_calls.append("launch")
+            with self.assertRaises(client.OutlookComUnavailableError) as raised:
+                client.connect_outlook(diagnostics=diagnostics)
+        finally:
+            client.outlook_runtime_state = original_state
+            client.interactive_outlook_launch_allowed = original_allowed
+            client.launch_outlook_desktop = original_launch
+
+        self.assertEqual(launch_calls, [])
+        self.assertEqual(raised.exception.failure_kind, "outlook_not_running")
+        self.assertEqual(diagnostics["outlook_startup"]["action"], "probe_no_launch")
+
+    def test_background_command_does_not_launch_outlook_when_process_is_absent(self):
+        diagnostics = client.build_client_diagnostics(operation="accounts")
+        launch_calls = []
+
+        original_state = client.outlook_runtime_state
+        original_allowed = client.interactive_outlook_launch_allowed
+        original_launch = client.launch_outlook_desktop
+        try:
+            client.outlook_runtime_state = lambda: {
+                "process_running": False,
+                "visible_window": False,
+            }
+            client.interactive_outlook_launch_allowed = lambda: False
+            client.launch_outlook_desktop = lambda: launch_calls.append("launch")
+            with self.assertRaises(client.OutlookComUnavailableError) as raised:
+                client.connect_outlook(diagnostics=diagnostics)
+        finally:
+            client.outlook_runtime_state = original_state
+            client.interactive_outlook_launch_allowed = original_allowed
+            client.launch_outlook_desktop = original_launch
+
+        self.assertEqual(launch_calls, [])
+        self.assertEqual(raised.exception.failure_kind, "outlook_interactive_session_required")
+        self.assertEqual(diagnostics["outlook_startup"]["action"], "background_no_launch")
+
+    def test_desktop_launch_does_not_inherit_wrapper_stdio(self):
+        executable = Path(r"C:\Program Files\Microsoft Office\Root\Office16\OUTLOOK.EXE")
+        fake_process = mock.Mock(pid=2468)
+
+        with mock.patch.object(client, "resolve_outlook_executable", return_value=executable):
+            with mock.patch.object(client.subprocess, "Popen", return_value=fake_process) as popen:
+                result = client.launch_outlook_desktop()
+
+        self.assertEqual(result["pid"], 2468)
+        popen.assert_called_once_with(
+            [str(executable)],
+            cwd=str(executable.parent),
+            close_fds=True,
+            stdin=client.subprocess.DEVNULL,
+            stdout=client.subprocess.DEVNULL,
+            stderr=client.subprocess.DEVNULL,
+        )
 
 
 if __name__ == "__main__":

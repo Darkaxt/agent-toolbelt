@@ -22,6 +22,42 @@ class QueueTimeoutError(RuntimeError):
         self.metadata = metadata or {}
 
 
+def pid_is_running(pid: int) -> bool | None:
+    if pid <= 0:
+        return False
+    if pid == os.getpid():
+        return True
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            process_query_limited_information = 0x1000
+            still_active = 259
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+            if not handle:
+                error = kernel32.GetLastError()
+                return False if error == 87 else None
+            try:
+                exit_code = ctypes.c_ulong()
+                if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                    return None
+                return int(exit_code.value) == still_active
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return None
+    except OSError:
+        return None
+    return True
+
+
 def is_retryable_state_error(exc: BaseException) -> bool:
     if isinstance(exc, PermissionError):
         return True
@@ -99,14 +135,35 @@ class QueueStore:
                 "CREATE INDEX IF NOT EXISTS idx_queue_tickets_status_ticket ON queue_tickets(status, ticket_id)"
             )
 
-    def prune_stale(self, *, now: float | None = None) -> int:
+    def prune_stale(
+        self,
+        *,
+        now: float | None = None,
+        pid_is_running_func: Callable[[int], bool | None] = pid_is_running,
+    ) -> dict[str, int]:
         current = time.time() if now is None else now
         with self.connection() as conn:
-            cursor = conn.execute(
-                "DELETE FROM queue_tickets WHERE lease_expires_at < ?",
-                (current,),
-            )
-            return int(cursor.rowcount or 0)
+            rows = conn.execute(
+                "SELECT ticket_id, pid, lease_expires_at FROM queue_tickets"
+            ).fetchall()
+            expired_ids = [int(row["ticket_id"]) for row in rows if float(row["lease_expires_at"]) < current]
+            dead_ids = [
+                int(row["ticket_id"])
+                for row in rows
+                if int(row["ticket_id"]) not in expired_ids
+                and pid_is_running_func(int(row["pid"])) is False
+            ]
+            delete_ids = expired_ids + dead_ids
+            if delete_ids:
+                placeholders = ",".join("?" for _ in delete_ids)
+                conn.execute(
+                    f"DELETE FROM queue_tickets WHERE ticket_id IN ({placeholders})",
+                    delete_ids,
+                )
+            return {
+                "expired": len(expired_ids),
+                "dead": len(dead_ids),
+            }
 
     def enqueue(
         self,
@@ -193,10 +250,19 @@ def acquire_queue_turn(
     monotonic_func: Callable[[], float] = time.monotonic,
     wall_time_func: Callable[[], float] = time.time,
     sleep_func: Callable[[float], None] = time.sleep,
+    pid_is_running_func: Callable[[int], bool | None] = pid_is_running,
 ) -> Iterator[dict[str, Any]]:
     store = QueueStore(path)
     run_with_state_retries(store.ensure_schema, sleep_func=sleep_func)
-    run_with_state_retries(lambda: store.prune_stale(now=wall_time_func()), sleep_func=sleep_func)
+    reclaimed = run_with_state_retries(
+        lambda: store.prune_stale(
+            now=wall_time_func(),
+            pid_is_running_func=pid_is_running_func,
+        ),
+        sleep_func=sleep_func,
+    )
+    reclaimed_dead = int(reclaimed["dead"])
+    reclaimed_expired = int(reclaimed["expired"])
     ticket = run_with_state_retries(
         lambda: store.enqueue(operation=operation, pid=pid, now=wall_time_func(), lease_sec=lease_sec),
         sleep_func=sleep_func,
@@ -217,6 +283,8 @@ def acquire_queue_turn(
                     "position_at_enqueue": ticket["position_at_enqueue"],
                     "depth_at_enqueue": ticket["depth_at_enqueue"],
                     "timeout_seconds": timeout_sec,
+                    "reclaimed_dead_tickets": reclaimed_dead,
+                    "reclaimed_expired_tickets": reclaimed_expired,
                 }
                 try:
                     yield metadata
@@ -236,6 +304,8 @@ def acquire_queue_turn(
                     "position_at_enqueue": ticket["position_at_enqueue"],
                     "depth_at_enqueue": ticket["depth_at_enqueue"],
                     "timeout_seconds": timeout_sec,
+                    "reclaimed_dead_tickets": reclaimed_dead,
+                    "reclaimed_expired_tickets": reclaimed_expired,
                 }
                 with contextlib.suppress(Exception):
                     run_with_state_retries(
@@ -248,6 +318,14 @@ def acquire_queue_turn(
                 )
 
             sleep_func(poll_interval_sec)
-            run_with_state_retries(lambda: store.prune_stale(now=wall_time_func()), sleep_func=sleep_func)
+            reclaimed = run_with_state_retries(
+                lambda: store.prune_stale(
+                    now=wall_time_func(),
+                    pid_is_running_func=pid_is_running_func,
+                ),
+                sleep_func=sleep_func,
+            )
+            reclaimed_dead += int(reclaimed["dead"])
+            reclaimed_expired += int(reclaimed["expired"])
     except Exception:
         raise

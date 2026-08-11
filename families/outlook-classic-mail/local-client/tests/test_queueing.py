@@ -109,6 +109,66 @@ class OutlookQueueTests(unittest.TestCase):
             ) as meta:
                 self.assertEqual(meta["position_at_enqueue"], 1)
 
+    def test_prunes_nonexpired_ticket_when_owner_pid_is_dead(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            queue_path = Path(temp_dir) / "outlook_queue.sqlite"
+            store = queueing.QueueStore(queue_path)
+            store.ensure_schema()
+            with store.connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO queue_tickets(pid, operation, status, created_at, updated_at, lease_expires_at)
+                    VALUES(?, ?, ?, ?, ?, ?)
+                    """,
+                    (999, "search", "running", 1.0, 1.0, 1000.0),
+                )
+
+            liveness_checks = []
+
+            def pid_is_running(process_id):
+                liveness_checks.append(process_id)
+                return process_id != 999
+
+            with queueing.acquire_queue_turn(
+                "accounts",
+                path=queue_path,
+                timeout_sec=0.2,
+                poll_interval_sec=0.01,
+                lease_sec=60,
+                pid=1234,
+                monotonic_func=lambda: 10.0,
+                wall_time_func=lambda: 10.0,
+                pid_is_running_func=pid_is_running,
+            ) as meta:
+                self.assertEqual(meta["position_at_enqueue"], 1)
+                self.assertEqual(meta["reclaimed_dead_tickets"], 1)
+
+            self.assertIn(999, liveness_checks)
+
+    def test_preserves_nonexpired_ticket_when_owner_liveness_is_unknown(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            queue_path = Path(temp_dir) / "outlook_queue.sqlite"
+            store = queueing.QueueStore(queue_path)
+            store.ensure_schema()
+            with store.connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO queue_tickets(pid, operation, status, created_at, updated_at, lease_expires_at)
+                    VALUES(?, ?, ?, ?, ?, ?)
+                    """,
+                    (999, "search", "running", 1.0, 1.0, 1000.0),
+                )
+
+            reclaimed = store.prune_stale(
+                now=10.0,
+                pid_is_running_func=lambda _pid: None,
+            )
+
+            self.assertEqual(reclaimed["dead"], 0)
+            with store.connection() as conn:
+                remaining = conn.execute("SELECT COUNT(*) FROM queue_tickets").fetchone()[0]
+            self.assertEqual(remaining, 1)
+
     def test_retry_transient_state_operation_uses_backoff(self):
         attempts = {"count": 0}
         sleeps: list[float] = []
