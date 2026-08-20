@@ -136,6 +136,10 @@ powershell -ExecutionPolicy Bypass -File C:\Users\<you>\.codex\skills\codex-thre
 The scheduled task uses the staged runtime's `pythonw.exe` when available so
 background collection does not open console windows. If it reports
 `no_console: false`, install a refreshed runtime before enabling the task.
+The task has no external Task Scheduler execution cutoff: `--max-run-seconds`
+is a soft collector budget that prevents starting another thread after the
+budget is exhausted, but it does not interrupt an in-progress transactional
+index update.
 
 Optional filters and overrides:
 
