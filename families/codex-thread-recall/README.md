@@ -14,8 +14,12 @@ The cache lives under `CODEX_HOME/cache/codex-thread-recall/`. It is
 append-aware: the first recall on a thread builds the index, later calls reuse
 it, and normal thread growth only indexes newly appended newline-terminated
 JSONL records. Index builds are coordinated with a per-thread lock file in that
-same cache directory so concurrent callers wait briefly, reclaim stale locks,
-and fail closed with `index_busy` instead of hanging indefinitely.
+same cache directory so concurrent callers wait for a live owner, reclaim only
+dead-owner locks, and then execute against the refreshed cache. Foreground reads
+wait for a live owner without a cancellation timer by default; they do not return stale-cache
+evidence as a successful recall. A live owner is not reclaimed based on age
+alone. The scheduled collector remains best-effort and skips a busy thread
+instead of waiting.
 
 Schema v9 keeps rollout JSONL files as the raw source of truth. SQLite stores
 compact metadata, semantic facets, bounded excerpts, FTS search text, and byte
@@ -255,7 +259,7 @@ Failure is explicit:
 
 - `thread_unavailable` when `CODEX_THREAD_ID` is missing or not found
 - `rollout_missing` when the rollout JSONL path cannot be read
-- `index_busy` when another live process still owns the per-thread cache lock after the brief wait budget
+- collector thread result `busy` when another live process owns the per-thread cache lock; foreground read commands wait for that owner instead
 - runtime bootstrap failure when neither `AGENT_TOOLBELT_HOME`, a repo bundle, nor the private local runtime can be resolved
 - `invalid_memory_bundle` when an imported bundle has the wrong format, missing required fields, or a mismatched deterministic bundle id
 - `memory_bundle_too_large` when an import exceeds the local bundle size limit

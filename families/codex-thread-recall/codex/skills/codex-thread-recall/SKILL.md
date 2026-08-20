@@ -14,15 +14,16 @@ Use `scripts/invoke_codex_thread_recall.py` when long-running or resumed work ri
 ## Workflow
 
 1. For normal resumed work, run `recall --profile general --scope current` directly. Do not chain `status; recall` in one shell command.
-2. Run `status` only when you need diagnostics, or after `recall` returns `index_busy`, `thread_unavailable`, or `rollout_missing`.
-3. Check `status.cache.freshness`, `status.cache.lock_state`, and `status.cache.collector` when deciding whether the collector has already warmed the cache.
-4. If the question is about prior shipped or merged work, run `timeline --kind shipped --group entity` first.
-5. Run `recall --profile general|shipping|debug` to get a bounded brief with decisions, known facts, touched paths, commands, blockers, open questions, and evidence pointers into the rollout JSONL.
-6. If one detail is still missing, run `grep --pattern <term>` with structured filters against this same thread before looking elsewhere.
-7. If the question is "when did we work on X?" or "what was the first/last span for X?", use `worklog --pattern <term>` instead of hand-assembling a grep span.
-8. If you need broader operational context from the same workspace, opt into `--thread-source workspace --max-threads <n>`; this only includes threads whose normalized `cwd` exactly matches the current one.
-9. If you need to carry distilled context elsewhere, explicitly use the `memory` subcommands. Imported memory bundles are not searched by default and are not source-of-truth rollout recall.
-10. Only do broad repo or web exploration after current-thread recall fails to answer it.
+2. If that invocation is still running while another process refreshes the index, wait on the same process/session until it returns. Do not launch a parallel recall and do not continue the task without the result.
+3. Run `status` only when you need diagnostics, or after an interrupted recall, `thread_unavailable`, or `rollout_missing`.
+4. Check `status.cache.freshness`, `status.cache.lock_state`, and `status.cache.collector` when diagnosing collector/cache behavior.
+5. If the question is about prior shipped or merged work, run `timeline --kind shipped --group entity` first.
+6. Run `recall --profile general|shipping|debug` to get a bounded brief with decisions, known facts, touched paths, commands, blockers, open questions, and evidence pointers into the rollout JSONL.
+7. If one detail is still missing, run `grep --pattern <term>` with structured filters against this same thread before looking elsewhere.
+8. If the question is "when did we work on X?" or "what was the first/last span for X?", use `worklog --pattern <term>` instead of hand-assembling a grep span.
+9. If you need broader operational context from the same workspace, opt into `--thread-source workspace --max-threads <n>`; this only includes threads whose normalized `cwd` exactly matches the current one.
+10. If you need to carry distilled context elsewhere, explicitly use the `memory` subcommands. Imported memory bundles are not searched by default and are not source-of-truth rollout recall.
+11. Only do broad repo or web exploration after current-thread recall fails to answer it.
 
 Default scope behavior:
 
@@ -55,19 +56,17 @@ The helper keeps an append-aware cache under `CODEX_HOME/cache/codex-thread-reca
 The first run may build or rebuild the index; later runs should be warm and only
 index newly appended committed JSONL lines. Cache mutation is protected by a
 per-thread lock file in that same cache directory, so concurrent callers wait
-briefly, reclaim stale locks, and avoid hanging indefinitely. If a read command
-overlaps another live process and a prior cache exists, it uses that existing
-stale cache with a `busy-using-stale-cache` diagnostic instead of failing with
-`index_busy`. If no cache exists yet, it still fails closed with `index_busy`.
+for the live owner to finish and then perform the requested read against the
+fresh cache. A foreground read has no lock-wait cancellation timer by default.
+It must not return stale-cache evidence as though refresh completed. Stale locks
+are reclaimed only when the recorded owner PID is no longer running; age alone
+does not invalidate a live long-running rebuild. The background collector stays
+best-effort and reports a thread as `busy` instead of waiting behind another
+live owner.
 The v9 cache is a compact index, not a second transcript store: rollout JSONL
 files remain the raw source of truth, SQLite stores byte offsets plus facets and
 bounded excerpts/search text, and `grep --include-noise` expands raw evidence
 from the rollout source on demand.
-When the scheduled collector has recently covered the current thread, foreground
-read commands may also return an existing stale cache with
-`refresh-deferred-using-stale-cache` instead of doing a slow append refresh in
-the agent command path. Treat that as usable recall evidence and let the
-collector catch up; do not abandon recall solely because that diagnostic appears.
 `status` is fast and non-mutating by default. It reports cache freshness and
 collector diagnostics but does not build or append the index. Use `collect` to
 warm caches explicitly, or let the command you actually need (`recall`, `grep`,
@@ -147,6 +146,8 @@ from the staged runtime to avoid opening console windows. If it reports
 
 - Current thread first. Only use `--thread-source workspace` when broader same-`cwd` context is explicitly useful.
 - Do not chain `status; recall`; run `recall` directly for normal resumed work.
+- When a recall invocation is still running, keep waiting on that invocation. Never start a parallel recall, reinterpret the wait as a failed step, or proceed from repo evidence before recall returns.
+- Do not set `CODEX_THREAD_RECALL_WRAPPER_TIMEOUT_SEC` for normal foreground recall. Its default unset state allows a live refresh owner to finish.
 - Fail closed if `CODEX_THREAD_ID`, the thread row, or the rollout file cannot be resolved exactly.
 - Treat `thread_unavailable` or `rollout_missing` as recall unavailable; do not guess from cwd or title.
 - Use the evidence pointers for recall, not raw transcript dumping.
