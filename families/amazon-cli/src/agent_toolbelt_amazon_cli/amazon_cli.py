@@ -187,6 +187,16 @@ def _collect_search_warnings(payload: dict[str, Any]) -> list[str]:
 
     results = payload.get("results")
     if isinstance(results, list):
+        if not results:
+            warnings.append(
+                "Amazon search completed with zero structured results; inspect pagination and filters, "
+                "then simplify or broaden the query instead of narrowing it."
+            )
+        elif len(results) >= 20:
+            warnings.append(
+                f"Amazon search returned {len(results)} structured results; project the needed fields locally "
+                "instead of rerunning solely because the command display is large or truncated."
+            )
         for result in results:
             if not isinstance(result, dict):
                 continue
@@ -247,11 +257,22 @@ def normalize_payload(
     else:
         result = payload
 
+    warnings = collect_payload_warnings(payload, operation)
+    if operation in {"search", "similar"}:
+        if exit_code != 0:
+            warnings.append(
+                "Amazon search client failed; inspect result.error, stderr, and exit_code before changing the query."
+            )
+        elif payload is None:
+            warnings.append(
+                "Amazon search returned no structured JSON payload; inspect stderr and exit_code before changing the query."
+            )
+
     return make_result(
         ok=exit_code == 0,
         operation=operation,
         result=result,
-        warnings=collect_payload_warnings(payload, operation),
+        warnings=_unique_warnings(warnings),
         stderr=stderr,
         exit_code=exit_code,
     )

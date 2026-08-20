@@ -2,6 +2,7 @@
 name: amazon-cli
 description: Use the local Amazon CLI for Amazon product search, exact model lookup, product specs, comparisons, review/comment extraction, cross-market offers, and managed retail or business sessions. Trigger when Codex needs Amazon marketplace data, same-ASIN price comparisons, deep Amazon reviews, or Amazon session login support.
 license: MIT
+compatibility: Windows/local CLI oriented. Requires the agent-toolbelt Python package install; authenticated Amazon workflows require user-managed session setup.
 metadata:
   version: "0.1.0"
 ---
@@ -13,8 +14,6 @@ metadata:
 Use `scripts/invoke_amazon_cli.py` to call the bundled Amazon CLI client. The wrapper delegates into the `amazon-cli` family package in this repo, which runs the packaged client under `agent_toolbelt_amazon_cli/assets/amazon-intent-cli`.
 
 This skill vendors the Amazon CLI source code, but must not package browser profiles, cookies, managed sessions, generated virtual environments, or user account data. Runtime state stays outside the repo.
-
-Compatibility: Windows/local CLI oriented. Requires the agent-toolbelt Python package install; authenticated Amazon workflows require user-managed session setup.
 
 ## Routing Rules
 
@@ -50,6 +49,25 @@ Do not use this skill when:
 - Inspect title/model/size signals and any variant mismatch warnings before calling an offer trusted or cheapest.
 - Keep marketplace query language explicit; do not assume the CLI translates product terms.
 
+## Search result triage
+
+Do not change the query merely because the command display is empty, large, or truncated. Inspect the wrapper response from the original search first:
+
+1. If `ok=false` or `exit_code` is nonzero, diagnose `result.error`, `stderr`, and `warnings`. This is a client, block, session, parser, or runtime failure; changing the query is not recovery.
+2. If `ok=true` but `result.command` is missing or the output is not structured JSON, treat it as an output-contract failure and inspect diagnostics before retrying the same query.
+3. If `result.command=search` and `result.results` is empty, inspect `pagination`, `filters`, and warnings. Only then simplify or broaden the query, remove optional filters, or try the marketplace language. Do not narrow a confirmed zero-result query.
+4. If results exist but are irrelevant, refine or narrow using title, model, size, and variant evidence from those results.
+5. If results exist but the terminal output is too large, project the existing JSON locally. Do not rerun solely to obtain a smaller display.
+
+For a compact PowerShell projection, capture the wrapper JSON without printing the full payload:
+
+```powershell
+$response = (python scripts\invoke_amazon_cli.py -- search "30L trash bin" --marketplace de --pages 1 | Out-String) | ConvertFrom-Json
+$response | Select-Object ok, exit_code, warnings
+$response.result | Select-Object command, query, marketplace, pagination
+$response.result.results | Select-Object -First 10 asin, title, price, currency, rating, review_count, model_match
+```
+
 ## Repurchase workflow
 
 When the user wants to repurchase a known product, start with a primary marketplace exact search before comparing prices.
@@ -61,7 +79,7 @@ When the user wants to repurchase a known product, start with a primary marketpl
 - If the user wants to defer buying, ask before running `cart add <asin> --marketplace <trusted_best_offer.marketplace> --portal <portal> --quantity <n> --confirm-cart-add`.
 - If the user wants to undo a prior cart add, ask before running `cart remove <asin> --marketplace <marketplace> --portal <portal> --quantity <n> --confirm-cart-remove`.
 - If the current cart may already contain the product, run `cart list --marketplace <marketplace> --portal <portal>` first and inspect `items`, `warnings`, and `safety`.
-- If the primary marketplace exact search fails, then try likely fallback marketplaces; do not start with broad multi-market searching.
+- If the primary marketplace exact search is a confirmed successful zero-result response, then try a simplified query or likely fallback marketplaces. Diagnose client/output failures without changing the query.
 
 ## Script Interface
 
@@ -88,7 +106,8 @@ The script prints normalized JSON with `ok`, `operation`, `result`, `warnings`, 
 Use this only for `session login`, not read-only commands or cart actions. The point is to keep the login browser and owning terminal under user control instead of under Codex's captured command lifecycle.
 
 ```powershell
-$skill = 'C:\Users\darka\.codex\skills\amazon-cli'
+$codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
+$skill = Join-Path $codexHome 'skills\amazon-cli'
 $cmd = 'Set-Location -LiteralPath "' + $skill + '"; python scripts\invoke_amazon_cli.py -- session login --marketplace de --portal business --login-timeout-sec 300'
 Start-Process powershell.exe -ArgumentList @('-NoExit', '-ExecutionPolicy', 'Bypass', '-Command', $cmd)
 ```

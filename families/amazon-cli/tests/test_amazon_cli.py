@@ -331,6 +331,79 @@ class AmazonCLIBridgeTests(unittest.TestCase):
             result["warnings"],
         )
 
+    def test_invoke_client_warns_when_search_returns_zero_structured_results(self):
+        result = amazon_cli.normalize_payload(
+            payload={
+                "command": "search",
+                "pagination": {
+                    "pages_requested": 1,
+                    "pages_fetched": 1,
+                    "partial": False,
+                    "stopped_reason": None,
+                },
+                "results": [],
+            },
+            raw_stdout="",
+            operation="search",
+            stderr="",
+            exit_code=0,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertIn(
+            "Amazon search completed with zero structured results; inspect pagination and filters, then simplify or broaden the query instead of narrowing it.",
+            result["warnings"],
+        )
+
+    def test_invoke_client_warns_when_search_returns_no_structured_json(self):
+        result = amazon_cli.normalize_payload(
+            payload=None,
+            raw_stdout="not-json",
+            operation="search",
+            stderr="parser output was truncated",
+            exit_code=0,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertIn(
+            "Amazon search returned no structured JSON payload; inspect stderr and exit_code before changing the query.",
+            result["warnings"],
+        )
+
+    def test_invoke_client_warns_when_search_client_fails(self):
+        result = amazon_cli.normalize_payload(
+            payload={"error": "Amazon search returned no results after browser session initialization."},
+            raw_stdout="",
+            operation="search",
+            stderr="",
+            exit_code=2,
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "Amazon search client failed; inspect result.error, stderr, and exit_code before changing the query.",
+            result["warnings"],
+        )
+
+    def test_invoke_client_warns_when_search_payload_is_large(self):
+        results = [
+            {"asin": f"B0TEST{index:04d}", "title": f"Result {index}"}
+            for index in range(25)
+        ]
+        result = amazon_cli.normalize_payload(
+            payload={"command": "search", "pagination": {"partial": False}, "results": results},
+            raw_stdout=json.dumps(results),
+            operation="search",
+            stderr="",
+            exit_code=0,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertIn(
+            "Amazon search returned 25 structured results; project the needed fields locally instead of rerunning solely because the command display is large or truncated.",
+            result["warnings"],
+        )
+
     def test_invoke_client_warns_when_reviews_use_fallback_or_partial_results(self):
         original_run = amazon_cli.run_process
         original_uv = amazon_cli.resolve_uv_executable
@@ -465,6 +538,9 @@ class AmazonCLIBridgeTests(unittest.TestCase):
         self.assertIn("primary marketplace exact search", skill_text)
         self.assertIn("same-format candidate ASIN", skill_text)
         self.assertIn("Run `offers` only after selecting that ASIN", skill_text)
+        self.assertIn("Search result triage", skill_text)
+        self.assertIn("Do not narrow a confirmed zero-result query", skill_text)
+        self.assertIn("project the existing JSON locally", skill_text)
 
     def test_claude_plugin_manifest_and_marketplace_exist(self):
         marketplace_root = (
@@ -512,6 +588,9 @@ class AmazonCLIBridgeTests(unittest.TestCase):
         self.assertIn("--manual-confirm", skill_text)
         self.assertIn("targeted waits", skill_text)
         self.assertIn("never checkout", skill_text.lower())
+        self.assertIn("Search result triage", skill_text)
+        self.assertIn("Do not narrow it", skill_text)
+        self.assertIn("locally project", skill_text)
 
     def test_claude_wrapper_bootstraps_family_package(self):
         wrapper_path = (

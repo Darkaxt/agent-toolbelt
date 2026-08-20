@@ -24,9 +24,19 @@ Use `scripts/invoke_amazon_cli.py` for read-only Amazon marketplace workflows th
 - Use `address inspect --portal <retail|business> --marketplaces <csv> --reference-marketplace <code>` when delivery costs depend on all marketplaces using the same destination.
 - Inspect variant mismatch warnings in `offers` before recommending a trusted cheapest offer.
 
+## Search result triage
+
+Do not change the query merely because the command display is empty, large, or truncated. Inspect the original wrapper response first:
+
+1. `ok=false` or a nonzero `exit_code` is a client/runtime failure. Inspect `result.error`, `stderr`, and warnings; do not change the query as recovery.
+2. `ok=true` without structured JSON or `result.command` is an output-contract failure, not a zero-result search.
+3. A structured `search` response with an empty `results` list permits simplifying or broadening the query, removing optional filters, or using the marketplace language. Do not narrow it.
+4. Existing but irrelevant results may be refined using title/model/size evidence.
+5. For large results, capture the wrapper JSON and locally project `asin`, `title`, `price`, `currency`, `rating`, `review_count`, and `model_match` instead of rerunning solely because the display was truncated.
+
 ## Repurchase workflow
 
-For known-product repurchases, search one primary marketplace first, select the same-format candidate ASIN, then run `offers` against that ASIN. For Business use `--portal business --vat-mode auto`, check `address_consistency.status`, and prefer `trusted_best_offer` over `raw_best_offer`. Do not compare capsules, drinkable vials, ampoules, shampoos, and bundles as equivalent. If the current cart may already contain the product, run `cart list --marketplace <marketplace> --portal <portal>` first and inspect `items`, `warnings`, and `safety`. If the user wants to defer buying, ask before running `cart add <asin> --marketplace <trusted_best_offer.marketplace> --portal <portal> --quantity <n> --confirm-cart-add`. If the user wants to undo a prior cart add, ask before running `cart remove <asin> --marketplace <marketplace> --portal <portal> --quantity <n> --confirm-cart-remove`. If the primary marketplace exact search fails, try fallback marketplaces after that failure instead of starting with broad multi-market searching.
+For known-product repurchases, search one primary marketplace first, select the same-format candidate ASIN, then run `offers` against that ASIN. For Business use `--portal business --vat-mode auto`, check `address_consistency.status`, and prefer `trusted_best_offer` over `raw_best_offer`. Do not compare capsules, drinkable vials, ampoules, shampoos, and bundles as equivalent. If the current cart may already contain the product, run `cart list --marketplace <marketplace> --portal <portal>` first and inspect `items`, `warnings`, and `safety`. If the user wants to defer buying, ask before running `cart add <asin> --marketplace <trusted_best_offer.marketplace> --portal <portal> --quantity <n> --confirm-cart-add`. If the user wants to undo a prior cart add, ask before running `cart remove <asin> --marketplace <marketplace> --portal <portal> --quantity <n> --confirm-cart-remove`. Try fallback marketplaces only after a confirmed successful zero-result response; diagnose client/output failures without changing the query.
 
 ```bash
 python scripts/invoke_amazon_cli.py -- inspect-identifier https://www.amazon.de/dp/B0F2JCZPB4 --marketplace de
@@ -46,7 +56,8 @@ python scripts/invoke_amazon_cli.py -- session login --marketplace de --portal r
 Use this only for `session login`, not read-only commands or cart actions. The point is to keep the login browser and owning terminal under user control instead of under the agent command lifecycle.
 
 ```powershell
-$skill = 'C:\Users\darka\.codex\skills\amazon-cli'
+$codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
+$skill = Join-Path $codexHome 'skills\amazon-cli'
 $cmd = 'Set-Location -LiteralPath "' + $skill + '"; python scripts\invoke_amazon_cli.py -- session login --marketplace de --portal business --login-timeout-sec 300'
 Start-Process powershell.exe -ArgumentList @('-NoExit', '-ExecutionPolicy', 'Bypass', '-Command', $cmd)
 ```
