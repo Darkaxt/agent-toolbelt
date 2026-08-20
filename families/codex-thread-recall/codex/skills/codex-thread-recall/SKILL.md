@@ -141,6 +141,10 @@ powershell -ExecutionPolicy Bypass -File scripts/uninstall_codex_thread_recall_c
 The scheduled collector should report `no_console: true`; it uses `pythonw.exe`
 from the staged runtime to avoid opening console windows. If it reports
 `no_console: false`, refresh the runtime before enabling the task.
+It should also report `hard_execution_timeout: false`. The collector's
+`--max-run-seconds` value is a soft budget for starting additional threads; do
+not add an external Task Scheduler cutoff that can terminate a transactional
+index update midway through one thread.
 
 ## Rules
 

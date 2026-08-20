@@ -59,7 +59,7 @@ $action = New-ScheduledTaskAction -Execute $python -Argument $arguments -Working
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
     -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) `
     -RepetitionDuration (New-TimeSpan -Days 3650)
-$settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 3)
+$settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero)
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
@@ -70,6 +70,7 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Se
     interval_minutes = $IntervalMinutes
     python = $python
     no_console = $noConsole
+    hard_execution_timeout = $false
     warning = $(if ($noConsole) { $null } else { "pythonw.exe was unavailable; scheduled runs may open a console window." })
     arguments = $arguments
     json_log = $jsonLog

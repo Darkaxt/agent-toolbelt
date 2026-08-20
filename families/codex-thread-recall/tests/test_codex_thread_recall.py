@@ -352,6 +352,9 @@ class ThreadRecallTests(unittest.TestCase):
 
         self.assertLess(installer.index("pythonw.exe"), installer.index("python.exe"))
         self.assertIn("no_console", installer)
+        self.assertIn("-ExecutionTimeLimit ([TimeSpan]::Zero)", installer)
+        self.assertIn("hard_execution_timeout = $false", installer)
+        self.assertNotIn("-ExecutionTimeLimit (New-TimeSpan -Minutes 3)", installer)
 
     def test_collect_skips_live_lock_without_waiting_for_full_lock_budget(self):
         entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "hello"})]
