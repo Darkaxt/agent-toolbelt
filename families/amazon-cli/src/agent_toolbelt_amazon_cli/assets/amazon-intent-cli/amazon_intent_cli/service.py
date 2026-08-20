@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from dataclasses import replace
 import re
+import time
 from typing import Any
+from urllib.parse import urljoin
+
+from bs4 import BeautifulSoup
 
 from .amazon import (
     AmazonBlockedError,
@@ -1105,6 +1109,279 @@ class AmazonService:
             quantity=quantity,
         )
         return {"command": "cart.remove", **receipt}
+
+    def cart_list(
+        self,
+        marketplace: str,
+        *,
+        portal: str = "retail",
+    ) -> dict:
+        make_session_key(marketplace, portal)
+        resolved_marketplace = marketplace.strip().lower()
+        market = get_marketplace(resolved_marketplace)
+        session_key = make_session_key(resolved_marketplace, portal)
+        url = f"https://{market.domain}/-/en/gp/cart/view.html"
+        started = time.perf_counter()
+
+        session = self.session_store.load(resolved_marketplace, portal=portal)
+        if session is None or session.session_source != "managed_profile":
+            raise BrowserSessionError(
+                f"Managed {portal} session is missing. "
+                f"{self._session_login_hint(resolved_marketplace, portal)}"
+            )
+
+        warnings: list[str] = []
+        final_url = url
+        items: list[dict[str, Any]] = []
+        status = "ok"
+        client = AmazonHttpClient(market, session=session)
+        try:
+            html, final_url = client.fetch_url_details(url)
+        except Exception as exc:  # noqa: BLE001
+            html = ""
+            status = "failed"
+            warnings.append(f"fetch_failed:{exc}")
+
+        if html:
+            if is_probably_blocked_html(html):
+                status = "failed"
+                warnings.append("blocked")
+            elif is_probably_sign_in_html(html):
+                status = "failed"
+                warnings.append("sign_in_required")
+            else:
+                items = self._parse_cart_items(html, market)
+
+        return self._cart_list_payload(
+            marketplace=resolved_marketplace,
+            portal=portal,
+            url=url,
+            final_url=final_url,
+            session_key=session_key,
+            status=status,
+            items=items,
+            warnings=warnings,
+            action_timing_ms=int((time.perf_counter() - started) * 1000),
+        )
+
+    def _cart_list_payload(
+        self,
+        *,
+        marketplace: str,
+        portal: str,
+        url: str,
+        final_url: str,
+        session_key: str,
+        status: str,
+        items: list[dict[str, Any]],
+        warnings: list[str],
+        action_timing_ms: int,
+    ) -> dict:
+        return {
+            "command": "cart.list",
+            "marketplace": marketplace,
+            "portal": portal,
+            "url": url,
+            "final_url": final_url,
+            "session_key": session_key,
+            "session_source": "managed_profile",
+            "status": status,
+            "items": items,
+            "item_count": len(items),
+            "warnings": warnings,
+            "action_timing_ms": action_timing_ms,
+            "wait_strategy": "http_session",
+            "safety": {
+                "checkout_performed": False,
+                "buy_now_clicked": False,
+                "cart_mutation_performed": False,
+            },
+        }
+
+    def _parse_cart_items(self, html: str, marketplace) -> list[dict[str, Any]]:
+        soup = BeautifulSoup(html, "html.parser")
+        items: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for row in self._cart_item_nodes(soup):
+            item = self._parse_cart_item(row, marketplace)
+            if not item["asin"] and not item["title"] and not item["row_text_excerpt"]:
+                continue
+            key = (
+                item["asin"] or "",
+                item["product_url"] or "",
+                item["row_text_excerpt"][:160],
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(item)
+        return items
+
+    def _cart_item_nodes(self, soup: BeautifulSoup) -> list:
+        selectors = (
+            "[data-asin], [data-itemid], [data-item-id], .sc-list-item, .sc-product",
+            "[data-asin]",
+            "[data-itemid]",
+            "[data-item-id]",
+            ".sc-list-item",
+            ".sc-product",
+        )
+        for selector in selectors:
+            rows = soup.select(selector)
+            if rows:
+                return rows[:200]
+        return []
+
+    def _parse_cart_item(self, row, marketplace) -> dict[str, Any]:
+        row_text = self._cart_row_text_excerpt(row)
+        product_url = self._cart_row_product_url(row, marketplace)
+        asin = self._cart_row_asin(row, product_url, row_text)
+        title = self._cart_row_title(row, asin, row_text)
+        return {
+            "asin": asin,
+            "title": title,
+            "quantity": self._cart_row_quantity_from_html(row),
+            "price_text": self._first_node_text(
+                row,
+                (
+                    ".sc-product-price",
+                    "[data-a-color='price']",
+                    ".a-price",
+                    ".sc-price",
+                    "[class*='price']",
+                ),
+            ),
+            "seller": self._first_node_text(
+                row,
+                (
+                    "[class*='seller']",
+                    "[data-feature-id*='seller']",
+                    "[data-a-word-break*='seller']",
+                ),
+            ),
+            "availability": self._first_node_text(
+                row,
+                (
+                    "[class*='availability']",
+                    "[id*='availability']",
+                    "[data-feature-id*='availability']",
+                    "[class*='avail']",
+                ),
+            ),
+            "image_url": self._first_node_attr(row, ("img[src]", "img"), "src"),
+            "product_url": product_url,
+            "row_text_excerpt": row_text,
+        }
+
+    def _cart_row_text_excerpt(self, row, *, max_chars: int = 500) -> str:
+        lines = [" ".join(line.split()) for line in row.get_text("\n", strip=True).splitlines()]
+        return "\n".join(line for line in lines if line)[:max_chars]
+
+    def _cart_row_product_url(self, row, marketplace) -> str:
+        href = self._first_node_attr(
+            row,
+            (
+                "a[href*='/dp/']",
+                "a[href*='/gp/product/']",
+                "a[href*='/product/']",
+                "a[href*='/gp/aw/d/']",
+                "a[href*='ref=ox_sc_act_title']",
+                "a[href]",
+            ),
+            "href",
+        )
+        return urljoin(f"https://{marketplace.domain}/", href) if href else ""
+
+    def _cart_row_asin(self, row, product_url: str, row_text: str) -> str:
+        for attr in ("data-asin", "data-itemid", "data-item-id"):
+            normalized = self._normalize_cart_asin(row.get(attr))
+            if normalized:
+                return normalized
+        for value in (product_url, row_text):
+            normalized = self._extract_cart_asin(value)
+            if normalized:
+                return normalized
+        return ""
+
+    def _normalize_cart_asin(self, value: str | None) -> str:
+        value = str(value or "").strip().upper()
+        return value if re.fullmatch(r"[A-Z0-9]{10}", value) else ""
+
+    def _extract_cart_asin(self, value: str) -> str:
+        text = str(value or "")
+        for pattern in (
+            r"(?i)/(?:dp|gp/product|product|gp/aw/d)/([A-Z0-9]{10})(?:[/?#]|$)",
+            r"\b([A-Z0-9]{10})\b",
+        ):
+            match = re.search(pattern, text)
+            if match:
+                asin = self._normalize_cart_asin(match.group(1))
+                if asin:
+                    return asin
+        return ""
+
+    def _cart_row_title(self, row, asin: str, row_text: str) -> str:
+        selectors = []
+        if asin:
+            selectors.extend(
+                (
+                    f"a[href*='{asin}']",
+                    f"a[href*='/dp/{asin}']",
+                    f"a[href*='/gp/product/{asin}']",
+                )
+            )
+        selectors.extend(
+            (
+                "a[href*='/dp/']",
+                "a[href*='/gp/product/']",
+                "a[href*='ref=ox_sc_act_title']",
+            )
+        )
+        title = self._first_node_text(row, tuple(selectors))
+        return title or (row_text.splitlines()[0] if row_text else "")
+
+    def _cart_row_quantity_from_html(self, row) -> int | None:
+        for selector in (
+            "[data-a-selector='value']",
+            "input[name='quantity']",
+            "select[name='quantity']",
+            ".a-dropdown-prompt",
+        ):
+            node = row.select_one(selector)
+            if node is None:
+                continue
+            for attr in ("value", "aria-valuenow", "data-quantity"):
+                quantity = self._parse_cart_quantity(str(node.get(attr) or ""))
+                if quantity is not None:
+                    return quantity
+            quantity = self._parse_cart_quantity(node.get_text(" ", strip=True))
+            if quantity is not None:
+                return quantity
+        return self._parse_cart_quantity(row.get_text(" ", strip=True))
+
+    def _parse_cart_quantity(self, value: str) -> int | None:
+        match = re.search(r"\b([1-9][0-9]?)\b", str(value))
+        return int(match.group(1)) if match else None
+
+    def _first_node_text(self, row, selectors: tuple[str, ...]) -> str:
+        for selector in selectors:
+            node = row.select_one(selector)
+            if node is None:
+                continue
+            text = " ".join(node.get_text(" ", strip=True).split())
+            if text:
+                return text
+        return ""
+
+    def _first_node_attr(self, row, selectors: tuple[str, ...], attr: str) -> str:
+        for selector in selectors:
+            node = row.select_one(selector)
+            if node is None:
+                continue
+            value = node.get(attr)
+            if value:
+                return str(value).strip()
+        return ""
 
     def address_inspect(
         self,

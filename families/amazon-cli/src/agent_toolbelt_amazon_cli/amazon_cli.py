@@ -32,6 +32,15 @@ def runtime_venv_dir() -> Path:
     return root / "agent-toolbelt" / "amazon-cli" / "uv-env"
 
 
+def runtime_work_dir() -> Path:
+    local_appdata = os.getenv("LOCALAPPDATA")
+    if local_appdata:
+        return Path(local_appdata) / "agent-toolbelt" / "amazon-cli" / "uv-work"
+    cache_home = os.getenv("XDG_CACHE_HOME")
+    root = Path(cache_home).expanduser() if cache_home else Path.home() / ".cache"
+    return root / "agent-toolbelt" / "amazon-cli" / "uv-work"
+
+
 def make_result(
     *,
     ok: bool,
@@ -90,7 +99,7 @@ def build_client_command(
     return [
         uv_executable,
         "run",
-        "--no-project",
+        "--quiet",
         "--with-editable",
         str(client_home),
         CLIENT_ENTRYPOINT,
@@ -178,6 +187,16 @@ def _collect_search_warnings(payload: dict[str, Any]) -> list[str]:
 
     results = payload.get("results")
     if isinstance(results, list):
+        if not results:
+            warnings.append(
+                "Amazon search completed with zero structured results; inspect pagination and filters, "
+                "then simplify or broaden the query instead of narrowing it."
+            )
+        elif len(results) >= 20:
+            warnings.append(
+                f"Amazon search returned {len(results)} structured results; project the needed fields locally "
+                "instead of rerunning solely because the command display is large or truncated."
+            )
         for result in results:
             if not isinstance(result, dict):
                 continue
@@ -238,11 +257,22 @@ def normalize_payload(
     else:
         result = payload
 
+    warnings = collect_payload_warnings(payload, operation)
+    if operation in {"search", "similar"}:
+        if exit_code != 0:
+            warnings.append(
+                "Amazon search client failed; inspect result.error, stderr, and exit_code before changing the query."
+            )
+        elif payload is None:
+            warnings.append(
+                "Amazon search returned no structured JSON payload; inspect stderr and exit_code before changing the query."
+            )
+
     return make_result(
         ok=exit_code == 0,
         operation=operation,
         result=result,
-        warnings=collect_payload_warnings(payload, operation),
+        warnings=_unique_warnings(warnings),
         stderr=stderr,
         exit_code=exit_code,
     )
@@ -283,8 +313,10 @@ def invoke_client(
         operation_args=operation_args,
         uv_executable=uv_executable,
     )
+    work_dir = runtime_work_dir()
+    work_dir.mkdir(parents=True, exist_ok=True)
     try:
-        completed = run_process(command, timeout_sec=timeout_sec, env=build_client_env())
+        completed = run_process(command, cwd=str(work_dir), timeout_sec=timeout_sec, env=build_client_env())
     except FileNotFoundError as exc:
         return make_result(
             ok=False,

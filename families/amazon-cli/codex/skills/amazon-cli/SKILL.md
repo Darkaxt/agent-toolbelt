@@ -21,7 +21,7 @@ Use this skill when:
 
 - The user asks for Amazon product search, exact model lookup, specs, comparisons, reviews/comments, address inspection, or same-ASIN cross-market offers.
 - The user asks to use managed Amazon retail or business sessions for deep reviews.
-- The task is read-only Amazon browsing, extraction, ranking, or summarization.
+- The task is read-only Amazon browsing, extraction, ranking, summarization, or current cart inspection.
 - The user explicitly asks to add or remove a selected Amazon offer from the cart after reviewing an `offers` result or prior cart action.
 
 Do not use this skill when:
@@ -32,9 +32,10 @@ Do not use this skill when:
 
 ## Behavior
 
-- Prefer read-only commands: `inspect-identifier`, `search`, `similar`, `get`, `compare`, `reviews`, `address inspect`, and `offers`.
+- Prefer read-only commands: `inspect-identifier`, `search`, `similar`, `get`, `compare`, `reviews`, `address inspect`, `offers`, and `cart list`.
 - Run `inspect-identifier <asin-or-url>` before `get`, `offers`, `reviews`, or cart commands when the input is a URL or ambiguous identifier; require `supported=true` and inspect any warnings before proceeding.
-- Run `session login` only when the user can interact with a headed managed browser. Login completion is auto-detected from Amazon account/header markers; use `--manual-confirm` only as a fallback for unusual flows, and adjust `--login-timeout-sec` if needed.
+- Run `cart list --marketplace <code> --portal <retail|business>` before `cart add` or `cart remove` when the current cart state is unclear. It is read-only, uses stored managed-session cookies through the normal HTTP client path, must not launch a visible browser, and requires a managed session.
+- Run `session login` only when the user can interact with a headed managed browser. Login completion is auto-detected from Amazon account/header markers; use `--manual-confirm` only as a fallback for unusual flows, and adjust `--login-timeout-sec` if needed. Do not launch interactive login through Codex's captured command runner when the browser must stay open; that runner may clean up child browser processes when the command finishes or is interrupted. For interactive login, start a real visible user-controlled PowerShell window with `Start-Process powershell.exe` and `-NoExit`, then let the user close it after login completes.
 - Use `cart add` or `cart remove` only after explicit user approval for one selected ASIN/marketplace, and always include `--confirm-cart-add` or `--confirm-cart-remove`.
 - Browser actions use targeted waits instead of generic `networkidle`; inspect `action_timing_ms`, `wait_strategy`, and `detected_marker` when debugging slow login or cart actions.
 - Never checkout, never buy, never click Buy Now, never submit reviews, and never submit forms beyond explicit login or explicit cart mutation commands.
@@ -48,6 +49,25 @@ Do not use this skill when:
 - Inspect title/model/size signals and any variant mismatch warnings before calling an offer trusted or cheapest.
 - Keep marketplace query language explicit; do not assume the CLI translates product terms.
 
+## Search result triage
+
+Do not change the query merely because the command display is empty, large, or truncated. Inspect the wrapper response from the original search first:
+
+1. If `ok=false` or `exit_code` is nonzero, diagnose `result.error`, `stderr`, and `warnings`. This is a client, block, session, parser, or runtime failure; changing the query is not recovery.
+2. If `ok=true` but `result.command` is missing or the output is not structured JSON, treat it as an output-contract failure and inspect diagnostics before retrying the same query.
+3. If `result.command=search` and `result.results` is empty, inspect `pagination`, `filters`, and warnings. Only then simplify or broaden the query, remove optional filters, or try the marketplace language. Do not narrow a confirmed zero-result query.
+4. If results exist but are irrelevant, refine or narrow using title, model, size, and variant evidence from those results.
+5. If results exist but the terminal output is too large, project the existing JSON locally. Do not rerun solely to obtain a smaller display.
+
+For a compact PowerShell projection, capture the wrapper JSON without printing the full payload:
+
+```powershell
+$response = (python scripts\invoke_amazon_cli.py -- search "30L trash bin" --marketplace de --pages 1 | Out-String) | ConvertFrom-Json
+$response | Select-Object ok, exit_code, warnings
+$response.result | Select-Object command, query, marketplace, pagination
+$response.result.results | Select-Object -First 10 asin, title, price, currency, rating, review_count, model_match
+```
+
 ## Repurchase workflow
 
 When the user wants to repurchase a known product, start with a primary marketplace exact search before comparing prices.
@@ -58,7 +78,8 @@ When the user wants to repurchase a known product, start with a primary marketpl
 - Check `address_consistency.status` and prefer `trusted_best_offer` over `raw_best_offer` because raw cheapest may be for the wrong destination or not deliverable.
 - If the user wants to defer buying, ask before running `cart add <asin> --marketplace <trusted_best_offer.marketplace> --portal <portal> --quantity <n> --confirm-cart-add`.
 - If the user wants to undo a prior cart add, ask before running `cart remove <asin> --marketplace <marketplace> --portal <portal> --quantity <n> --confirm-cart-remove`.
-- If the primary marketplace exact search fails, then try likely fallback marketplaces; do not start with broad multi-market searching.
+- If the current cart may already contain the product, run `cart list --marketplace <marketplace> --portal <portal>` first and inspect `items`, `warnings`, and `safety`.
+- If the primary marketplace exact search is a confirmed successful zero-result response, then try a simplified query or likely fallback marketplaces. Diagnose client/output failures without changing the query.
 
 ## Script Interface
 
@@ -71,6 +92,7 @@ python scripts/invoke_amazon_cli.py -- compare https://www.amazon.de/dp/B0F2JCZP
 python scripts/invoke_amazon_cli.py -- reviews B0F2JCZPB4 --marketplace de --portal retail --limit 20
 python scripts/invoke_amazon_cli.py -- address inspect --portal business --marketplaces de,es,fr,it --reference-marketplace de
 python scripts/invoke_amazon_cli.py -- offers B0F2JCZPB4 --marketplace de --marketplaces de,fr,es,uk --portal business --vat-mode auto
+python scripts/invoke_amazon_cli.py -- cart list --marketplace de --portal business
 python scripts/invoke_amazon_cli.py -- cart add B0DHVGHPF9 --marketplace es --portal business --quantity 1 --confirm-cart-add
 python scripts/invoke_amazon_cli.py -- cart remove B0DHVGHPF9 --marketplace es --portal business --quantity 1 --confirm-cart-remove
 python scripts/invoke_amazon_cli.py -- session login --marketplace de --portal retail --login-timeout-sec 300
@@ -78,3 +100,21 @@ python scripts/invoke_amazon_cli.py -- session login --marketplace de --portal r
 ```
 
 The script prints normalized JSON with `ok`, `operation`, `result`, `warnings`, `stderr`, and `exit_code`.
+
+## Interactive session login
+
+Use this only for `session login`, not read-only commands or cart actions. The point is to keep the login browser and owning terminal under user control instead of under Codex's captured command lifecycle.
+
+```powershell
+$codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
+$skill = Join-Path $codexHome 'skills\amazon-cli'
+$cmd = 'Set-Location -LiteralPath "' + $skill + '"; python scripts\invoke_amazon_cli.py -- session login --marketplace de --portal business --login-timeout-sec 300'
+Start-Process powershell.exe -ArgumentList @('-NoExit', '-ExecutionPolicy', 'Bypass', '-Command', $cmd)
+```
+
+Safety rules:
+
+- Use a visible window only because Amazon login is explicitly interactive. Do not use this pattern for background/read-only commands.
+- Do not use `-WindowStyle Hidden` for login; the user must see and control the browser.
+- Do not run checkout, Buy Now, payment, address changes, review submission, or unconfirmed cart mutations from this window.
+- If the browser or terminal appears stuck, the user owns the visible window and can close it; do not kill unrelated sync/login processes from another session.
