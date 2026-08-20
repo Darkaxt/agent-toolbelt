@@ -164,6 +164,24 @@ def add_thread_to_codex_home(
 
 
 class ThreadRecallTests(unittest.TestCase):
+    def test_skill_requires_foreground_reads_to_wait_for_refresh(self):
+        skill_path = (
+            REPO_ROOT
+            / "families"
+            / "codex-thread-recall"
+            / "codex"
+            / "skills"
+            / "codex-thread-recall"
+            / "SKILL.md"
+        )
+        skill_text = skill_path.read_text(encoding="utf-8")
+
+        self.assertIn("wait on the same process/session until it returns", skill_text)
+        self.assertIn("Never start a parallel recall", skill_text)
+        self.assertIn("no lock-wait cancellation timer", skill_text)
+        self.assertNotIn("busy-using-stale-cache", skill_text)
+        self.assertNotIn("refresh-deferred-using-stale-cache", skill_text)
+
     def with_env(self, codex_home: Path, *, thread_id: str = THREAD_ID):
         class _Env:
             def __enter__(inner_self):
@@ -1269,7 +1287,7 @@ class ThreadRecallTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["index"]["lock_state"]["state"], "reclaimed-stale")
 
-    def test_live_index_lock_times_out_with_structured_busy_failure(self):
+    def test_foreground_recall_waits_past_legacy_lock_budget_until_refresh_finishes(self):
         entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "hello"})]
         with tempfile.TemporaryDirectory() as temp_dir:
             codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
@@ -1295,9 +1313,19 @@ class ThreadRecallTests(unittest.TestCase):
                 thread_recall.INDEX_LOCK_WAIT_SECONDS = 0.15
                 thread_recall.INDEX_LOCK_POLL_SECONDS = 0.05
                 thread_recall.pid_is_running = lambda _pid: True
-                ticks = iter([0.0, 0.1, 0.2, 0.3])
-                thread_recall.time.monotonic = lambda: next(ticks)
-                thread_recall.time.sleep = lambda _seconds: None
+                clock = {"value": 0.0, "sleeps": 0}
+
+                def fake_monotonic() -> float:
+                    return clock["value"]
+
+                def fake_sleep(_seconds: float) -> None:
+                    clock["value"] += 0.1
+                    clock["sleeps"] += 1
+                    if clock["sleeps"] == 4:
+                        lock_path.unlink(missing_ok=True)
+
+                thread_recall.time.monotonic = fake_monotonic
+                thread_recall.time.sleep = fake_sleep
                 with self.with_env(codex_home):
                     payload = thread_recall.recall()
             finally:
@@ -1307,9 +1335,71 @@ class ThreadRecallTests(unittest.TestCase):
                 thread_recall.time.monotonic = original_monotonic
                 thread_recall.pid_is_running = original_pid_is_running
 
-        self.assertFalse(payload["ok"])
-        self.assertEqual(payload["error"], "index_busy")
-        self.assertEqual(payload["cache"]["lock_state"]["state"], "busy")
+        self.assertTrue(payload["ok"], payload)
+        self.assertEqual(payload["index"]["lock_state"]["state"], "waited")
+        self.assertGreaterEqual(clock["sleeps"], 4)
+
+    def test_collector_lock_attempt_keeps_bounded_busy_behavior(self):
+        entries = [make_entry("2026-04-25T08:00:00Z", "event_msg", {"type": "user_message", "text": "hello"})]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, _ = make_codex_home(temp_dir, rollout_entries=entries)
+            lock_path = thread_recall.thread_lock_path(codex_home, THREAD_ID)
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            lock_path.write_text(
+                json.dumps(
+                    {
+                        "thread_id": THREAD_ID,
+                        "rollout_path": "rollout.jsonl",
+                        "pid": os.getpid(),
+                        "started_at": datetime.now(tz=thread_recall.UTC).isoformat(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            original_wait = thread_recall.INDEX_LOCK_WAIT_SECONDS
+            original_poll = thread_recall.INDEX_LOCK_POLL_SECONDS
+            original_sleep = thread_recall.time.sleep
+            original_monotonic = thread_recall.time.monotonic
+            original_pid_is_running = thread_recall.pid_is_running
+            try:
+                thread_recall.INDEX_LOCK_WAIT_SECONDS = 0.15
+                thread_recall.INDEX_LOCK_POLL_SECONDS = 0.05
+                thread_recall.pid_is_running = lambda _pid: True
+                clock = {"value": 0.0}
+                thread_recall.time.monotonic = lambda: clock["value"]
+                thread_recall.time.sleep = lambda _seconds: clock.__setitem__("value", clock["value"] + 0.1)
+                with self.assertRaises(thread_recall.IndexBusyError):
+                    thread_recall.ThreadIndexLock(
+                        codex_home=codex_home,
+                        thread={"id": THREAD_ID, "rollout_path": "rollout.jsonl"},
+                        wait_for_owner=False,
+                    ).acquire()
+            finally:
+                thread_recall.INDEX_LOCK_WAIT_SECONDS = original_wait
+                thread_recall.INDEX_LOCK_POLL_SECONDS = original_poll
+                thread_recall.time.sleep = original_sleep
+                thread_recall.time.monotonic = original_monotonic
+                thread_recall.pid_is_running = original_pid_is_running
+
+    def test_live_pid_lock_is_not_reclaimed_only_because_it_is_old(self):
+        original_pid_is_running = thread_recall.pid_is_running
+        try:
+            thread_recall.pid_is_running = lambda _pid: True
+            state = thread_recall.classify_lock_state(
+                {
+                    "thread_id": THREAD_ID,
+                    "rollout_path": "rollout.jsonl",
+                    "pid": os.getpid(),
+                    "started_at": "2026-01-01T00:00:00Z",
+                }
+            )
+        finally:
+            thread_recall.pid_is_running = original_pid_is_running
+
+        self.assertEqual(state["state"], "locked")
+        self.assertTrue(state["pid_alive"])
+        self.assertTrue(state["overdue"])
 
     def test_timeline_groups_ship_events_by_entity_and_tracks_revisits_without_repo_specific_heuristics(self):
         entries = [

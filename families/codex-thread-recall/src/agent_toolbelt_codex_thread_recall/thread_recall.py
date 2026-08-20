@@ -368,10 +368,11 @@ def classify_lock_state(metadata: dict[str, Any] | None) -> dict[str, Any]:
     if started_ts is not None:
         age_seconds = max(0.0, (datetime.now(tz=UTC) - started_ts).total_seconds())
     pid_alive = isinstance(pid, int) and pid_is_running(pid)
+    overdue = age_seconds is not None and age_seconds > INDEX_LOCK_STALE_SECONDS
     state = "locked"
-    if age_seconds is not None and age_seconds > INDEX_LOCK_STALE_SECONDS:
+    if isinstance(pid, int) and not pid_alive:
         state = "stale"
-    elif isinstance(pid, int) and not pid_alive:
+    elif not isinstance(pid, int) and overdue:
         state = "stale"
     return {
         "state": state,
@@ -380,12 +381,21 @@ def classify_lock_state(metadata: dict[str, Any] | None) -> dict[str, Any]:
         "pid": pid,
         "started_at": metadata.get("started_at"),
         "age_seconds": age_seconds,
+        "pid_alive": pid_alive,
+        "overdue": overdue,
     }
 
 
 class ThreadIndexLock:
-    def __init__(self, *, codex_home: Path, thread: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        *,
+        codex_home: Path,
+        thread: dict[str, Any],
+        wait_for_owner: bool = True,
+    ) -> None:
         self.path = thread_lock_path(codex_home, thread["id"])
+        self.wait_for_owner = wait_for_owner
         self.metadata = {
             "thread_id": thread["id"],
             "rollout_path": thread["rollout_path"],
@@ -424,9 +434,10 @@ class ThreadIndexLock:
                         continue
                     reclaimed = True
                     continue
-                if time.monotonic() - started_wait >= INDEX_LOCK_WAIT_SECONDS:
+                if not self.wait_for_owner and time.monotonic() - started_wait >= INDEX_LOCK_WAIT_SECONDS:
                     raise IndexBusyError(
-                        "The thread recall index is currently being built by another live process.",
+                        "The thread recall index is currently being built by another live process; "
+                        "the background collector skipped this thread.",
                         lock_state={**existing, "state": "busy"},
                     )
                 waited = True
@@ -2570,6 +2581,7 @@ def ensure_index(
     *,
     thread: dict[str, Any],
     codex_home: Path,
+    wait_for_refresh: bool = True,
 ) -> tuple[dict[str, Any], list[str]]:
     warnings: list[str] = []
     rollout_path = Path(thread["rollout_path"])
@@ -2609,7 +2621,11 @@ def ensure_index(
             rollout_mtime_ns=rollout_mtime_ns,
         )
     elif rebuild_reason is not None:
-        with ThreadIndexLock(codex_home=codex_home, thread=thread) as active_lock_state:
+        with ThreadIndexLock(
+            codex_home=codex_home,
+            thread=thread,
+            wait_for_owner=wait_for_refresh,
+        ) as active_lock_state:
             lock_state = active_lock_state
             existing, thread_stats = _reload_state()
             rebuild_reason, force_rebuild = cache_rebuild_reason(
@@ -4499,7 +4515,12 @@ def collector_thread_result(
     before = cache_metadata_row(conn, thread["id"]) if table_exists(conn, "rollout_indexes") else None
     before_reason = before["last_rebuild_reason"] if before is not None else None
     try:
-        index_meta, warnings = ensure_index(conn, thread=thread, codex_home=codex_home)
+        index_meta, warnings = ensure_index(
+            conn,
+            thread=thread,
+            codex_home=codex_home,
+            wait_for_refresh=False,
+        )
     except IndexBusyError as exc:
         return {
             **thread_source_item(thread),
