@@ -29,6 +29,7 @@ DEFAULT_FOLDER_IDS = {
     "inbox": OL_FOLDER_INBOX,
     "drafts": OL_FOLDER_DRAFTS,
 }
+CANONICAL_DEFAULT_FOLDER_SELECTORS = ("inbox", "sent", "drafts", "trash")
 MUTATING_ACTIONS = {"create-draft", "send", "move", "delete", "category", "mark-read"}
 DEFAULT_FOLDER_HINTS_PATH = Path(__file__).resolve().parents[2] / "folder_hints.json"
 DEFAULT_COM_LOCK_PATH = Path(__file__).resolve().parents[2] / "state" / "outlook_com.lock"
@@ -636,10 +637,187 @@ def folder_summary_with_selector(
     return {
         **folder_summary(folder),
         "folder_selector": folder_selector,
+        "folder_entry_id": str(safe_get(folder, "EntryID", "") or ""),
         "account": account_info["smtp_address"],
         "store": account_info["delivery_store"],
         "source": source,
     }
+
+
+def folder_inventory_name(entry: dict[str, Any]) -> str:
+    path = str(entry.get("folder_path") or entry.get("path") or "").rstrip("\\/")
+    if path:
+        return re.split(r"[\\/]", path)[-1]
+    selector = str(entry.get("folder_selector") or "")
+    return re.split(r"[\\/]", selector.split(":", 1)[-1])[-1]
+
+
+def public_folder_inventory_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": str(entry.get("name") or folder_inventory_name(entry)),
+        "path": str(entry.get("path") or entry.get("folder_path") or ""),
+        "folder_selector": str(entry.get("folder_selector") or ""),
+        "folder_entry_id": str(entry.get("folder_entry_id") or ""),
+        "account": str(entry.get("account") or ""),
+        "store": str(entry.get("store") or ""),
+        "store_id": str(entry.get("store_id") or ""),
+        "source": str(entry.get("source") or "cache"),
+    }
+
+
+def folder_identity_record(
+    *,
+    account_info: dict[str, Any],
+    folder: Any,
+    folder_selector: str,
+) -> dict[str, Any]:
+    return {
+        "store_id": account_info["store_id"],
+        "account": account_info["smtp_address"],
+        "store": account_info["delivery_store"],
+        "folder_selector": folder_selector,
+        "folder_path": str(safe_get(folder, "FolderPath", "") or ""),
+        "folder_entry_id": str(safe_get(folder, "EntryID", "") or ""),
+    }
+
+
+def default_folder_inventory_entries(
+    account_info: dict[str, Any],
+    *,
+    cache: mail_cache.MailCache,
+) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for selector in CANONICAL_DEFAULT_FOLDER_SELECTORS:
+        try:
+            folder = resolve_folder(account_info, selector)
+        except Exception:
+            continue
+        record = folder_identity_record(
+            account_info=account_info,
+            folder=folder,
+            folder_selector=selector,
+        )
+        cache.upsert_folder_identity(record)
+        entries.append(
+            {
+                **record,
+                "name": str(safe_get(folder, "Name", "") or ""),
+                "path": record["folder_path"],
+                "source": "default-folder",
+                "_folder": folder,
+            }
+        )
+    return entries
+
+
+def discover_folder_inventory_entries(
+    account_info: dict[str, Any],
+    *,
+    cache: mail_cache.MailCache,
+) -> list[dict[str, Any]]:
+    entries = default_folder_inventory_entries(account_info, cache=cache)
+    seen_paths = {str(entry.get("folder_path") or "") for entry in entries}
+    root = account_info["store"].GetRootFolder()
+    for folder, selector in iter_folder_tree_with_selectors(root):
+        path = str(safe_get(folder, "FolderPath", "") or "")
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
+        record = folder_identity_record(
+            account_info=account_info,
+            folder=folder,
+            folder_selector=selector,
+        )
+        cache.upsert_folder_identity(record)
+        entries.append(
+            {
+                **record,
+                "name": str(safe_get(folder, "Name", "") or ""),
+                "path": path,
+                "source": "live-rediscovery",
+                "_folder": folder,
+            }
+        )
+    return entries
+
+
+def cached_folder_inventory_entries(
+    account_info: dict[str, Any],
+    *,
+    cache: mail_cache.MailCache,
+) -> list[dict[str, Any]]:
+    defaults = default_folder_inventory_entries(account_info, cache=cache)
+    default_selectors = {str(entry["folder_selector"]) for entry in defaults}
+    entries = list(defaults)
+    for row in cache.folder_inventory(store_id=account_info["store_id"]):
+        if str(row.get("folder_selector") or "") in default_selectors:
+            continue
+        entries.append({**row, "source": "cache"})
+    return entries
+
+
+def resolve_inventory_folder(
+    session: Any,
+    *,
+    account_info: dict[str, Any],
+    entry: dict[str, Any],
+    cache: mail_cache.MailCache,
+    warnings: list[str],
+) -> Any | None:
+    folder = entry.get("_folder")
+    if folder is not None:
+        return folder
+
+    selector = str(entry.get("folder_selector") or "")
+    if selector.lower() in DEFAULT_FOLDER_IDS:
+        try:
+            return resolve_folder(account_info, selector)
+        except Exception as exc:
+            warnings.append(f"Unable to resolve default folder {selector!r}: {exc}")
+            return None
+
+    state = cache.folder_state(
+        store_id=account_info["store_id"],
+        folder_selector=selector,
+    )
+    if state:
+        entry = {**state, **entry}
+    folder_entry_id = str(entry.get("folder_entry_id") or "")
+    if folder_entry_id:
+        try:
+            return session.GetFolderFromID(folder_entry_id, account_info["store_id"])
+        except Exception:
+            pass
+
+    expected_path = str(entry.get("folder_path") or entry.get("path") or "")
+    for message_entry_id in cache.folder_message_entry_ids(
+        store_id=account_info["store_id"],
+        folder_selector=selector,
+        limit=5,
+    ):
+        try:
+            item = session.GetItemFromID(message_entry_id, account_info["store_id"])
+            parent = safe_get(item, "Parent")
+            if parent is None:
+                continue
+            parent_path = str(safe_get(parent, "FolderPath", "") or "")
+            if expected_path and parent_path.lower() != expected_path.lower():
+                continue
+            record = folder_identity_record(
+                account_info=account_info,
+                folder=parent,
+                folder_selector=selector,
+            )
+            cache.upsert_folder_identity(record)
+            return parent
+        except Exception:
+            continue
+
+    warnings.append(
+        f"Cached folder {selector!r} is unavailable without live hierarchy enumeration; "
+        "run the command with --rediscover-folders to refresh folder identities."
+    )
+    return None
 
 
 def message_summary(item: Any) -> dict[str, Any]:
@@ -994,9 +1172,10 @@ def search_messages(
     limit: int,
     cache: mail_cache.MailCache | None = None,
     update_cache: bool = False,
+    resolved_folder: Any | None = None,
 ) -> dict[str, Any]:
     account_info = resolve_account(session, account_selector)
-    folder = resolve_folder(account_info, folder_selector)
+    folder = resolved_folder if resolved_folder is not None else resolve_folder(account_info, folder_selector)
     cutoff = datetime.now() - timedelta(days=days) if days else None
     scan_limit = max(limit * 25, 200)
 
@@ -1213,37 +1392,51 @@ def find_folders(
     account_selector: str | None,
     all_accounts: bool,
     limit: int,
+    rediscover_folders: bool = False,
+    cache_path: str | None = None,
 ) -> dict[str, Any]:
+    cache = mail_cache.MailCache(cache_path)
     matches: list[dict[str, Any]] = []
     limited = False
+    inventory_count = 0
     for account_info in iter_account_infos(
         session,
         account_selector=account_selector,
         all_accounts=all_accounts,
     ):
-        root = account_info["store"].GetRootFolder()
-        for folder, folder_selector in iter_folder_tree_with_selectors(root):
-            if not folder_matches_query(folder, folder_selector, query):
+        entries = (
+            discover_folder_inventory_entries(account_info, cache=cache)
+            if rediscover_folders
+            else cached_folder_inventory_entries(account_info, cache=cache)
+        )
+        inventory_count += len(entries)
+        for entry in entries:
+            public_entry = public_folder_inventory_entry(entry)
+            query_lower = query.lower()
+            haystack = " ".join(
+                [
+                    public_entry["name"],
+                    public_entry["path"],
+                    public_entry["folder_selector"],
+                ]
+            ).lower()
+            if query_lower not in haystack:
                 continue
             if len(matches) >= limit:
                 limited = True
                 break
-            matches.append(
-                folder_summary_with_selector(
-                    account_info=account_info,
-                    folder=folder,
-                    folder_selector=folder_selector,
-                    source="discovery",
-                )
-            )
+            matches.append(public_entry)
         if limited:
             break
 
     return {
         "query": query,
         "matches": matches,
+        "folder_hierarchy_enumerated": rediscover_folders,
+        "folder_inventory_source": "live-rediscovery" if rediscover_folders else "cache",
+        "folder_inventory_count": inventory_count,
         "scope": {
-            "strategy": "folder-discovery",
+            "strategy": "live-folder-rediscovery" if rediscover_folders else "cached-folder-inventory",
             "limit": limit,
             "limited": limited,
             "all_accounts": all_accounts or not account_selector,
@@ -1264,27 +1457,22 @@ def dedupe_folder_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 
 def hint_folder_entries(
-    session: Any,
     *,
     query: str,
     account_infos: list[dict[str, Any]],
     folder_hints: dict[str, list[str]],
+    cache: mail_cache.MailCache,
 ) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for selector in folder_hints.get(normalize_hint_key(query), []):
         for account_info in account_infos:
-            try:
-                folder = resolve_folder(account_info, selector)
-            except Exception:
-                continue
-            entries.append(
-                folder_summary_with_selector(
-                    account_info=account_info,
-                    folder=folder,
-                    folder_selector=selector,
-                    source="hint",
-                )
+            state = cache.folder_state(
+                store_id=account_info["store_id"],
+                folder_selector=selector,
             )
+            if not state:
+                continue
+            entries.append({**public_folder_inventory_entry(state), "source": "hint"})
     return dedupe_folder_entries(entries)
 
 
@@ -1292,23 +1480,16 @@ def fallback_folder_entries(
     account_infos: list[dict[str, Any]],
     *,
     folder_limit: int,
+    cache: mail_cache.MailCache,
 ) -> tuple[list[dict[str, Any]], bool]:
     entries: list[dict[str, Any]] = []
     limited = False
     for account_info in account_infos:
-        root = account_info["store"].GetRootFolder()
-        for folder, folder_selector in iter_folder_tree_with_selectors(root):
+        for entry in cached_folder_inventory_entries(account_info, cache=cache):
             if len(entries) >= folder_limit:
                 limited = True
                 return entries, limited
-            entries.append(
-                folder_summary_with_selector(
-                    account_info=account_info,
-                    folder=folder,
-                    folder_selector=folder_selector,
-                    source="bounded-fallback",
-                )
-            )
+            entries.append({**public_folder_inventory_entry(entry), "source": "bounded-inventory"})
     return entries, limited
 
 
@@ -1321,30 +1502,15 @@ def cache_candidate_folder_entries(
     return cache.candidate_folders(cache_rows, limit=folder_limit)
 
 
-def cache_folder_entries(account_info: dict[str, Any]) -> list[tuple[Any, str]]:
-    entries: list[tuple[Any, str]] = []
-    seen_paths: set[str] = set()
-
-    for selector in ("inbox", "sent", "drafts", "trash"):
-        try:
-            folder = resolve_folder(account_info, selector)
-        except Exception:
-            continue
-        path = str(safe_get(folder, "FolderPath", ""))
-        if path in seen_paths:
-            continue
-        seen_paths.add(path)
-        entries.append((folder, selector))
-
-    root = account_info["store"].GetRootFolder()
-    for folder, selector in iter_folder_tree_with_selectors(root):
-        path = str(safe_get(folder, "FolderPath", ""))
-        if path in seen_paths:
-            continue
-        seen_paths.add(path)
-        entries.append((folder, selector))
-
-    return entries
+def cache_folder_entries(
+    account_info: dict[str, Any],
+    *,
+    cache: mail_cache.MailCache,
+    rediscover_folders: bool,
+) -> list[dict[str, Any]]:
+    if rediscover_folders:
+        return discover_folder_inventory_entries(account_info, cache=cache)
+    return cached_folder_inventory_entries(account_info, cache=cache)
 
 
 def cache_status(*, cache_path: str | None = None, query: str | None = None) -> dict[str, Any]:
@@ -1391,6 +1557,7 @@ def cache_refresh(
     days: int,
     force: bool,
     cache_path: str | None = None,
+    rediscover_folders: bool = False,
 ) -> dict[str, Any]:
     cache = mail_cache.MailCache(cache_path)
     cache.ensure_schema()
@@ -1407,7 +1574,22 @@ def cache_refresh(
     warnings: list[str] = []
 
     for account_info in accounts:
-        for folder, folder_selector in cache_folder_entries(account_info):
+        entries = cache_folder_entries(
+            account_info,
+            cache=cache,
+            rediscover_folders=rediscover_folders,
+        )
+        for entry in entries:
+            folder_selector = str(entry.get("folder_selector") or "")
+            folder = resolve_inventory_folder(
+                session,
+                account_info=account_info,
+                entry=entry,
+                cache=cache,
+                warnings=warnings,
+            )
+            if folder is None:
+                continue
             high_watermark_text = None if force else cache.folder_high_watermark(account_info["store_id"], folder_selector)
             high_watermark = mail_cache.parse_iso(high_watermark_text)
             refresh_cutoff = cutoff
@@ -1447,6 +1629,7 @@ def cache_refresh(
                     "store": account_info["delivery_store"],
                     "folder_selector": folder_selector,
                     "folder_path": safe_get(folder, "FolderPath", ""),
+                    "folder_entry_id": safe_get(folder, "EntryID", ""),
                     "high_watermark": cache_datetime(newest_seen),
                     "refreshed_at": refreshed_at,
                     "message_count": folder_cached,
@@ -1474,6 +1657,12 @@ def cache_refresh(
         "messages_cached": messages_cached,
         "messages_pruned": pruned,
         "folders": folders,
+        "folder_hierarchy_enumerated": rediscover_folders,
+        "folder_inventory_source": "live-rediscovery" if rediscover_folders else "cache",
+        "folder_inventory_count": sum(
+            len(cache.folder_inventory(store_id=account_info["store_id"]))
+            for account_info in accounts
+        ),
         "warnings": warnings,
     }
 
@@ -1488,6 +1677,7 @@ def sync_mail(
     days: int,
     force: bool,
     cache_path: str | None = None,
+    rediscover_folders: bool = False,
 ) -> dict[str, Any]:
     started = time.monotonic()
     attempted: list[dict[str, Any]] = []
@@ -1528,6 +1718,7 @@ def sync_mail(
             days=days,
             force=force,
             cache_path=cache_path,
+            rediscover_folders=rediscover_folders,
         )
     return payload
 
@@ -1556,7 +1747,12 @@ def search_all_folders(
         account_selector=account_selector,
         all_accounts=all_accounts,
     )
-    cache = mail_cache.MailCache(cache_path) if use_cache or update_cache else None
+    inventory_cache = mail_cache.MailCache(cache_path)
+    cache = inventory_cache if use_cache or update_cache else None
+    account_by_smtp = {
+        str(account_info["smtp_address"]).strip().lower(): account_info
+        for account_info in account_infos
+    }
     cache_rows: list[dict[str, Any]] = []
     cache_entries: list[dict[str, Any]] = []
     cache_warnings: list[str] = []
@@ -1580,6 +1776,22 @@ def search_all_folders(
         messages: list[dict[str, Any]] = []
         searched_folders: list[dict[str, Any]] = []
         for entry in cache_entries[:folder_limit]:
+            entry_account = str(entry.get("account") or "").strip().lower()
+            entry_account_info = account_by_smtp.get(entry_account)
+            if entry_account_info is None:
+                cache_warnings.append(
+                    f"Cached folder account {entry.get('account', '')!r} is not available in this Outlook profile."
+                )
+                continue
+            folder = resolve_inventory_folder(
+                session,
+                account_info=entry_account_info,
+                entry=entry,
+                cache=inventory_cache,
+                warnings=cache_warnings,
+            )
+            if folder is None:
+                continue
             try:
                 search_result = search_messages(
                     session,
@@ -1593,6 +1805,7 @@ def search_all_folders(
                     limit=per_folder_limit,
                     cache=cache,
                     update_cache=update_cache,
+                    resolved_folder=folder,
                 )
             except Exception as exc:
                 cache_warnings.append(
@@ -1626,6 +1839,8 @@ def search_all_folders(
                 "cache_refreshed": bool(update_cache),
                 "fallback_reason": None,
                 "warnings": cache_warnings,
+                "folder_hierarchy_enumerated": False,
+                "folder_inventory_source": "cache",
                 "scope": {
                     "strategy": "mail-cache",
                     "folder_limit": folder_limit,
@@ -1640,10 +1855,10 @@ def search_all_folders(
 
     hints = folder_hints if folder_hints is not None else load_folder_hints()
     hint_entries = hint_folder_entries(
-        session,
         query=query,
         account_infos=account_infos,
         folder_hints=hints,
+        cache=inventory_cache,
     )
     discovery = find_folders(
         session,
@@ -1651,6 +1866,8 @@ def search_all_folders(
         account_selector=account_selector,
         all_accounts=all_accounts,
         limit=folder_limit,
+        rediscover_folders=False,
+        cache_path=cache_path,
     )
     discovery_entries = discovery["matches"]
     if update_hints and discovery_entries:
@@ -1667,12 +1884,29 @@ def search_all_folders(
         search_entries, limited = fallback_folder_entries(
             account_infos,
             folder_limit=folder_limit,
+            cache=inventory_cache,
         )
-        strategy = "bounded-all-folders"
+        strategy = "bounded-folder-inventory"
 
     messages: list[dict[str, Any]] = []
     searched_folders: list[dict[str, Any]] = []
     for entry in search_entries[:folder_limit]:
+        entry_account = str(entry.get("account") or "").strip().lower()
+        entry_account_info = account_by_smtp.get(entry_account)
+        if entry_account_info is None:
+            cache_warnings.append(
+                f"Cached folder account {entry.get('account', '')!r} is not available in this Outlook profile."
+            )
+            continue
+        folder = resolve_inventory_folder(
+            session,
+            account_info=entry_account_info,
+            entry=entry,
+            cache=inventory_cache,
+            warnings=cache_warnings,
+        )
+        if folder is None:
+            continue
         searched_folders.append(entry)
         search_result = search_messages(
             session,
@@ -1686,6 +1920,7 @@ def search_all_folders(
             limit=per_folder_limit,
             cache=cache,
             update_cache=update_cache,
+            resolved_folder=folder,
         )
         messages.extend(search_result["messages"])
         cache_warnings.extend(search_result.get("warnings", []))
@@ -1701,6 +1936,8 @@ def search_all_folders(
         "cache_refreshed": bool(cache is not None and update_cache and messages),
         "fallback_reason": fallback_reason,
         "warnings": cache_warnings,
+        "folder_hierarchy_enumerated": False,
+        "folder_inventory_source": "cache",
         "scope": {
             "strategy": strategy,
             "folder_limit": folder_limit,
@@ -3324,6 +3561,8 @@ def list_folders(session: Any, *, account_selector: str) -> dict[str, Any]:
         "account": account_info["smtp_address"],
         "store": account_info["delivery_store"],
         "folders": folders,
+        "folder_hierarchy_enumerated": True,
+        "folder_inventory_source": "live-enumeration",
     }
 
 
@@ -3379,6 +3618,7 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
             days=args.days,
             force=args.force,
             cache_path=args.cache_path,
+            rediscover_folders=args.rediscover_folders,
         )
         return make_result(
             ok=True,
@@ -3397,6 +3637,7 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
             days=args.days,
             force=args.force,
             cache_path=args.cache_path,
+            rediscover_folders=args.rediscover_folders,
         )
         return make_result(
             ok=bool(payload.get("attempted")),
@@ -3420,7 +3661,11 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
             operation="folders",
             account=payload["account"],
             store=payload["store"],
-            result={"folders": payload["folders"]},
+            result={
+                "folders": payload["folders"],
+                "folder_hierarchy_enumerated": payload["folder_hierarchy_enumerated"],
+                "folder_inventory_source": payload["folder_inventory_source"],
+            },
         )
 
     if args.operation == "find-folders":
@@ -3430,6 +3675,8 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
             account_selector=args.account,
             all_accounts=args.all_accounts,
             limit=args.limit,
+            rediscover_folders=args.rediscover_folders,
+            cache_path=args.cache_path,
         )
         return make_result(
             ok=True,
@@ -3764,6 +4011,7 @@ def build_parser() -> argparse.ArgumentParser:
     cache_refresh_parser.add_argument("--all-accounts", action="store_true")
     cache_refresh_parser.add_argument("--days", type=int, default=90)
     cache_refresh_parser.add_argument("--force", action="store_true")
+    cache_refresh_parser.add_argument("--rediscover-folders", action="store_true")
     cache_refresh_parser.add_argument("--cache-path")
 
     cache_clear_parser = subparsers.add_parser("cache-clear", help="Clear local Outlook metadata cache entries.")
@@ -3777,6 +4025,7 @@ def build_parser() -> argparse.ArgumentParser:
     sync_mail_parser.add_argument("--all-accounts", action="store_true")
     sync_mail_parser.add_argument("--days", type=int, default=90)
     sync_mail_parser.add_argument("--force", action="store_true")
+    sync_mail_parser.add_argument("--rediscover-folders", action="store_true")
     sync_mail_parser.add_argument("--cache-path")
 
     subparsers.add_parser("diagnostics-probe", help="Probe Outlook COM availability and write diagnostic metadata.")
@@ -3792,6 +4041,8 @@ def build_parser() -> argparse.ArgumentParser:
     find_folders_parser.add_argument("--account")
     find_folders_parser.add_argument("--all-accounts", action="store_true")
     find_folders_parser.add_argument("--limit", type=int, default=20)
+    find_folders_parser.add_argument("--rediscover-folders", action="store_true")
+    find_folders_parser.add_argument("--cache-path")
 
     search = subparsers.add_parser("search", help="Search mail in one Outlook account and folder.")
     search.add_argument("--account")

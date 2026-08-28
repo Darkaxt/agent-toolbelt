@@ -9,7 +9,7 @@ from typing import Any
 
 STATE_DIR = Path(__file__).resolve().parents[2] / "state"
 DEFAULT_CACHE_PATH = STATE_DIR / "mail_cache.sqlite"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def utc_now_iso() -> str:
@@ -116,6 +116,7 @@ class MailCache:
                     store TEXT NOT NULL,
                     folder_selector TEXT NOT NULL,
                     folder_path TEXT NOT NULL,
+                    folder_entry_id TEXT NOT NULL DEFAULT '',
                     high_watermark TEXT,
                     refreshed_at TEXT NOT NULL,
                     message_count INTEGER NOT NULL DEFAULT 0,
@@ -123,6 +124,14 @@ class MailCache:
                 )
                 """
             )
+            folder_columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(folder_state)").fetchall()
+            }
+            if "folder_entry_id" not in folder_columns:
+                conn.execute(
+                    "ALTER TABLE folder_state ADD COLUMN folder_entry_id TEXT NOT NULL DEFAULT ''"
+                )
             conn.execute(
                 """
                 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
@@ -213,13 +222,21 @@ class MailCache:
             conn.execute(
                 """
                 INSERT INTO folder_state(
-                    store_id, account, store, folder_selector, folder_path, high_watermark, refreshed_at, message_count
+                    store_id, account, store, folder_selector, folder_path, folder_entry_id,
+                    high_watermark, refreshed_at, message_count
                 )
-                VALUES(:store_id, :account, :store, :folder_selector, :folder_path, :high_watermark, :refreshed_at, :message_count)
+                VALUES(
+                    :store_id, :account, :store, :folder_selector, :folder_path, :folder_entry_id,
+                    :high_watermark, :refreshed_at, :message_count
+                )
                 ON CONFLICT(store_id, folder_selector) DO UPDATE SET
                     account=excluded.account,
                     store=excluded.store,
                     folder_path=excluded.folder_path,
+                    folder_entry_id=CASE
+                        WHEN excluded.folder_entry_id <> '' THEN excluded.folder_entry_id
+                        ELSE folder_state.folder_entry_id
+                    END,
                     high_watermark=excluded.high_watermark,
                     refreshed_at=excluded.refreshed_at,
                     message_count=excluded.message_count
@@ -230,11 +247,123 @@ class MailCache:
                     "store": record.get("store") or "",
                     "folder_selector": record.get("folder_selector") or "",
                     "folder_path": record.get("folder_path") or "",
+                    "folder_entry_id": record.get("folder_entry_id") or "",
                     "high_watermark": record.get("high_watermark") or "",
                     "refreshed_at": record.get("refreshed_at") or utc_now_iso(),
                     "message_count": int(record.get("message_count") or 0),
                 },
             )
+
+    def upsert_folder_identity(self, record: dict[str, Any]) -> None:
+        self.ensure_schema()
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO folder_state(
+                    store_id, account, store, folder_selector, folder_path, folder_entry_id,
+                    high_watermark, refreshed_at, message_count
+                )
+                VALUES(
+                    :store_id, :account, :store, :folder_selector, :folder_path, :folder_entry_id,
+                    '', :refreshed_at, 0
+                )
+                ON CONFLICT(store_id, folder_selector) DO UPDATE SET
+                    account=excluded.account,
+                    store=excluded.store,
+                    folder_path=excluded.folder_path,
+                    folder_entry_id=CASE
+                        WHEN excluded.folder_entry_id <> '' THEN excluded.folder_entry_id
+                        ELSE folder_state.folder_entry_id
+                    END
+                """,
+                {
+                    "store_id": clean_text(record.get("store_id")),
+                    "account": clean_text(record.get("account")),
+                    "store": clean_text(record.get("store")),
+                    "folder_selector": clean_text(record.get("folder_selector")),
+                    "folder_path": clean_text(record.get("folder_path")),
+                    "folder_entry_id": clean_text(record.get("folder_entry_id")),
+                    "refreshed_at": clean_text(record.get("refreshed_at") or utc_now_iso()),
+                },
+            )
+
+    def folder_inventory(
+        self,
+        *,
+        account: str | None = None,
+        store_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        self.ensure_schema()
+        where: list[str] = []
+        params: list[Any] = []
+        if account:
+            where.append("lower(account) = ?")
+            params.append(account.lower())
+        if store_id:
+            where.append("store_id = ?")
+            params.append(store_id)
+        sql = "SELECT * FROM folder_state"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY account, folder_path, folder_selector"
+        with self.connection() as conn:
+            return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+    def search_folder_inventory(
+        self,
+        *,
+        query: str,
+        account: str | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        self.ensure_schema()
+        where = [
+            "(lower(folder_selector) LIKE ? ESCAPE '\\' OR lower(folder_path) LIKE ? ESCAPE '\\')"
+        ]
+        value = sql_like(normalize_query(query))
+        params: list[Any] = [value, value]
+        if account:
+            where.append("lower(account) = ?")
+            params.append(account.lower())
+        params.append(limit)
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM folder_state WHERE "
+                + " AND ".join(where)
+                + " ORDER BY folder_path LIMIT ?",
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def folder_state(self, *, store_id: str, folder_selector: str) -> dict[str, Any] | None:
+        self.ensure_schema()
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM folder_state WHERE store_id = ? AND folder_selector = ?",
+                (store_id, folder_selector),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def folder_message_entry_ids(
+        self,
+        *,
+        store_id: str,
+        folder_selector: str,
+        limit: int,
+    ) -> list[str]:
+        self.ensure_schema()
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT entry_id
+                FROM messages
+                WHERE store_id = ? AND folder_selector = ?
+                ORDER BY message_date DESC, cached_at DESC
+                LIMIT ?
+                """,
+                (store_id, folder_selector, limit),
+            ).fetchall()
+        return [str(row["entry_id"]) for row in rows if row["entry_id"]]
 
     def folder_high_watermark(self, store_id: str, folder_selector: str) -> str | None:
         self.ensure_schema()

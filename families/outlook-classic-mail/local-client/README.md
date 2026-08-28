@@ -6,7 +6,7 @@ Standalone Outlook Classic COM client for local mailbox access on Windows.
 
 - enumerate configured Outlook accounts and delivery stores
 - list folders by account
-- find likely folders by name or path
+- find likely folders by name or path through a persisted folder identity inventory
 - search mail
 - search matched folders with bounded all-folder fallback
 - maintain a lightweight SQLite metadata cache for recent contacts, subjects, timestamps, folder locations, and message identifiers
@@ -41,6 +41,7 @@ uv run --project families/outlook-classic-mail/local-client outlook-classic-mail
 uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client cache-status --query example-service
 uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client cache-show --query example-service --limit 10
 uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 find-folders --query example-service --all-accounts
+uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 find-folders --query example-service --all-accounts --rediscover-folders
 uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 search --all-folders --query example-service --all-accounts --folder-limit 10 --per-folder-limit 5
 uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 search --all-folders --query example-service --all-accounts --bypass-cache --broad-scan
 uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 triage --all-accounts --days 7 --limit 20
@@ -57,9 +58,11 @@ uv run --project families/outlook-classic-mail/local-client outlook-classic-mail
 uv run --project families/outlook-classic-mail/local-client outlook-classic-mail-client --queue-timeout-sec 900 draft-reply --account anchor@example.com --send-using-account reply@example.com --message-id <entry-id> --instruction "Draft from reply@example.com." --body "Tuesday works for me." --create-draft --confirm
 ```
 
-Folder hints are stored locally in `folder_hints.json` after successful discovery. They are used only as accelerators; discovery still runs so stale hints do not hide moved folders.
+Folder hints are stored locally in `folder_hints.json` after successful discovery. They are accelerators into the cached folder inventory; normal searches do not recursively rediscover the live Outlook hierarchy.
 
-The mail metadata cache is stored under `state/mail_cache.sqlite`. It stores identifiers, contacts, subjects, timestamps, folder locations, and message flags for recent mail only; it does not store full message bodies. Search uses cache candidates as folder locators and confirms results through live Outlook COM.
+The mail metadata cache is stored under `state/mail_cache.sqlite`. It stores identifiers, contacts, subjects, timestamps, folder locations, folder EntryIDs, and message flags for recent mail only; it does not store full message bodies. Search uses cache candidates as folder locators and resolves folders directly through Outlook identity APIs. Existing cache rows can backfill a missing folder EntryID from a cached message's parent folder.
+
+`find-folders`, `cache-refresh`, `sync-mail`, and all-folder search use the cached identity inventory by default and return `folder_hierarchy_enumerated: false`. Add `--rediscover-folders` only when an empty, moved, or stale custom folder cannot be resolved from cached identity or message evidence. Explicit rediscovery recursively enumerates the live hierarchy, can expand or materialize Outlook's visible folder tree, and returns `folder_hierarchy_enumerated: true` with `folder_inventory_source: live-rediscovery`. The `folders` command is also an explicit live enumeration and reports that diagnostic.
 
 COM-backed commands now enter a local FIFO queue before the existing execution lock. Do not compensate by launching multiple heavy Outlook queries in parallel or by inflating timeouts linearly; prefer targeted or batched lookups and let the queue serialize them.
 

@@ -243,13 +243,13 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
 
     def test_build_operation_args_routes_find_folders(self):
         parser = outlook_classic_mail.build_parser()
-        args = parser.parse_args(["find-folders", "--query", "lettre24", "--all-accounts", "--limit", "5"])
+        args = parser.parse_args(["find-folders", "--query", "lettre24", "--all-accounts", "--limit", "5", "--rediscover-folders"])
 
         operation_args = outlook_classic_mail.build_operation_args(args)
 
         self.assertEqual(
             operation_args,
-            ["find-folders", "--query", "lettre24", "--all-accounts", "--limit", "5"],
+            ["find-folders", "--query", "lettre24", "--all-accounts", "--limit", "5", "--rediscover-folders"],
         )
 
     def test_build_operation_args_routes_search_all_folders(self):
@@ -335,13 +335,13 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
     def test_build_operation_args_routes_cache_and_sync_commands(self):
         parser = outlook_classic_mail.build_parser()
 
-        cache_refresh = parser.parse_args(["cache-refresh", "--all-accounts", "--days", "30", "--force"])
+        cache_refresh = parser.parse_args(["cache-refresh", "--all-accounts", "--days", "30", "--force", "--rediscover-folders"])
         cache_show = parser.parse_args(["cache-show", "--query", "lettre24", "--limit", "5"])
-        sync_mail = parser.parse_args(["sync-mail", "--refresh-cache", "--all-accounts"])
+        sync_mail = parser.parse_args(["sync-mail", "--refresh-cache", "--all-accounts", "--rediscover-folders"])
 
         self.assertEqual(
             outlook_classic_mail.build_operation_args(cache_refresh),
-            ["cache-refresh", "--all-accounts", "--days", "30", "--force"],
+            ["cache-refresh", "--all-accounts", "--days", "30", "--force", "--rediscover-folders"],
         )
         self.assertEqual(
             outlook_classic_mail.build_operation_args(cache_show),
@@ -349,7 +349,7 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         )
         self.assertEqual(
             outlook_classic_mail.build_operation_args(sync_mail),
-            ["sync-mail", "--refresh-cache", "--all-accounts", "--days", "90"],
+            ["sync-mail", "--refresh-cache", "--all-accounts", "--days", "90", "--rediscover-folders"],
         )
 
     def test_parser_accepts_queue_timeout(self):
@@ -823,6 +823,11 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("`diagnostics-probe` is launch-free", skill_text)
         self.assertIn("OUTLOOK_CLASSIC_MAIL_BACKGROUND", skill_text)
         self.assertIn("Do not use `taskkill`", skill_text)
+        self.assertIn("Search the cached folder inventory first", skill_text)
+        self.assertIn("--rediscover-folders", skill_text)
+        self.assertIn("folder_hierarchy_enumerated", skill_text)
+        self.assertIn("can expand or materialize Outlook's visible folder tree", skill_text)
+        self.assertIn("Do not run live folder rediscovery routinely", skill_text)
 
     def test_claude_plugin_manifest_and_marketplace_exist(self):
         marketplace_root = (
@@ -909,6 +914,11 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("Multiple configured matches fail closed", skill_text)
         self.assertIn("thread_quote_fallback_used", skill_text)
         self.assertIn("desktop_promotion_requested", skill_text)
+        self.assertIn("Search the cached folder inventory first", skill_text)
+        self.assertIn("--rediscover-folders", skill_text)
+        self.assertIn("folder_hierarchy_enumerated", skill_text)
+        self.assertIn("can expand or materialize Outlook's visible folder tree", skill_text)
+        self.assertIn("Do not run live folder rediscovery routinely", skill_text)
         self.assertIn("`diagnostics-probe` is launch-free", skill_text)
         self.assertIn("OUTLOOK_CLASSIC_MAIL_BACKGROUND", skill_text)
         self.assertIn("Do not use `taskkill`", skill_text)

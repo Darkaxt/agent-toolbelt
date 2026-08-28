@@ -277,6 +277,8 @@ def build_parser() -> argparse.ArgumentParser:
     find_folders.add_argument("--account")
     find_folders.add_argument("--all-accounts", action="store_true")
     find_folders.add_argument("--limit", type=int, default=20)
+    find_folders.add_argument("--rediscover-folders", action="store_true")
+    find_folders.add_argument("--cache-path")
 
     cache_status = subparsers.add_parser("cache-status", help="Inspect the local Outlook metadata cache.")
     cache_status.add_argument("--query")
@@ -294,6 +296,7 @@ def build_parser() -> argparse.ArgumentParser:
     cache_refresh.add_argument("--all-accounts", action="store_true")
     cache_refresh.add_argument("--days", type=int, default=90)
     cache_refresh.add_argument("--force", action="store_true")
+    cache_refresh.add_argument("--rediscover-folders", action="store_true")
     cache_refresh.add_argument("--cache-path")
 
     cache_clear = subparsers.add_parser("cache-clear", help="Clear local Outlook metadata cache entries.")
@@ -307,6 +310,7 @@ def build_parser() -> argparse.ArgumentParser:
     sync_mail.add_argument("--all-accounts", action="store_true")
     sync_mail.add_argument("--days", type=int, default=90)
     sync_mail.add_argument("--force", action="store_true")
+    sync_mail.add_argument("--rediscover-folders", action="store_true")
     sync_mail.add_argument("--cache-path")
 
     subparsers.add_parser("diagnostics-probe", help="Probe Outlook COM availability and diagnostic metadata.")
@@ -484,6 +488,9 @@ def build_operation_args(args: argparse.Namespace) -> list[str]:
         if args.all_accounts:
             parts.append("--all-accounts")
         parts.extend(["--limit", str(args.limit)])
+        if args.rediscover_folders:
+            parts.append("--rediscover-folders")
+        append_optional_arg(parts, "--cache-path", args.cache_path)
         return parts
 
     if args.operation == "cache-status":
@@ -506,6 +513,8 @@ def build_operation_args(args: argparse.Namespace) -> list[str]:
         parts.extend(["--days", str(args.days)])
         if args.force:
             parts.append("--force")
+        if args.rediscover_folders:
+            parts.append("--rediscover-folders")
         append_optional_arg(parts, "--cache-path", args.cache_path)
         return parts
 
@@ -525,6 +534,8 @@ def build_operation_args(args: argparse.Namespace) -> list[str]:
         parts.extend(["--days", str(args.days)])
         if args.force:
             parts.append("--force")
+        if args.rediscover_folders:
+            parts.append("--rediscover-folders")
         append_optional_arg(parts, "--cache-path", args.cache_path)
         return parts
 

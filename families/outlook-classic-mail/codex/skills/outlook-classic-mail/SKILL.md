@@ -32,9 +32,10 @@ Do not use this skill when:
 - Prefer Outlook Classic for generic local mail tasks.
 - Fall back to the Gmail connector only when the user explicitly asks for Gmail, Outlook Classic is unavailable, or the request truly depends on Gmail-only behavior.
 - Keep mailbox reads and triage non-mutating by default.
-- For "latest emails from X" or similar sender/service lookups, run `find-folders` first, then search matching folders.
+- For "latest emails from X" or similar sender/service lookups: Search the cached folder inventory first with `find-folders`, then search matching folders.
 - Use the metadata cache for repeated contact/sender/subject lookups. It stores message identifiers, contacts, subjects, timestamps, and folder locations, but not full message bodies.
-- Use `cache-refresh --all-accounts --days 90` to populate or refresh the cache; use `cache-status` and `cache-show --query <text>` to inspect cache coverage.
+- Use `cache-refresh --all-accounts --days 90` to refresh known folders; use `cache-status` and `cache-show --query <text>` to inspect cache coverage. Add `--rediscover-folders` only when the inventory is missing or stale.
+- Do not run live folder rediscovery routinely. Enumerating Outlook's live folder hierarchy can expand or materialize Outlook's visible folder tree. Inspect `folder_hierarchy_enumerated` and `folder_inventory_source` in results; normal cache-backed operations must report `folder_hierarchy_enumerated: false`.
 - Run `sync-mail` before searching for very recent sent or received mail when Outlook folders may lag behind Send/Receive.
 - Outlook COM-backed calls are single-lane. Never launch parallel Outlook searches or parallel wrapper invocations for `search`, `search --all-folders`, `find-folders`, `find-response`, `read-thread`, `read-message`, `triage`, `inspect-domains`, or `scan-domain-refs`.
 - Do not use `multi_tool_use.parallel`, background jobs, `Start-Job`, `Start-Process`, shell `&`, or command chaining such as `cmd1; cmd2` to fan out Outlook searches across folders, accounts, queries, or message ids. Run one Outlook command at a time and wait for its JSON result before deciding the next command.
@@ -67,9 +68,9 @@ Do not use this skill when:
 - Use `edit-draft --body/--subject/--to/--cc/--bcc/--attach ... --confirm` to update an existing Drafts-folder item. For helper-created replies and forwards, `--body` replaces only the marked authored section and preserves the native quoted thread and signature. A legacy threaded draft without that safe marker is refused rather than having its complete body replaced; recreate it with `draft-reply` or `draft-forward`. Read or locate the draft first, then call `edit-draft`. Do not update draft bodies through ad hoc COM; do not update recipients, subjects, or attachments through ad hoc COM either. The helper refuses to edit messages that are not in the selected account's Drafts folder.
 - If `draft_content.warnings` contains `thread_quote_fallback_used`, mention that Outlook did not provide a usable native quote and the helper added a manual quoted block from the anchor message. If it contains `thread_content_missing`, warn that the thread content could not be included.
 - Use generic `apply-action --action create-draft` only for standalone new drafts; it saves in the selected account's Drafts folder but does not include reply/forward thread content.
-- For "move/file/put this email in folder X" tasks, use `find-folders` first when the target is ambiguous, run `move-message` without `--confirm` as a preview, and run `move-message --confirm` only after explicit user approval.
+- For "move/file/put this email in folder X" tasks, use cache-backed `find-folders` first when the target is ambiguous. Use `--rediscover-folders` only if the cached inventory cannot locate the target. Run `move-message` without `--confirm` as a preview, and run `move-message --confirm` only after explicit user approval.
 - If folder discovery finds nothing, search Inbox and state that the scope was Inbox-only unless a bounded all-folder search is explicitly needed.
-- Use `search --all-folders` as a bounded fallback. It uses cache-guided folder candidates by default; add `--bypass-cache --broad-scan` when the user suspects the cache/rules missed something or explicitly asks to scan broadly.
+- Use `search --all-folders` as a bounded fallback. It searches known cached folder identities and does not silently rediscover the hierarchy. `--bypass-cache --broad-scan` broadens the search across that known inventory; use explicit `find-folders --rediscover-folders` first if the inventory itself is incomplete.
 - Use `--no-update-cache` for repeated read-only direct-folder searches when cache freshness is not needed.
 - Treat draft creation, send, move, delete, category changes, and mark-read changes as explicit actions that require confirmation.
 - Remember that Gmail-backed accounts are accessed through Outlook stores, not through Gmail-native APIs.
@@ -79,14 +80,14 @@ Do not use this skill when:
 
 ```bash
 python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] accounts
-python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] sync-mail [--refresh-cache] [--account <smtp|store>|--all-accounts] [--days <n>] [--force]
+python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] sync-mail [--refresh-cache] [--account <smtp|store>|--all-accounts] [--days <n>] [--force] [--rediscover-folders]
 python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] diagnostics-probe
 python scripts/invoke_outlook_mail.py diagnostics-log [--limit <n>]
 python scripts/invoke_outlook_mail.py cache-status [--query <text>]
 python scripts/invoke_outlook_mail.py cache-show --query <text> [--account <smtp|store>] [--days <n>] [--limit <n>]
-python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] cache-refresh [--account <smtp|store>|--all-accounts] [--days <n>] [--force]
+python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] cache-refresh [--account <smtp|store>|--all-accounts] [--days <n>] [--force] [--rediscover-folders]
 python scripts/invoke_outlook_mail.py cache-clear [--query <text>] --confirm
-python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] find-folders --query <text> [--account <smtp|store>|--all-accounts] [--limit <n>]
+python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] find-folders --query <text> [--account <smtp|store>|--all-accounts] [--limit <n>] [--rediscover-folders]
 python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] search --account <smtp|store> [--folder inbox|sent|drafts|trash|custom:<path>] [--query <text>] [--unread] [--from <email>] [--to <email>] [--days <n>] [--limit <n>] [--no-update-cache]
 python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] search --all-folders --query <text> [--account <smtp|store>|--all-accounts] [--folder-limit <n>] [--per-folder-limit <n>] [--bypass-cache] [--broad-scan] [--no-update-cache]
 python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] read-thread --account <smtp|store> --message-id <entry-id>
