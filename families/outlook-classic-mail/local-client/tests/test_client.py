@@ -13,7 +13,7 @@ SRC_ROOT = TOOL_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from outlook_classic_mail_client import client
+from outlook_classic_mail_client import client, mail_cache
 
 
 OL_FOLDER_DELETED_ITEMS = 3
@@ -184,6 +184,7 @@ class FakeFolder:
     FolderPath: str
     Items: FakeItems = field(default_factory=FakeItems)
     Folders: list = field(default_factory=list)
+    EntryID: str = ""
 
     def __post_init__(self):
         self.Items.parent = self
@@ -220,10 +221,14 @@ class FakeSession:
 
     def __post_init__(self):
         self._messages = {}
+        self._folders = {}
         self._stores = []
         for account in self.Accounts:
             self._stores.append(account.DeliveryStore)
-            for folder in client.iter_folder_tree(account.DeliveryStore.GetRootFolder()):
+            for index, folder in enumerate(client.iter_folder_tree(account.DeliveryStore.GetRootFolder()), start=1):
+                if not folder.EntryID:
+                    folder.EntryID = f"{account.DeliveryStore.StoreID}-folder-{index}"
+                self._folders[(account.DeliveryStore.StoreID, folder.EntryID)] = folder
                 for item in folder.Items:
                     item.Parent = folder
                     self._messages[item.EntryID] = item
@@ -234,6 +239,21 @@ class FakeSession:
 
     def GetItemFromID(self, entry_id, store_id=None):
         return self._messages[entry_id]
+
+    def GetFolderFromID(self, entry_id, store_id=None):
+        if store_id is not None:
+            return self._folders[(store_id, entry_id)]
+        matches = [folder for (candidate_store_id, candidate_entry_id), folder in self._folders.items() if candidate_entry_id == entry_id]
+        if len(matches) != 1:
+            raise KeyError(entry_id)
+        return matches[0]
+
+
+class ForbiddenFolders:
+    Count = 1
+
+    def Item(self, index):
+        raise AssertionError("live Outlook folder hierarchy was enumerated")
 
 
 @dataclass
@@ -505,6 +525,12 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         self.assertEqual(accounts[0]["smtp_address"], "demo@example.com")
         self.assertEqual(accounts[0]["delivery_store"], "demo@example.com")
 
+    def test_list_folders_reports_explicit_hierarchy_enumeration(self):
+        result = client.list_folders(self.session, account_selector="demo@example.com")
+
+        self.assertTrue(result["folder_hierarchy_enumerated"])
+        self.assertEqual(result["folder_inventory_source"], "live-enumeration")
+
     def test_resolve_folder_uses_default_and_custom_paths(self):
         account = client.resolve_account(self.session, "demo@example.com")
 
@@ -530,32 +556,77 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         self.assertEqual(len(result["messages"]), 1)
         self.assertEqual(result["messages"][0]["entry_id"], "msg-1")
 
-    def test_find_folders_finds_nested_folders_by_name(self):
-        result = client.find_folders(
-            self.session,
-            query="lettre24",
-            account_selector="demo@example.com",
-            all_accounts=False,
-            limit=10,
-        )
+    def test_find_folders_finds_nested_folders_by_name_during_explicit_rediscovery(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = client.find_folders(
+                self.session,
+                query="lettre24",
+                account_selector="demo@example.com",
+                all_accounts=False,
+                limit=10,
+                rediscover_folders=True,
+                cache_path=str(Path(temp_dir) / "mail_cache.sqlite"),
+            )
 
         self.assertEqual(result["matches"][0]["name"], "Lettre24")
         self.assertEqual(result["matches"][0]["folder_selector"], "custom:Inbox/Delivery/Lettre24")
+        self.assertTrue(result["folder_hierarchy_enumerated"])
+
+    def test_find_folders_uses_cached_inventory_without_live_hierarchy_enumeration(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = str(Path(temp_dir) / "mail_cache.sqlite")
+            client.find_folders(
+                self.session,
+                query="lettre24",
+                account_selector="demo@example.com",
+                all_accounts=False,
+                limit=10,
+                rediscover_folders=True,
+                cache_path=cache_path,
+            )
+            account = client.resolve_account(self.session, "demo@example.com")
+            account["store"].root.Folders = ForbiddenFolders()
+
+            result = client.find_folders(
+                self.session,
+                query="lettre24",
+                account_selector="demo@example.com",
+                all_accounts=False,
+                limit=10,
+                rediscover_folders=False,
+                cache_path=cache_path,
+            )
+
+        self.assertEqual(result["matches"][0]["name"], "Lettre24")
+        self.assertFalse(result["folder_hierarchy_enumerated"])
+        self.assertEqual(result["folder_inventory_source"], "cache")
 
     def test_search_all_folders_searches_matched_folder_first(self):
-        result = client.search_all_folders(
-            self.session,
-            account_selector="demo@example.com",
-            all_accounts=False,
-            query="lettre24",
-            unread=False,
-            sender=None,
-            recipient=None,
-            days=7,
-            folder_limit=10,
-            per_folder_limit=5,
-            update_hints=False,
-        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = str(Path(temp_dir) / "mail_cache.sqlite")
+            client.find_folders(
+                self.session,
+                query="lettre24",
+                account_selector="demo@example.com",
+                all_accounts=False,
+                limit=10,
+                rediscover_folders=True,
+                cache_path=cache_path,
+            )
+            result = client.search_all_folders(
+                self.session,
+                account_selector="demo@example.com",
+                all_accounts=False,
+                query="lettre24",
+                unread=False,
+                sender=None,
+                recipient=None,
+                days=7,
+                folder_limit=10,
+                per_folder_limit=5,
+                update_hints=False,
+                cache_path=cache_path,
+            )
 
         self.assertEqual([message["entry_id"] for message in result["messages"]], ["msg-5"])
         self.assertEqual(result["matched_folders"][0]["name"], "Lettre24")
@@ -563,45 +634,59 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         self.assertEqual(result["scope"]["strategy"], "matched-folders")
 
     def test_search_all_folders_has_bounded_fallback_metadata(self):
-        result = client.search_all_folders(
-            self.session,
-            account_selector="demo@example.com",
-            all_accounts=False,
-            query="unknown-service",
-            unread=False,
-            sender=None,
-            recipient=None,
-            days=7,
-            folder_limit=2,
-            per_folder_limit=1,
-            update_hints=False,
-        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = client.search_all_folders(
+                self.session,
+                account_selector="demo@example.com",
+                all_accounts=False,
+                query="unknown-service",
+                unread=False,
+                sender=None,
+                recipient=None,
+                days=7,
+                folder_limit=2,
+                per_folder_limit=1,
+                update_hints=False,
+                cache_path=str(Path(temp_dir) / "mail_cache.sqlite"),
+            )
 
         self.assertEqual(result["messages"], [])
         self.assertEqual(result["matched_folders"], [])
         self.assertLessEqual(len(result["searched_folders"]), 2)
-        self.assertEqual(result["scope"]["strategy"], "bounded-all-folders")
+        self.assertEqual(result["scope"]["strategy"], "bounded-folder-inventory")
         self.assertTrue(result["scope"]["limited"])
 
     def test_folder_hints_accelerate_without_hiding_folder_discovery(self):
         hints = {"lettre24": ["custom:Inbox/Delivery/Lettre24"]}
-        result = client.search_all_folders(
-            self.session,
-            account_selector="demo@example.com",
-            all_accounts=False,
-            query="lettre24",
-            unread=False,
-            sender=None,
-            recipient=None,
-            days=7,
-            folder_limit=10,
-            per_folder_limit=5,
-            folder_hints=hints,
-            update_hints=False,
-        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = str(Path(temp_dir) / "mail_cache.sqlite")
+            client.find_folders(
+                self.session,
+                query="lettre24",
+                account_selector="demo@example.com",
+                all_accounts=False,
+                limit=10,
+                rediscover_folders=True,
+                cache_path=cache_path,
+            )
+            result = client.search_all_folders(
+                self.session,
+                account_selector="demo@example.com",
+                all_accounts=False,
+                query="lettre24",
+                unread=False,
+                sender=None,
+                recipient=None,
+                days=7,
+                folder_limit=10,
+                per_folder_limit=5,
+                folder_hints=hints,
+                update_hints=False,
+                cache_path=cache_path,
+            )
 
         self.assertEqual(result["searched_folders"][0]["source"], "hint")
-        self.assertEqual(result["matched_folders"][0]["source"], "discovery")
+        self.assertEqual(result["matched_folders"][0]["source"], "cache")
 
     def test_cache_refresh_populates_metadata_without_bodies(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -614,6 +699,7 @@ class OutlookClassicMailClientTests(unittest.TestCase):
                 days=90,
                 force=True,
                 cache_path=cache_path,
+                rediscover_folders=True,
             )
             shown = client.cache_show(
                 cache_path=cache_path,
@@ -628,6 +714,109 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         self.assertIn("candidate_folders", shown)
         self.assertNotIn("body", shown["messages"][0])
         self.assertNotIn("body_excerpt", shown["messages"][0])
+        self.assertTrue(refresh["folder_hierarchy_enumerated"])
+
+    def test_warm_cache_refresh_resolves_custom_folders_without_enumeration(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = str(Path(temp_dir) / "mail_cache.sqlite")
+            client.cache_refresh(
+                self.session,
+                account_selector="demo@example.com",
+                all_accounts=False,
+                days=90,
+                force=True,
+                cache_path=cache_path,
+                rediscover_folders=True,
+            )
+            account = client.resolve_account(self.session, "demo@example.com")
+            account["store"].root.Folders = ForbiddenFolders()
+
+            refresh = client.cache_refresh(
+                self.session,
+                account_selector="demo@example.com",
+                all_accounts=False,
+                days=90,
+                force=False,
+                cache_path=cache_path,
+                rediscover_folders=False,
+            )
+
+        self.assertFalse(refresh["folder_hierarchy_enumerated"])
+        self.assertEqual(refresh["folder_inventory_source"], "cache")
+        self.assertGreaterEqual(refresh["messages_cached"], 5)
+
+    def test_cache_refresh_backfills_folder_identity_from_cached_message_parent(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = str(Path(temp_dir) / "mail_cache.sqlite")
+            cache = mail_cache.MailCache(cache_path)
+            account = client.resolve_account(self.session, "demo@example.com")
+            folder = client.resolve_folder(account, "custom:Inbox/Delivery/Lettre24")
+            cache.update_folder_state(
+                {
+                    "store_id": account["store_id"],
+                    "account": account["smtp_address"],
+                    "store": account["delivery_store"],
+                    "folder_selector": "custom:Inbox/Delivery/Lettre24",
+                    "folder_path": folder.FolderPath,
+                    "high_watermark": "",
+                    "refreshed_at": "2026-08-28T12:00:00Z",
+                    "message_count": 1,
+                }
+            )
+            cache.upsert_message(
+                client.message_cache_record(
+                    account_info=account,
+                    folder=folder,
+                    folder_selector="custom:Inbox/Delivery/Lettre24",
+                    item=folder.Items[0],
+                )
+            )
+            account["store"].root.Folders = ForbiddenFolders()
+
+            refresh = client.cache_refresh(
+                self.session,
+                account_selector="demo@example.com",
+                all_accounts=False,
+                days=90,
+                force=False,
+                cache_path=cache_path,
+                rediscover_folders=False,
+            )
+            inventory = cache.folder_inventory(account="demo@example.com")
+
+        lettre24 = next(row for row in inventory if row["folder_selector"].endswith("Lettre24"))
+        self.assertEqual(lettre24["folder_entry_id"], folder.EntryID)
+        self.assertFalse(refresh["folder_hierarchy_enumerated"])
+
+    def test_stale_cached_folder_is_skipped_without_hidden_rediscovery(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = str(Path(temp_dir) / "mail_cache.sqlite")
+            cache = mail_cache.MailCache(cache_path)
+            cache.upsert_folder_identity(
+                {
+                    "store_id": "store-1",
+                    "account": "demo@example.com",
+                    "store": "demo@example.com",
+                    "folder_selector": "custom:Inbox/Rules/Old",
+                    "folder_path": r"\Mailbox\Inbox\Rules\Old",
+                    "folder_entry_id": "missing-folder",
+                }
+            )
+            account = client.resolve_account(self.session, "demo@example.com")
+            account["store"].root.Folders = ForbiddenFolders()
+
+            refresh = client.cache_refresh(
+                self.session,
+                account_selector="demo@example.com",
+                all_accounts=False,
+                days=90,
+                force=False,
+                cache_path=cache_path,
+                rediscover_folders=False,
+            )
+
+        self.assertFalse(refresh["folder_hierarchy_enumerated"])
+        self.assertTrue(any("rediscover-folders" in warning for warning in refresh["warnings"]))
 
     def test_search_all_folders_uses_cache_candidates_before_discovery(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -639,6 +828,7 @@ class OutlookClassicMailClientTests(unittest.TestCase):
                 days=90,
                 force=True,
                 cache_path=cache_path,
+                rediscover_folders=True,
             )
 
             result = client.search_all_folders(
@@ -673,6 +863,7 @@ class OutlookClassicMailClientTests(unittest.TestCase):
                 days=90,
                 force=True,
                 cache_path=cache_path,
+                rediscover_folders=True,
             )
 
             result = client.search_all_folders(
@@ -2029,22 +2220,34 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         original_remember = client.remember_folder_hints
         client.remember_folder_hints = lambda **kwargs: (_ for _ in ()).throw(PermissionError("hint file locked"))
         try:
-            result = client.search_all_folders(
-                self.session,
-                account_selector="demo@example.com",
-                all_accounts=False,
-                query="lettre24",
-                unread=False,
-                sender=None,
-                recipient=None,
-                days=7,
-                folder_limit=10,
-                per_folder_limit=5,
-                update_hints=True,
-                use_cache=False,
-                update_cache=False,
-                broad_scan=False,
-            )
+            with tempfile.TemporaryDirectory() as temp_dir:
+                cache_path = str(Path(temp_dir) / "mail_cache.sqlite")
+                client.find_folders(
+                    self.session,
+                    query="lettre24",
+                    account_selector="demo@example.com",
+                    all_accounts=False,
+                    limit=10,
+                    rediscover_folders=True,
+                    cache_path=cache_path,
+                )
+                result = client.search_all_folders(
+                    self.session,
+                    account_selector="demo@example.com",
+                    all_accounts=False,
+                    query="lettre24",
+                    unread=False,
+                    sender=None,
+                    recipient=None,
+                    days=7,
+                    folder_limit=10,
+                    per_folder_limit=5,
+                    update_hints=True,
+                    use_cache=False,
+                    update_cache=False,
+                    broad_scan=False,
+                    cache_path=cache_path,
+                )
         finally:
             client.remember_folder_hints = original_remember
 
@@ -2099,15 +2302,19 @@ class OutlookClassicMailClientTests(unittest.TestCase):
             ]
         )
         global_args = parser.parse_args(["--queue-timeout-sec", "30", "accounts"])
-        refresh_args = parser.parse_args(["cache-refresh", "--all-accounts", "--days", "30", "--force"])
-        sync_args = parser.parse_args(["sync-mail", "--refresh-cache", "--all-accounts"])
+        refresh_args = parser.parse_args(["cache-refresh", "--all-accounts", "--days", "30", "--force", "--rediscover-folders"])
+        sync_args = parser.parse_args(["sync-mail", "--refresh-cache", "--all-accounts", "--rediscover-folders"])
+        find_args = parser.parse_args(["find-folders", "--query", "rules", "--rediscover-folders"])
 
         self.assertTrue(search_args.bypass_cache)
         self.assertTrue(search_args.broad_scan)
         self.assertTrue(search_args.no_update_cache)
         self.assertEqual(global_args.queue_timeout_sec, 30)
         self.assertEqual(refresh_args.operation, "cache-refresh")
+        self.assertTrue(refresh_args.rediscover_folders)
         self.assertEqual(sync_args.operation, "sync-mail")
+        self.assertTrue(sync_args.rediscover_folders)
+        self.assertTrue(find_args.rediscover_folders)
 
 
 if __name__ == "__main__":

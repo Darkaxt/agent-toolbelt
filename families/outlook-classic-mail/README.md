@@ -8,7 +8,7 @@ Use this family when an agent needs local mailbox access through Microsoft Outlo
 - keeps the standalone client source under `local-client/` so COM behavior and tests are reviewed with the family
 - launches that client through `uv run --project ...`
 - normalizes JSON results for Codex-facing wrappers
-- exposes fast folder discovery before message search for rule-managed Outlook folders
+- exposes a cache-backed folder identity inventory before message search for rule-managed Outlook folders
 - maintains a lightweight SQLite metadata cache for recent contacts, subjects, timestamps, folder locations, and message identifiers
 - triggers Outlook Send/Receive All Folders when recent sent or received mail has not appeared locally yet
 - serializes COM-backed operations through a client-wide FIFO queue
@@ -41,6 +41,7 @@ agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 cache-refresh --all-
 agent-toolbelt-outlook-classic-mail cache-status --query lettre24
 agent-toolbelt-outlook-classic-mail cache-show --query lettre24 --limit 10
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 find-folders --query lettre24 --all-accounts
+agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 find-folders --query lettre24 --all-accounts --rediscover-folders
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 search --account demo@example.com --folder inbox --query "approval" --days 7 --limit 10 --no-update-cache
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 search --all-folders --query lettre24 --all-accounts --folder-limit 10 --per-folder-limit 5
 agent-toolbelt-outlook-classic-mail --queue-timeout-sec 900 search --all-folders --query lettre24 --all-accounts --bypass-cache --broad-scan
@@ -62,9 +63,9 @@ The family bridge uses the external client root in this order:
 2. `OUTLOOK_CLASSIC_MAIL_HOME`
 3. the legacy `%LOCALAPPDATA%\Tools\outlook-classic-mail` compatibility project root
 
-For sender or service lookups such as "latest emails from X", prefer `find-folders` first. Outlook rules often move mail out of Inbox, and folder discovery is much cheaper than recursively scanning messages.
+For sender or service lookups such as "latest emails from X", prefer cache-backed `find-folders` first. Outlook rules often move mail out of Inbox, and the inventory resolves folders by persisted Outlook EntryID instead of recursively walking the live folder tree.
 
-For repeated contact or subject searches, use the metadata cache as a locator. `cache-refresh --all-accounts --days 90` builds a rolling cache of message IDs, contacts, subjects, timestamps, and folder paths. Search confirms cache candidates through live Outlook COM before returning messages. Use `--bypass-cache --broad-scan` when the user suspects a stale cache or asks to scan broadly.
+For repeated contact or subject searches, use the metadata cache as a locator. `cache-refresh --all-accounts --days 90` builds a rolling cache of message IDs, contacts, subjects, timestamps, folder paths, and folder EntryIDs. Search confirms cache candidates through live Outlook COM before returning messages. Normal `find-folders`, `cache-refresh`, `sync-mail`, and all-folder search do not enumerate the live hierarchy. Add `--rediscover-folders` only when the cached inventory is missing or stale. Live rediscovery can expand or materialize Outlook's visible folder tree, so inspect `folder_hierarchy_enumerated` and `folder_inventory_source` before claiming an operation was non-enumerating.
 
 COM-backed commands enter a local FIFO queue before they touch Outlook. Do not launch many heavy Outlook queries in parallel expecting linear timeout inflation; queueing is the concurrency control layer. Use `--queue-timeout-sec` to control how long a call waits for its turn. Result payloads report `queue.used`, `queue.waited_seconds`, `queue.position_at_enqueue`, `queue.depth_at_enqueue`, `queue.timeout_seconds`, and reclaimed expired/dead ticket counts. A non-expired ticket is reclaimed only when Windows PID liveness proves its owner is gone.
 
