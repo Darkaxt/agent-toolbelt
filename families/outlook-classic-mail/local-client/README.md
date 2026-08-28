@@ -107,6 +107,14 @@ target account's default Drafts folder. Inspect `draft_placement.target_account`
 `apply-action --action create-draft` is only for standalone new drafts; it uses
 the selected account's Drafts folder but has no thread content to include.
 
+For replies and forwards, omitting `--send-using-account` derives the target
+sender from the anchor message's original recipient SMTP addresses when exactly
+one configured Outlook account matches. Explicit `--send-using-account` wins.
+Multiple configured matches fail closed; no match falls back to the anchor
+account and reports `send_using_account_recipient_unmatched`. Inspect
+`send_using_account_selection.source`, `selected`, and
+`matched_recipient_accounts` before claiming the sender was derived correctly.
+
 Blocklist support is read-only. The `threat` profile uses threat-centered DNS
 lists; `debug-all` adds broader ad/tracking/adult/platform lists for exploratory
 dry runs.
