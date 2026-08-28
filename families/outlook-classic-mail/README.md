@@ -103,8 +103,12 @@ set, and use explicit `--to`, `--cc`, or `--bcc` when the user names a specific
 recipient set. The helper normalizes native Outlook reply-all recipients to
 SMTP addresses when Outlook exposes them through the Recipients collection, and
 explicit recipient flags must contain SMTP email addresses rather than display
-names. Use `--send-using-account` when the outgoing draft should be sent from a
-different configured Outlook account.
+names. Without `--send-using-account`, the helper derives the sender from the
+anchor message's original recipient SMTP addresses when exactly one configured
+Outlook account matches. An explicit `--send-using-account` always overrides
+that derivation. Multiple matching configured recipient accounts fail closed
+and require an explicit sender; no match falls back to the anchor account with
+`send_using_account_recipient_unmatched` diagnostics.
 
 `--instruction` is guidance for the agent and diagnostics only; it is never used
 as the saved draft body. To create a draft, pass the final reply/forward text in
@@ -130,7 +134,8 @@ Created reply/forward payloads include `draft_content`, `draft_placement`, and
 `draft_attachments`, and `draft_recipients`.
 Check `draft_content.thread_content_included`,
 `draft_content.thread_content_source`, `draft_placement.actual_send_using_account`,
-`draft_placement.placement_verified`, `draft_recipients.actual`, and
+`draft_placement.placement_verified`, `send_using_account_selection`,
+`draft_recipients.actual`, and
 `draft_attachments.items[].attached`
 before reporting that a draft is correctly threaded, sender-safe, and has the
 requested files. If Outlook does not materialize the quoted thread, the client

@@ -2165,6 +2165,12 @@ def attach_draft_files(draft: Any, draft_attachments: dict[str, Any]) -> None:
 
 EMAIL_PATTERN = re.compile(r"[\w.+%-]+@[\w.-]+\.[A-Za-z]{2,}")
 PR_SMTP_ADDRESS = "http://schemas.microsoft.com/mapi/proptag/0x39FE001E"
+RECEIVED_ACCOUNT_PROPERTIES = (
+    "http://schemas.microsoft.com/mapi/proptag/0x0076001E",
+    "http://schemas.microsoft.com/mapi/proptag/0x0076001F",
+    "http://schemas.microsoft.com/mapi/proptag/0x0078001E",
+    "http://schemas.microsoft.com/mapi/proptag/0x0078001F",
+)
 
 
 def email_addresses_from_text(value: str | None) -> list[str]:
@@ -2214,6 +2220,32 @@ def recipient_smtp_address(recipient: Any) -> str:
         if emails:
             return emails[0]
     return ""
+
+
+def message_recipient_smtp_addresses(message: Any) -> list[str]:
+    addresses: list[str] = []
+
+    recipients = safe_get(message, "Recipients")
+    count = int(safe_get(recipients, "Count", 0) or 0)
+    for recipient in iterate_collection(recipients, count):
+        smtp = recipient_smtp_address(recipient)
+        if smtp:
+            addresses.append(smtp)
+
+    for attribute in ("To", "CC", "BCC", "ReceivedByName", "ReceivedOnBehalfOfName"):
+        addresses.extend(email_addresses_from_text(str(safe_get(message, attribute, "") or "")))
+
+    property_accessor = safe_get(message, "PropertyAccessor")
+    get_property = safe_get(property_accessor, "GetProperty")
+    if callable(get_property):
+        for property_name in RECEIVED_ACCOUNT_PROPERTIES:
+            try:
+                value = str(get_property(property_name) or "")
+            except Exception:
+                continue
+            addresses.extend(email_addresses_from_text(value))
+
+    return list(dict.fromkeys(address.strip().lower() for address in addresses if address.strip()))
 
 
 def normalize_native_recipients_to_smtp(
@@ -2704,11 +2736,50 @@ def resolve_send_using_account(
     session: Any,
     *,
     anchor_account_info: dict[str, Any],
+    message: Any,
     send_using_account_selector: str | None,
-) -> dict[str, Any]:
-    if not send_using_account_selector:
-        return anchor_account_info
-    return resolve_account(session, send_using_account_selector)
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    if send_using_account_selector:
+        selected = resolve_account(session, send_using_account_selector)
+        return selected, {
+            "source": "explicit",
+            "requested": send_using_account_selector,
+            "selected": selected.get("smtp_address"),
+            "matched_recipient_accounts": [],
+            "warnings": [],
+        }
+
+    recipient_addresses = set(message_recipient_smtp_addresses(message))
+    matches = [
+        account
+        for account in collect_accounts(session)
+        if str(account.get("smtp_address") or "").strip().lower() in recipient_addresses
+    ]
+    matched_addresses = list(
+        dict.fromkeys(str(account.get("smtp_address") or "") for account in matches)
+    )
+    if len(matched_addresses) > 1:
+        raise ValueError(
+            "The anchor message recipients matched multiple configured Outlook accounts: "
+            f"{', '.join(matched_addresses)}. Pass --send-using-account explicitly."
+        )
+    if len(matched_addresses) == 1:
+        selected = resolve_account(session, matched_addresses[0])
+        return selected, {
+            "source": "anchor_recipient",
+            "requested": None,
+            "selected": selected.get("smtp_address"),
+            "matched_recipient_accounts": matched_addresses,
+            "warnings": [],
+        }
+
+    return anchor_account_info, {
+        "source": "anchor_account_fallback",
+        "requested": None,
+        "selected": anchor_account_info.get("smtp_address"),
+        "matched_recipient_accounts": [],
+        "warnings": ["send_using_account_recipient_unmatched"],
+    }
 
 
 def draft_reply(
@@ -2735,6 +2806,12 @@ def draft_reply(
 
     account_info = resolve_account(session, account_selector)
     message = resolve_message(session, account_info, message_id)
+    send_account_info, send_account_selection = resolve_send_using_account(
+        session,
+        anchor_account_info=account_info,
+        message=message,
+        send_using_account_selector=send_using_account_selector,
+    )
     if reply_mode == "all":
         reply_all = safe_get(message, "ReplyAll")
         if not callable(reply_all):
@@ -2762,13 +2839,8 @@ def draft_reply(
         "body_format": "preview",
         "warnings": [],
     }
-    send_account_info = resolve_send_using_account(
-        session,
-        anchor_account_info=account_info,
-        send_using_account_selector=send_using_account_selector,
-    )
     if create_draft:
-        if send_using_account_selector and not account_store_matches(account_info, send_account_info):
+        if not account_store_matches(account_info, send_account_info):
             reply, body_format, draft_placement, draft_content = save_target_store_draft(
                 template=reply,
                 target_account_info=send_account_info,
@@ -2805,6 +2877,7 @@ def draft_reply(
                     draft=reply,
                     warnings=warnings,
                 )
+        draft_placement["target_account_source"] = send_account_selection["source"]
         created = True
         draft_entry_id = safe_get(reply, "EntryID", None)
     body_state = draft_body_state(suggested_body=suggested_body, created=created)
@@ -2819,8 +2892,9 @@ def draft_reply(
         "instruction": instruction,
         "draft_status": body_state["draft_status"],
         "draft_body_source": body_state["draft_body_source"],
-        "warnings": body_state["warnings"],
+        "warnings": body_state["warnings"] + send_account_selection["warnings"],
         "send_using_account": send_account_info["smtp_address"],
+        "send_using_account_selection": send_account_selection,
         "body_format": body_format,
         "created": created,
         "draft_entry_id": draft_entry_id,
@@ -2859,6 +2933,12 @@ def draft_forward(
 
     account_info = resolve_account(session, account_selector)
     message = resolve_message(session, account_info, message_id)
+    send_account_info, send_account_selection = resolve_send_using_account(
+        session,
+        anchor_account_info=account_info,
+        message=message,
+        send_using_account_selector=send_using_account_selector,
+    )
     forward = message.Forward()
     recipient_summary = apply_recipient_fields(forward, to=to, cc=cc, bcc=bcc)
     suggested_body = compose_draft_body(
@@ -2878,13 +2958,8 @@ def draft_forward(
         "body_format": "preview",
         "warnings": [],
     }
-    send_account_info = resolve_send_using_account(
-        session,
-        anchor_account_info=account_info,
-        send_using_account_selector=send_using_account_selector,
-    )
     if create_draft:
-        if send_using_account_selector and not account_store_matches(account_info, send_account_info):
+        if not account_store_matches(account_info, send_account_info):
             forward, body_format, draft_placement, draft_content = save_target_store_draft(
                 template=forward,
                 target_account_info=send_account_info,
@@ -2921,6 +2996,7 @@ def draft_forward(
                     draft=forward,
                     warnings=warnings,
                 )
+        draft_placement["target_account_source"] = send_account_selection["source"]
         created = True
         draft_entry_id = safe_get(forward, "EntryID", None)
     body_state = draft_body_state(suggested_body=suggested_body, created=created)
@@ -2935,8 +3011,9 @@ def draft_forward(
         "instruction": instruction,
         "draft_status": body_state["draft_status"],
         "draft_body_source": body_state["draft_body_source"],
-        "warnings": body_state["warnings"],
+        "warnings": body_state["warnings"] + send_account_selection["warnings"],
         "send_using_account": send_account_info["smtp_address"],
+        "send_using_account_selection": send_account_selection,
         "body_format": body_format,
         "created": created,
         "draft_entry_id": draft_entry_id,

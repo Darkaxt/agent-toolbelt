@@ -990,8 +990,11 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         )
 
         self.assertTrue(result["created"])
-        self.assertEqual(len(result["warnings"]), 2)
-        self.assertTrue(all(warning.startswith("WARNING:") for warning in result["warnings"]))
+        body_warnings = [warning for warning in result["warnings"] if warning.startswith("WARNING:")]
+        self.assertEqual(len(body_warnings), 2)
+        self.assertTrue(any("HTML-LIKE TAGS" in warning for warning in body_warnings))
+        self.assertTrue(any("LITERAL ESCAPE SEQUENCES" in warning for warning in body_warnings))
+        self.assertIn("send_using_account_recipient_unmatched", result["warnings"])
         self.assertIn(r"\n", result["suggested_body"])
         self.assertIn("&lt;p&gt;Hello&lt;/p&gt;", self.session.GetItemFromID("msg-1").last_reply.HTMLBody)
 
@@ -1240,6 +1243,124 @@ class OutlookClassicMailClientTests(unittest.TestCase):
         self.assertEqual(draft.SendUsingAccount.SmtpAddress, "reply@example.com")
         self.assertEqual(draft.To, "clientservices@example.com")
         self.assertIn("<p>Thanks.</p>", draft.HTMLBody)
+
+    def test_draft_reply_derives_send_account_from_anchor_recipient(self):
+        response_session = make_response_session()
+        anchor = response_session.GetItemFromID("anchor-1")
+        anchor_drafts = client.resolve_folder(client.resolve_account(response_session, "anchor@example.com"), "drafts")
+        reply_drafts = client.resolve_folder(client.resolve_account(response_session, "reply@example.com"), "drafts")
+
+        result = client.draft_reply(
+            response_session,
+            account_selector="anchor@example.com",
+            message_id="anchor-1",
+            instruction="Reply from the account that received the message.",
+            body="Thanks.",
+            create_draft=True,
+            confirm=True,
+        )
+
+        self.assertEqual(result["send_using_account"], "reply@example.com")
+        self.assertEqual(result["send_using_account_selection"]["source"], "anchor_recipient")
+        self.assertEqual(result["send_using_account_selection"]["matched_recipient_accounts"], ["reply@example.com"])
+        self.assertEqual(result["draft_placement"]["strategy"], "target_store_drafts")
+        self.assertEqual(result["draft_placement"]["target_account_source"], "anchor_recipient")
+        self.assertEqual(len(anchor_drafts.Items), 0)
+        self.assertEqual(len(reply_drafts.Items), 2)
+        self.assertFalse(anchor.last_reply.saved)
+        self.assertEqual(reply_drafts.Items[-1].SendUsingAccount.SmtpAddress, "reply@example.com")
+
+    def test_explicit_send_account_overrides_anchor_recipient_derivation(self):
+        response_session = make_response_session()
+        other_drafts = client.resolve_folder(client.resolve_account(response_session, "other@example.com"), "drafts")
+
+        result = client.draft_reply(
+            response_session,
+            account_selector="anchor@example.com",
+            send_using_account_selector="other@example.com",
+            message_id="anchor-1",
+            instruction="Use the explicit sender.",
+            body="Thanks.",
+            create_draft=True,
+            confirm=True,
+        )
+
+        self.assertEqual(result["send_using_account"], "other@example.com")
+        self.assertEqual(result["send_using_account_selection"]["source"], "explicit")
+        self.assertEqual(other_drafts.Items[-1].SendUsingAccount.SmtpAddress, "other@example.com")
+
+    def test_draft_reply_derives_send_account_from_resolved_recipient_collection(self):
+        response_session = make_response_session()
+        anchor = response_session.GetItemFromID("anchor-1")
+        anchor.To = "Reply User"
+        anchor.Recipients = FakeRecipients(
+            [FakeRecipient(Name="Reply User", Address="reply@example.com", Type=1)]
+        )
+
+        result = client.draft_reply(
+            response_session,
+            account_selector="anchor@example.com",
+            message_id="anchor-1",
+            instruction="Reply from the resolved recipient account.",
+            body="Thanks.",
+            create_draft=True,
+            confirm=True,
+        )
+
+        self.assertEqual(result["send_using_account"], "reply@example.com")
+        self.assertEqual(result["send_using_account_selection"]["source"], "anchor_recipient")
+
+    def test_draft_forward_derives_send_account_from_anchor_recipient(self):
+        response_session = make_response_session()
+        reply_drafts = client.resolve_folder(client.resolve_account(response_session, "reply@example.com"), "drafts")
+
+        result = client.draft_forward(
+            response_session,
+            account_selector="anchor@example.com",
+            message_id="anchor-1",
+            to="third@example.com",
+            instruction="Forward from the receiving account.",
+            body="Forwarding.",
+            create_draft=True,
+            confirm=True,
+        )
+
+        self.assertEqual(result["send_using_account"], "reply@example.com")
+        self.assertEqual(result["send_using_account_selection"]["source"], "anchor_recipient")
+        self.assertEqual(reply_drafts.Items[-1].SendUsingAccount.SmtpAddress, "reply@example.com")
+
+    def test_unmatched_anchor_recipient_falls_back_with_diagnostic(self):
+        result = client.draft_reply(
+            self.session,
+            account_selector="demo@example.com",
+            message_id="msg-1",
+            instruction="Reply from the anchor account.",
+            body="Thanks.",
+            create_draft=True,
+            confirm=True,
+        )
+
+        self.assertEqual(result["send_using_account"], "demo@example.com")
+        self.assertEqual(result["send_using_account_selection"]["source"], "anchor_account_fallback")
+        self.assertIn("send_using_account_recipient_unmatched", result["warnings"])
+
+    def test_ambiguous_anchor_recipient_accounts_require_explicit_sender(self):
+        response_session = make_response_session()
+        anchor = response_session.GetItemFromID("anchor-1")
+        anchor.To = "reply@example.com; other@example.com"
+
+        with self.assertRaisesRegex(ValueError, "matched multiple configured Outlook accounts"):
+            client.draft_reply(
+                response_session,
+                account_selector="anchor@example.com",
+                message_id="anchor-1",
+                instruction="Reply safely.",
+                body="Thanks.",
+                create_draft=True,
+                confirm=True,
+            )
+
+        self.assertIsNone(anchor.last_reply)
 
     def test_draft_reply_create_adds_explicit_attachment_before_save(self):
         message = self.session.GetItemFromID("msg-1")
@@ -1900,8 +2021,9 @@ class OutlookClassicMailClientTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["warnings"], result["result"]["warnings"])
-        self.assertEqual(len(result["warnings"]), 2)
-        self.assertTrue(all(warning.startswith("WARNING:") for warning in result["warnings"]))
+        body_warnings = [warning for warning in result["warnings"] if warning.startswith("WARNING:")]
+        self.assertEqual(len(body_warnings), 2)
+        self.assertIn("send_using_account_recipient_unmatched", result["warnings"])
 
     def test_search_all_folders_hint_write_failures_become_warnings(self):
         original_remember = client.remember_folder_hints
