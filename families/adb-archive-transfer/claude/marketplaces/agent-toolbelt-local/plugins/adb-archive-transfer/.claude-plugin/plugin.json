@@ -1,0 +1,17 @@
+{
+  "name": "adb-archive-transfer",
+  "version": "0.1.0",
+  "description": "Manifest-bound ADB transfers with uncompressed tiny-file bundles and explicit endpoint verification.",
+  "author": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "adb",
+    "android",
+    "transfer",
+    "tar",
+    "manifest"
+  ]
+}
