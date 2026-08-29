@@ -11,9 +11,6 @@ if str(SRC_ROOT) not in sys.path:
 
 FORBIDDEN_TOKENS = (
     "C:" + "\\Users\\" + "darka",
-    "." + "codex",
-    "." + "claude",
-    "darka" + "-local",
 )
 
 

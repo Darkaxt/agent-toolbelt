@@ -4,6 +4,7 @@ Each family ships its own Codex skill bundle. Install only the family you want.
 
 ## Skill locations
 
+- ADB Archive Transfer: `families/adb-archive-transfer/codex/skills/adb-archive-transfer`
 - Antigravity Review: `families/antigravity/codex/skills/antigravity-cli`
 - Everything: `families/everything/codex/skills/everything-search`
 - Media: `families/media/codex/skills/yt-dlp-ffmpeg`

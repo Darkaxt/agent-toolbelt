@@ -1,0 +1,6 @@
+interface:
+  display_name: "ADB Archive Transfer"
+  short_description: "Transfer reviewed file manifests to one verified Android endpoint."
+  default_prompt: "Use $adb-archive-transfer to inventory ADB endpoints, plan a manifest-bound transfer, pack only tiny files into uncompressed TAR bundles, transfer larger files unchanged, verify hashes, and place the payload safely."
+policy:
+  allow_implicit_invocation: true

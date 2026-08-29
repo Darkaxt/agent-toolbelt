@@ -134,7 +134,7 @@ Expected: all assertions and validators pass.
 
 **Files:**
 - Deploy tested local-client files under `%LOCALAPPDATA%\Tools\outlook-classic-mail`
-- Deploy canonical skill files under `C:\Users\darka\.codex\skills` and `C:\Users\darka\.agents\skills`
+- Deploy canonical skill files under `<codex-skill-root>` and `<agents-skill-root>`
 
 - [ ] **Step 1: Run all relevant test suites**
 
@@ -155,4 +155,3 @@ files. Run an installed read-only `cache-status` smoke check.
 Push a focused branch, open a PR, wait for required checks, merge, fast-forward
 local `main`, delete the topic branch, and confirm a clean
 `main...origin/main` status.
-

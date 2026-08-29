@@ -1,0 +1,24 @@
+{
+  "name": "agent-toolbelt-local",
+  "metadata": {
+    "description": "Local marketplace for the agent-toolbelt ADB Archive Transfer Claude plugin."
+  },
+  "owner": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "plugins": [
+    {
+      "name": "adb-archive-transfer",
+      "description": "Manifest-bound ADB transfers with uncompressed tiny-file bundles and explicit endpoint verification.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Darkaxt",
+        "email": "opensource@users.noreply.github.com"
+      },
+      "source": "./plugins/adb-archive-transfer",
+      "category": "productivity",
+      "strict": false
+    }
+  ]
+}

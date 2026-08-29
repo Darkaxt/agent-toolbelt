@@ -8,6 +8,9 @@ dependencies = [
   "agent-toolbelt-core",
 ]
 
+[tool.uv.sources]
+agent-toolbelt-core = { workspace = true }
+
 [project.scripts]
 agent-toolbelt-aliexpress-cli = "agent_toolbelt_aliexpress_cli.cli:entrypoint"
 

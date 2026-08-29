@@ -53,7 +53,7 @@
 ### Task 4: Publish and refresh the installed skill
 
 **Files:**
-- Refresh after merge: `C:/Users/darka/.codex/skills/yt-dlp-ffmpeg`
+- Refresh after merge: `<codex-skill-root>/yt-dlp-ffmpeg`
 
 - [ ] Inspect the final diff and confirm only media-analysis scope is present.
 - [ ] Commit, push, open and merge the GitHub PR.

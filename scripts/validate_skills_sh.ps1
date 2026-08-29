@@ -2,6 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $ExpectedSkills = @(
+  @{ Name = "adb-archive-transfer"; Path = "families/adb-archive-transfer/codex/skills/adb-archive-transfer/SKILL.md" },
   @{ Name = "amazon-cli"; Path = "families/amazon-cli/codex/skills/amazon-cli/SKILL.md" },
   @{ Name = "skroutz-cli"; Path = "families/skroutz-cli/codex/skills/skroutz-cli/SKILL.md" },
   @{ Name = "aliexpress-cli"; Path = "families/aliexpress-cli/codex/skills/aliexpress-cli/SKILL.md" },
