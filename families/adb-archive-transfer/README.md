@@ -10,12 +10,12 @@ The implementation is intentionally fail-closed around ambiguous devices, source
 uv run --project families/adb-archive-transfer agent-toolbelt-adb-archive-transfer devices
 
 uv run --project families/adb-archive-transfer agent-toolbelt-adb-archive-transfer plan `
-  --source "D:\Transfer\NintendoDS" `
-  --destination "/storage/75D7-DC5F/Roms/NintendoDS" `
-  --serial bfa98654
+  --source "<source-path>" `
+  --destination "<absolute-device-destination>" `
+  --serial <serial>
 
 uv run --project families/adb-archive-transfer agent-toolbelt-adb-archive-transfer apply `
-  --manifest "D:\Temp\adb-archive-transfer\manifests\<transfer-id>.json" `
+  --manifest "<manifest-path>" `
   --confirm-transfer
 ```
 

@@ -131,7 +131,7 @@ class PlanningTests(unittest.TestCase):
 
 class EndpointTests(unittest.TestCase):
     DEVICE_OUTPUT = """List of devices attached
-bfa98654 device product:kalama model:AYN_Thor device:kalama transport_id:34
+device-001 device product:sample_product model:Test_Device device:sample_device transport_id:34
 emulator-5554 offline transport_id:35
 192.168.1.20:5555 unauthorized transport_id:36
 """
@@ -139,16 +139,16 @@ emulator-5554 offline transport_id:35
     def test_parses_adb_devices_with_endpoint_metadata(self):
         devices = transfer.parse_adb_devices(self.DEVICE_OUTPUT)
 
-        self.assertEqual(devices[0]["serial"], "bfa98654")
+        self.assertEqual(devices[0]["serial"], "device-001")
         self.assertEqual(devices[0]["state"], "device")
-        self.assertEqual(devices[0]["model"], "AYN_Thor")
+        self.assertEqual(devices[0]["model"], "Test_Device")
         self.assertEqual(devices[0]["transport_id"], "34")
         self.assertEqual(devices[1]["state"], "offline")
         self.assertEqual(devices[2]["state"], "unauthorized")
 
     def test_selects_only_ready_device_automatically(self):
         selected = transfer.select_device(transfer.parse_adb_devices(self.DEVICE_OUTPUT))
-        self.assertEqual(selected["serial"], "bfa98654")
+        self.assertEqual(selected["serial"], "device-001")
 
     def test_multiple_ready_devices_require_explicit_serial(self):
         devices = transfer.parse_adb_devices(
@@ -171,9 +171,9 @@ emulator-5554 offline transport_id:35
 
     def test_stable_identity_hash_ignores_transport_id(self):
         first = {
-            "serial": "bfa98654",
+            "serial": "device-001",
             "android_serial": "ABC123",
-            "model": "AYN Thor",
+            "model": "Test Device",
             "product": "kalama",
             "device": "kalama",
             "build_fingerprint": "vendor/build/fingerprint",
@@ -184,13 +184,13 @@ emulator-5554 offline transport_id:35
         self.assertEqual(transfer.stable_identity_hash(first), transfer.stable_identity_hash(second))
 
     def test_every_adb_command_binds_explicit_serial(self):
-        command = transfer.adb_command("C:/sdk/adb.exe", "bfa98654", "shell", "df", "-Pk", "/storage")
-        self.assertEqual(command[:4], ["C:/sdk/adb.exe", "-s", "bfa98654", "shell"])
+        command = transfer.adb_command("C:/sdk/adb.exe", "device-001", "shell", "df", "-Pk", "/storage")
+        self.assertEqual(command[:4], ["C:/sdk/adb.exe", "-s", "device-001", "shell"])
 
     def test_remote_shell_script_is_quoted_as_one_adb_shell_argument(self):
         command = transfer.remote_shell_command(
             "C:/sdk/adb.exe",
-            "bfa98654",
+            "device-001",
             "test -d /data/local/tmp && test -w /data/local/tmp",
         )
 
@@ -214,29 +214,29 @@ emulator-5554 offline transport_id:35
                     transfer.validate_remote_destination(destination)
                 self.assertEqual(raised.exception.kind, "unsafe_destination")
 
-        normalized, parent = transfer.validate_remote_destination("/storage/75D7-DC5F/Roms/nds")
-        self.assertEqual(normalized, "/storage/75D7-DC5F/Roms/nds")
-        self.assertEqual(parent, "/storage/75D7-DC5F/Roms")
+        normalized, parent = transfer.validate_remote_destination("/storage/ABCD-1234/Roms/nds")
+        self.assertEqual(normalized, "/storage/ABCD-1234/Roms/nds")
+        self.assertEqual(parent, "/storage/ABCD-1234/Roms")
 
     def test_parses_available_bytes_from_posix_df(self):
         output = """Filesystem 1024-blocks Used Available Capacity Mounted on
-/dev/block/vold 1000000 100000 900000 10% /storage/75D7-DC5F
+/dev/block/vold 1000000 100000 900000 10% /storage/ABCD-1234
 """
         self.assertEqual(transfer.parse_df_available_bytes(output), 900000 * 1024)
 
     def test_getprop_parser_enriches_endpoint_identity(self):
         output = """[ro.serialno]: [ABC123]
-[ro.product.model]: [AYN Thor]
+[ro.product.model]: [Test Device]
 [ro.product.name]: [kalama]
 [ro.product.device]: [kalama]
 [ro.build.fingerprint]: [vendor/build/fingerprint]
 """
         endpoint = transfer.enrich_endpoint_identity(
-            {"serial": "bfa98654", "state": "device", "transport_id": "34"},
+            {"serial": "device-001", "state": "device", "transport_id": "34"},
             output,
         )
         self.assertEqual(endpoint["android_serial"], "ABC123")
-        self.assertEqual(endpoint["model"], "AYN Thor")
+        self.assertEqual(endpoint["model"], "Test Device")
         self.assertEqual(endpoint["identity_hash"], transfer.stable_identity_hash(endpoint))
 
 
@@ -257,7 +257,7 @@ class RecordingRunner:
             return subprocess.CompletedProcess(
                 command,
                 0,
-                "List of devices attached\nbfa98654 device product:kalama model:AYN_Thor device:kalama transport_id:34\n",
+                "List of devices attached\ndevice-001 device product:sample_product model:Test_Device device:sample_device transport_id:34\n",
                 "",
             )
         joined = " ".join(command)
@@ -266,7 +266,7 @@ class RecordingRunner:
                 command,
                 0,
                 "[ro.serialno]: [ABC123]\n"
-                "[ro.product.model]: [AYN Thor]\n"
+                "[ro.product.model]: [Test Device]\n"
                 "[ro.product.name]: [kalama]\n"
                 "[ro.product.device]: [kalama]\n"
                 "[ro.build.fingerprint]: [vendor/build/fingerprint]\n",
@@ -279,7 +279,7 @@ class RecordingRunner:
                 command,
                 0,
                 "Filesystem 1024-blocks Used Available Capacity Mounted on\n"
-                "/dev/block/vold 20000000 100000 19900000 1% /storage/75D7-DC5F\n",
+                "/dev/block/vold 20000000 100000 19900000 1% /storage/ABCD-1234\n",
                 "",
             )
         if "toybox sha256sum" in joined and "sha256sum -c" not in joined:
@@ -312,8 +312,8 @@ class TransactionTests(unittest.TestCase):
         temp, root, source, adb_path, seven_zip_path, manifest_path, runner = fixture
         result = transfer.plan_transfer(
             source=source,
-            destination="/storage/75D7-DC5F/Roms/demo",
-            serial="bfa98654",
+            destination="/storage/ABCD-1234/Roms/demo",
+            serial="device-001",
             manifest_path=manifest_path,
             temp_root=root / "staging",
             adb_path=str(adb_path),
@@ -345,7 +345,7 @@ class TransactionTests(unittest.TestCase):
             with self.assertRaises(transfer.TransferError) as raised:
                 transfer.plan_transfer(
                     source=root / "missing",
-                    destination="/storage/75D7-DC5F/Roms/demo",
+                    destination="/storage/ABCD-1234/Roms/demo",
                     manifest_path=manifest_path,
                     adb_path=str(adb_path),
                     seven_zip_path=str(seven_zip_path),
@@ -366,8 +366,8 @@ class TransactionTests(unittest.TestCase):
             temp.cleanup()
 
         self.assertTrue(result["ok"])
-        self.assertEqual(manifest["device"]["serial"], "bfa98654")
-        self.assertEqual(manifest["destination"], "/storage/75D7-DC5F/Roms/demo")
+        self.assertEqual(manifest["device"]["serial"], "device-001")
+        self.assertEqual(manifest["destination"], "/storage/ABCD-1234/Roms/demo")
         modes = {item["relative_path"]: item["transfer_mode"] for item in manifest["files"]}
         self.assertEqual(modes["tiny-a.txt"], "packed")
         self.assertEqual(modes["tiny-b.txt"], "packed")
@@ -445,7 +445,7 @@ class TransactionTests(unittest.TestCase):
         placement_index = next(index for index, line in enumerate(rendered) if "mv --" in line and "/Roms/demo" in line)
         self.assertLess(extract_index, verify_index)
         self.assertLess(verify_index, placement_index)
-        self.assertEqual(result["destination"], "/storage/75D7-DC5F/Roms/demo")
+        self.assertEqual(result["destination"], "/storage/ABCD-1234/Roms/demo")
 
     def test_every_device_specific_adb_command_uses_manifest_serial(self):
         fixture, _result = self.create_plan()
@@ -465,7 +465,7 @@ class TransactionTests(unittest.TestCase):
         for command in adb_commands:
             if command[1:] == ["devices", "-l"]:
                 continue
-            self.assertEqual(command[1:3], ["-s", "bfa98654"])
+            self.assertEqual(command[1:3], ["-s", "device-001"])
 
     def test_cleanup_refuses_unconfirmed_and_targets_only_manifest_stage(self):
         fixture, _result = self.create_plan()

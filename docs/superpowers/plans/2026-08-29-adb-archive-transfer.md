@@ -98,8 +98,8 @@
 ### Task 7: Install and synchronize
 
 **Files:**
-- Install: `C:\Users\darka\.codex\skills\adb-archive-transfer`
-- Install: `C:\Users\darka\.agents\skills\adb-archive-transfer`
+- Install: `<codex-skill-root>\adb-archive-transfer`
+- Install: `<agents-skill-root>\adb-archive-transfer`
 
 - [ ] Copy the tested Codex and Claude bundles into their active roots without symlinks.
 - [ ] Compare source/install SHA-256 values and validate installed skills.
