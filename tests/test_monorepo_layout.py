@@ -6,6 +6,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 EXPECTED_FAMILIES = {
+    "adb-archive-transfer": {
+        "project_name": "agent-toolbelt-adb-archive-transfer",
+        "script_name": "agent-toolbelt-adb-archive-transfer",
+        "package_dir": "agent_toolbelt_adb_archive_transfer",
+        "has_claude": True,
+    },
     "antigravity": {
         "project_name": "agent-toolbelt-antigravity",
         "script_name": "agent-toolbelt-antigravity",
@@ -96,6 +102,7 @@ class MonorepoLayoutTests(unittest.TestCase):
             pyproject["tool"]["uv"]["workspace"]["members"],
             [
                 "packages/core",
+                "families/adb-archive-transfer",
                 "families/antigravity",
                 "families/everything",
                 "families/media",

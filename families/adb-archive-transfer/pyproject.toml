@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-toolbelt-adb-archive-transfer"
+version = "0.1.0"
+description = "Manifest-driven, endpoint-bound ADB file transfer with uncompressed tiny-file bundles."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Darkaxt" }]
+dependencies = []
+
+[project.scripts]
+agent-toolbelt-adb-archive-transfer = "agent_toolbelt_adb_archive_transfer.cli:entrypoint"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

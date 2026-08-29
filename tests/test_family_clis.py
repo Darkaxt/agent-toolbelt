@@ -10,6 +10,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 FAMILY_IMPORTS = {
+    "adb-archive-transfer": (
+        REPO_ROOT / "families" / "adb-archive-transfer" / "src",
+        "agent_toolbelt_adb_archive_transfer.cli",
+    ),
     "antigravity": (
         REPO_ROOT / "families" / "antigravity" / "src",
         "agent_toolbelt_antigravity.cli",
@@ -75,6 +79,28 @@ def import_family_cli(name: str):
 
 
 class FamilyCLITests(unittest.TestCase):
+    def test_adb_archive_transfer_cli_routes_devices_command(self):
+        cli = import_family_cli("adb-archive-transfer")
+
+        original_devices = cli.transfer.devices_command
+        cli.transfer.devices_command = lambda **kwargs: {
+            "ok": True,
+            "operation": "devices",
+            "devices": [{"serial": "test-device", "state": "device"}],
+            "warnings": [],
+            "errors": [],
+        }
+        try:
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                exit_code = cli.main(["devices"])
+                payload = json.loads(buffer.getvalue())
+        finally:
+            cli.transfer.devices_command = original_devices
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["operation"], "devices")
+        self.assertEqual(payload["devices"][0]["serial"], "test-device")
+
     def test_antigravity_cli_routes_status_command(self):
         cli = import_family_cli("antigravity")
 

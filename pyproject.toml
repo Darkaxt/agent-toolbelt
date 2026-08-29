@@ -1,6 +1,7 @@
 [tool.uv.workspace]
 members = [
   "packages/core",
+  "families/adb-archive-transfer",
   "families/antigravity",
   "families/everything",
   "families/media",
