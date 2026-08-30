@@ -354,6 +354,77 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["error"]["kind"], "source_thread_not_found")
         self.assertFalse(self.archive_root.exists())
 
+    def test_inspect_writes_manifest_only_when_output_is_explicit(self):
+        output_path = self.root / "inspection.json"
+
+        exit_code, payload = self.run_cli(
+            "inspect",
+            "--source-thread-id",
+            "root",
+            "--destination-thread-id",
+            "destination",
+            "--codex-home",
+            str(self.fixture.codex_home),
+            "--archive-root",
+            str(self.archive_root),
+            "--output",
+            str(output_path),
+        )
+
+        self.assertEqual(exit_code, 0)
+        written = json.loads(output_path.read_text(encoding="utf-8"))
+        self.assertEqual(written["schema"], "agent_toolbelt_context_transfer.inventory.v1")
+        self.assertEqual(payload["output_path"], str(output_path.resolve()))
+
+    def test_pack_cli_forwards_reviewed_inputs(self):
+        from agent_toolbelt_context_transfer import cli
+
+        with mock.patch.object(
+            cli.archive,
+            "pack_recovery",
+            return_value={"ok": True, "archive_path": "E:/archive.7z"},
+        ) as pack_recovery:
+            exit_code, payload = self.run_cli(
+                "pack",
+                "--manifest",
+                "D:/inspection.json",
+                "--handoff",
+                "D:/CONTEXT_TRANSFER.md",
+                "--archive-root",
+                "E:/Codex/ThreadArchives",
+                "--seven-zip-path",
+                "D:/Tools/7z.exe",
+                "--dictionary-mib",
+                "768",
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["operation"], "pack")
+        pack_recovery.assert_called_once_with(
+            inspection_manifest_path="D:/inspection.json",
+            handoff_path="D:/CONTEXT_TRANSFER.md",
+            archive_root="E:/Codex/ThreadArchives",
+            seven_zip_path="D:/Tools/7z.exe",
+            dictionary_mib=768,
+        )
+
+    def test_verify_cli_returns_structured_archive_failure(self):
+        from agent_toolbelt_context_transfer import archive, cli
+
+        with mock.patch.object(
+            cli.archive,
+            "verify_recovery_archive",
+            side_effect=archive.ArchiveError("archive_test_failed", "bad archive"),
+        ):
+            exit_code, payload = self.run_cli(
+                "verify",
+                "--archive",
+                "E:/broken.7z",
+            )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(payload["error"]["kind"], "archive_test_failed")
+
     def test_module_invocation_executes_cli(self):
         environment = dict(os.environ)
         environment["PYTHONPATH"] = os.pathsep.join(

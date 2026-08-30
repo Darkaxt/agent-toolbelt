@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from . import context_transfer
+from . import archive, context_transfer
 
 
 DEFAULT_ARCHIVE_ROOT = Path(r"E:\Codex\ThreadArchives")
@@ -28,17 +28,35 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("--destination-thread-id")
     inspect_parser.add_argument("--codex-home")
     inspect_parser.add_argument("--archive-root", default=str(DEFAULT_ARCHIVE_ROOT))
+    inspect_parser.add_argument("--output")
+
+    pack_parser = subparsers.add_parser(
+        "pack",
+        help="Build and verify a recovery archive from a reviewed inspection manifest.",
+    )
+    pack_parser.add_argument("--manifest", required=True)
+    pack_parser.add_argument("--handoff", required=True)
+    pack_parser.add_argument("--archive-root", default=str(DEFAULT_ARCHIVE_ROOT))
+    pack_parser.add_argument("--seven-zip-path")
+    pack_parser.add_argument("--dictionary-mib", type=int)
+
+    verify_parser = subparsers.add_parser(
+        "verify",
+        help="Re-test an existing recovery archive and its external evidence.",
+    )
+    verify_parser.add_argument("--archive", required=True)
+    verify_parser.add_argument("--seven-zip-path")
     return parser
 
 
-def _failure(operation: str, error: context_transfer.ContextTransferError) -> dict[str, Any]:
+def _failure(operation: str, error: Exception) -> dict[str, Any]:
     return {
         "ok": False,
         "operation": operation,
         "error": {
-            "kind": error.kind,
+            "kind": getattr(error, "kind", "unexpected_error"),
             "message": str(error),
-            "details": error.details,
+            "details": getattr(error, "details", {}),
         },
     }
 
@@ -67,6 +85,33 @@ def main(argv: list[str] | None = None) -> int:
                 codex_home=_codex_home(args.codex_home),
                 archive_root=args.archive_root,
             )
+            output_path = None
+            if args.output:
+                output = Path(args.output).resolve()
+                output.parent.mkdir(parents=True, exist_ok=True)
+                temporary = output.with_name(f".{output.name}.partial")
+                temporary.write_text(
+                    json.dumps(result, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                    newline="\n",
+                )
+                os.replace(temporary, output)
+                output_path = str(output)
+        elif args.operation == "pack":
+            result = archive.pack_recovery(
+                inspection_manifest_path=args.manifest,
+                handoff_path=args.handoff,
+                archive_root=args.archive_root,
+                seven_zip_path=args.seven_zip_path,
+                dictionary_mib=args.dictionary_mib,
+            )
+            output_path = None
+        elif args.operation == "verify":
+            result = archive.verify_recovery_archive(
+                args.archive,
+                seven_zip_path=args.seven_zip_path,
+            )
+            output_path = None
         else:  # pragma: no cover - argparse owns command validation
             raise context_transfer.ContextTransferError(
                 "unsupported_operation",
@@ -77,7 +122,9 @@ def main(argv: list[str] | None = None) -> int:
             "operation": args.operation,
             "result": result,
         }
-    except context_transfer.ContextTransferError as exc:
+        if output_path:
+            payload["output_path"] = output_path
+    except (context_transfer.ContextTransferError, archive.ArchiveError) as exc:
         payload = _failure(args.operation, exc)
 
     print(json.dumps(payload, indent=2, sort_keys=True))
