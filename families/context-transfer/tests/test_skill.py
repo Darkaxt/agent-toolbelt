@@ -35,6 +35,19 @@ class ContextTransferSkillTests(unittest.TestCase):
     def test_wrapper_exists(self):
         self.assertTrue((SKILL_ROOT / "scripts" / "invoke_context_transfer.py").is_file())
 
+    def test_skill_documents_staged_private_runtime(self):
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+
+        self.assertIn("active.json", skill)
+        self.assertIn("install_context_transfer_runtime.py", skill)
+        self.assertIn("no cancellation timeout", skill.casefold())
+
+    def test_runtime_scripts_exist(self):
+        scripts = SKILL_ROOT / "scripts"
+
+        self.assertTrue((scripts / "runtime_bootstrap.py").is_file())
+        self.assertTrue((scripts / "install_context_transfer_runtime.py").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,41 +1,17 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 import sys
 
 
-FAMILY_NAME = "context-transfer"
-PACKAGE_NAME = "agent_toolbelt_context_transfer"
+sys.dont_write_bytecode = True
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
-
-def candidate_repositories() -> list[Path]:
-    candidates: list[Path] = []
-    configured = os.getenv("AGENT_TOOLBELT_HOME")
-    if configured:
-        candidates.append(Path(configured).expanduser())
-    candidates.append(Path(r"D:\Downloads\Public\agent-toolbelt"))
-    current = Path(__file__).resolve()
-    candidates.extend(current.parents)
-    return candidates
-
-
-def bootstrap_family_src() -> None:
-    for candidate in candidate_repositories():
-        family_src = candidate / "families" / FAMILY_NAME / "src"
-        if (family_src / PACKAGE_NAME).is_dir():
-            sys.path.insert(0, str(family_src))
-            return
-    raise RuntimeError(
-        "Could not locate agent-toolbelt. Set AGENT_TOOLBELT_HOME or keep the checkout at "
-        r"D:\Downloads\Public\agent-toolbelt."
-    )
-
-
-bootstrap_family_src()
-
-from agent_toolbelt_context_transfer import cli  # noqa: E402
+import runtime_bootstrap
 
 
 if __name__ == "__main__":
-    raise SystemExit(cli.main(sys.argv[1:]))
+    target = runtime_bootstrap.resolve_execution_target(script_path=Path(__file__))
+    raise SystemExit(runtime_bootstrap.execute_cli(target, sys.argv[1:]))

@@ -29,13 +29,21 @@ Do not use this skill merely to continue a normal task. Use codex-thread-recall 
 
 Run python scripts/invoke_context_transfer.py followed by the command and arguments.
 
-The wrapper resolves AGENT_TOOLBELT_HOME, the standard local checkout, or a parent repository checkout. Stop and repair the runtime if none resolves.
+The installed wrapper prefers the staged private runtime selected by `CODEX_HOME/tools/context-transfer/active.json`. Repository development may override it with `AGENT_TOOLBELT_HOME` or a parent checkout. Stop and repair the runtime if none resolves.
+
+Install or refresh the staged runtime from the repository with:
+
+```powershell
+python scripts/install_context_transfer_runtime.py --agent-toolbelt-home <agent-toolbelt-checkout>
+```
+
+The installer validates a complete versioned release before atomically switching `active.json`. Runtime commands have no cancellation timeout; long archive operations must be observed rather than killed by an arbitrary deadline.
 
 ## Phase 1: Select And Inspect
 
 Identify the source task with list_threads or read_thread. Use the source task ID, never only its title.
 
-Run inspect with source-thread-id, destination-thread-id, archive-root E:\Codex\ThreadArchives, and an explicit output path for inspection.json.
+Run inspect with source-thread-id, destination-thread-id, the reviewed non-C recovery root, and an explicit output path for inspection.json.
 
 Require retirement_ready=true, no blockers, every child terminal, and every rollout readable. Inspection is read-only unless output is explicitly supplied.
 
@@ -74,7 +82,7 @@ Do not proceed if any active objective is absent or uncertain evidence is presen
 
 Create the archive directly under the non-C recovery root. Do not add a cancellation timeout.
 
-Run pack with the reviewed manifest, handoff, and E:\Codex\ThreadArchives. Then run verify against thread-tree.7z.
+Run pack with the reviewed manifest, handoff, and the reviewed non-C recovery root. Then run verify against thread-tree.7z.
 
 Require maximum LZMA2 solid settings, successful 7z test, archive SHA-256, matching internal and external metadata, and representative rollout extraction.
 

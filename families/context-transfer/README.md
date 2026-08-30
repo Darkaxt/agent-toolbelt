@@ -20,6 +20,16 @@ agent-toolbelt-context-transfer restore --archive <thread-tree.7z>
 
 The catalog stores only bounded excerpts and exact source offsets. Raw rollout JSONL remains the evidence source of truth.
 
+## Local Runtime
+
+Install the private staged runtime before copying the Codex skill into the active skill root:
+
+```powershell
+python families/context-transfer/codex/skills/context-transfer/scripts/install_context_transfer_runtime.py
+```
+
+The installer creates a versioned release under `CODEX_HOME/tools/context-transfer/releases`, validates the copied package, and only then atomically updates `active.json`. The wrapper does not impose a cancellation timeout on archive operations.
+
 ## Safety
 
 - No direct SQLite mutation.

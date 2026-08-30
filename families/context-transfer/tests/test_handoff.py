@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -172,6 +173,25 @@ class EvidenceCatalogTests(unittest.TestCase):
             handoff.build_evidence_catalog(inspection_manifest_path=self.fixture.manifest)
 
         self.assertEqual(raised.exception.kind, "inspection_not_ready")
+
+    def test_catalog_bounds_milestone_candidates_while_streaming(self):
+        observed_max_lengths: list[int | None] = []
+        original_deque = handoff.deque
+
+        def tracking_deque(*args, **kwargs):
+            observed_max_lengths.append(kwargs.get("maxlen"))
+            return original_deque(*args, **kwargs)
+
+        with mock.patch.object(handoff, "deque", side_effect=tracking_deque):
+            handoff.build_evidence_catalog(
+                inspection_manifest_path=self.fixture.manifest,
+                max_entries_per_thread=5,
+                max_total_entries=10,
+                excerpt_chars=80,
+            )
+
+        self.assertIn(5, observed_max_lengths)
+        self.assertIn(3, observed_max_lengths)
 
 
 class HandoffValidationTests(unittest.TestCase):

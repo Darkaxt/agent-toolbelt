@@ -122,10 +122,11 @@ def _catalog_thread(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     path = Path(str(record["rollout_path"]))
     first: list[dict[str, Any]] = []
-    milestones: list[dict[str, Any]] = []
+    milestones: deque[dict[str, Any]] = deque(maxlen=max_entries)
     recent: deque[dict[str, Any]] = deque(maxlen=3)
     malformed = 0
     substantive = 0
+    milestone_matches = 0
     line_number = 0
     with path.open("rb") as handle:
         while True:
@@ -163,6 +164,7 @@ def _catalog_thread(
             if len(first) < 2:
                 first.append(item)
             if any(token in normalized.casefold() for token in MILESTONE_TOKENS):
+                milestone_matches += 1
                 milestones.append(item)
             recent.append(item)
 
@@ -186,7 +188,7 @@ def _catalog_thread(
         "substantive_entries_seen": substantive,
         "selected_entries": len(selected),
         "malformed_lines": malformed,
-        "selection_truncated": len(combined) > len(selected),
+        "selection_truncated": milestone_matches > len(milestones) or len(combined) > len(selected),
     }
 
 
