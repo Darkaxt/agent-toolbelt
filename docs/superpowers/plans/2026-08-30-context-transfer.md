@@ -5,10 +5,9 @@ Authoritative specification: `docs/superpowers/specs/2026-08-30-context-transfer
 ## Authorization
 
 - Design and plan creation: authorized.
-- Implementation: `not_yet_authorized`.
-- Earliest requested implementation date: August 31, 2026.
-- Do not execute an implementation stage until the user explicitly resumes or authorizes implementation.
-- Once authorized for this unchanged scope, record `already_authorized` and do not ask again between stages.
+- Implementation: `already_authorized` by the user's explicit `continue` instruction.
+- Do not ask again between stages for this unchanged implementation scope.
+- Destructive retirement of a live source task remains separately gated by archive verification, destination acceptance, verified Codex archival, and explicit live-retirement authorization.
 
 ## Stage 1: Read-Only Task-Tree Inventory
 
@@ -109,11 +108,11 @@ Requirements: all specification requirements and acceptance criteria.
 | Stage | Status | Satisfied requirements | Blockers | Tracked deferrals | Evidence |
 | --- | --- | --- | --- | --- | --- |
 | Planning | passed | All requirements mapped to Stages 1-6 | 0 | 0 | Approved design converted into the authoritative specification and compact plan. |
-| 1 | waiting_for_authorization | - | implementation not authorized before August 31, 2026 | 0 | - |
-| 2 | pending | - | - | 0 | - |
-| 3 | pending | - | - | 0 | - |
-| 4 | pending | - | - | 0 | - |
-| 5 | pending | - | - | 0 | - |
-| 6 | pending | - | - | 0 | - |
+| 1 | passed | CT-1, CT-2, CT-13; dry-run acceptance | 0 | 0 | 16 focused tests pass. Live read-only inventory: 102 rollouts, 101 closed edges, 8,000,165,603 bytes, zero blockers, no archive-root creation, unchanged live database size and mtime. |
+| 2 | passed | CT-5, CT-6, CT-7; archive-layout acceptance | 0 | 0 | 29 cumulative tests pass, including real NanaZip pack/test/extract round trips, maximum LZMA2 solid argument checks, direct partial-to-final transaction flow, internal/external metadata hashes, representative rollout extraction, and corruption/downgrade/incomplete rejection. |
+| 3 | passed | CT-1, CT-3, CT-4, CT-8, CT-14; handoff acceptance | 0 | 0 | 43 cumulative family tests pass. Streaming catalog retains only bounded excerpts and offsets; exact handoff sections and child IDs are required; destination acceptance rejects missing objectives or repository evidence; pack revalidates the handoff. Codex-only skill, wrapper, validator, and monorepo checks pass. |
+| 4 | passed | CT-9, CT-10, CT-11, CT-13; deletion acceptance | 0 | 0 | 55 cumulative tests pass. Ticket issue binds verified archive, accepted handoff, exact task tree, and Codex archived-state evidence; apply requires the separately reviewed ticket ID and deletes only unchanged listed files. Changed files are skipped, new files ignored, replay/tamper/outside-root cases rejected, and no recursive, wildcard, cache, or SQLite deletion path exists. |
+| 5 | passed | CT-11, CT-12, CT-13; restore acceptance | 0 | 0 | 62 cumulative tests pass. Real NanaZip round trips restore every absent exact path with matching hashes, skip identical files, block conflicts before placement, enforce target-volume free space, reject corruption, report missing metadata rows through read-only SQLite, and clean exact staging. |
+| 6 | passed | All CT-1 through CT-14 implementation and non-destructive acceptance criteria | 0 | 0 | 69 family tests, 40 root tests, 28 focused wiring tests, skill validation, and skills.sh validation for 16 skills pass. The Codex-only skill resolves a single clean staged runtime through active.json. Fresh installed-runtime acceptance again found 102 readable rollouts, 101 closed edges, 8,000,165,603 bytes, zero blockers, and no archive-root mutation; bounded catalog preparation retained 306 short offset-backed entries with no full-text index. Synthetic pack, retirement, and restore transactions prove the destructive paths. The real Apollo/Beacon pack, task archival, ticket issue, and deletion were not invoked because CT-8 through CT-10 deliberately retain a separate explicit live-retirement authorization gate. |
 
-Implementation completion requires every stage to pass, `blockers = 0`, `tracked_deferrals = 0`, verified recovery evidence, and zero residual manifest-bound source files.
+Implementation completion requires every stage to pass, `blockers = 0`, `tracked_deferrals = 0`, verified synthetic recovery evidence, and zero residual manifest-bound files in the end-to-end retirement fixture. Applying the workflow to a selected real task remains a separately authorized operation and is not an implementation deferral.

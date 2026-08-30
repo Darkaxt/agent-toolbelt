@@ -12,6 +12,7 @@ Start by choosing the one family you actually need:
 | Skroutz CLI | Skroutz.cy product search, offers, reviews, comparisons, and safe cart workflows | `families/skroutz-cli` | `agent-toolbelt-skroutz-cli` |
 | AliExpress CLI | AliExpress product search, item details, reviews/comments, price and delivery evidence, and optional managed logged-in read-only browsing | `families/aliexpress-cli` | `agent-toolbelt-aliexpress-cli` |
 | Codex Thread Recall | bounded self-recall from the current Codex thread's own raw rollout history before broad exploration | `families/codex-thread-recall` | `agent-toolbelt-codex-thread-recall` |
+| Context Transfer | destination-owned oversized Codex task-tree handoff, verified off-drive archive, exact retirement, and conflict-safe restore | `families/context-transfer` | `agent-toolbelt-context-transfer` |
 | Everything | global filename and path lookup | `families/everything` | `agent-toolbelt-everything` |
 | LinkedIn CV | local read-only LinkedIn profile evidence capture and CV/profile gap comparisons | `families/linkedin-cv` | `agent-toolbelt-linkedin-cv` |
 | Media | transcript-first public video analysis preparation and local media operations | `families/media` | `agent-toolbelt-media` |
@@ -39,6 +40,7 @@ Public skill names:
 - `skroutz-cli`
 - `aliexpress-cli`
 - `codex-thread-recall`
+- `context-transfer`
 - `everything-search`
 - `antigravity-cli`
 - `linkedin-cv`

@@ -71,6 +71,12 @@ EXPECTED_FAMILIES = {
         "package_dir": "agent_toolbelt_codex_thread_recall",
         "has_claude": False,
     },
+    "context-transfer": {
+        "project_name": "agent-toolbelt-context-transfer",
+        "script_name": "agent-toolbelt-context-transfer",
+        "package_dir": "agent_toolbelt_context_transfer",
+        "has_claude": False,
+    },
     "whatsapp-wacli": {
         "project_name": "agent-toolbelt-whatsapp-wacli",
         "script_name": "agent-toolbelt-whatsapp-wacli",
@@ -107,6 +113,7 @@ class MonorepoLayoutTests(unittest.TestCase):
             [
                 "packages/core",
                 "families/adb-archive-transfer",
+                "families/context-transfer",
                 "families/antigravity",
                 "families/everything",
                 "families/media",

@@ -249,4 +249,4 @@ The skill coordinates Codex task retrieval, destination analysis, source archiva
 
 ## Authorization State
 
-Design and planning are authorized on August 30, 2026. Implementation is explicitly deferred until August 31, 2026 and is not currently authorized. A future explicit implementation instruction may authorize the complete staged plan without repeating design approval.
+Design and planning were authorized on August 30, 2026. The user subsequently issued an explicit `continue`, authorizing the unchanged complete staged implementation without repeating design approval. Destructive retirement of a live source task remains a separate operational gate under CT-8 through CT-10.
