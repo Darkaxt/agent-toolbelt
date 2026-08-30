@@ -15,7 +15,8 @@ $ExpectedSkills = @(
   @{ Name = "observable-reputation"; Path = "families/observable-reputation/codex/skills/observable-reputation/SKILL.md" },
   @{ Name = "outlook-classic-mail"; Path = "families/outlook-classic-mail/codex/skills/outlook-classic-mail/SKILL.md" },
   @{ Name = "whatsapp-wacli"; Path = "families/whatsapp-wacli/codex/skills/whatsapp-wacli/SKILL.md" },
-  @{ Name = "skills-sh-scout"; Path = "families/skills-sh-scout/codex/skills/skills-sh-scout/SKILL.md" }
+  @{ Name = "skills-sh-scout"; Path = "families/skills-sh-scout/codex/skills/skills-sh-scout/SKILL.md" },
+  @{ Name = "spec-gated-implementation"; Path = "families/spec-gated-implementation/codex/skills/spec-gated-implementation/SKILL.md" }
 )
 
 function Fail($Message) {

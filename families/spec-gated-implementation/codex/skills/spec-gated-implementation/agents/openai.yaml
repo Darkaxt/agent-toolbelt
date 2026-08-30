@@ -1,0 +1,6 @@
+interface:
+  display_name: "Specification-Gated Implementation"
+  short_description: "Reconcile every implementation stage against the specification."
+  default_prompt: "Use $spec-gated-implementation to create or identify the authoritative specification, derive a compact staged plan, reuse any existing implementation authorization, and close every blocker and tracked deferral before completion."
+policy:
+  allow_implicit_invocation: true
