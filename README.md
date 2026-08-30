@@ -1,6 +1,6 @@
 # agent-toolbelt
 
-`agent-toolbelt` is a family-first monorepo for local agent utilities.
+`agent-toolbelt` is a family-first monorepo for local agent utilities and lightweight instruction-only workflows.
 
 Start by choosing the one family you actually need:
 
@@ -20,6 +20,7 @@ Start by choosing the one family you actually need:
 | Mail Domain Quarantine | Outlook mail domain-risk reports and confirmed quarantine moves | `families/mail-domain-quarantine` | `agent-toolbelt-mail-domain-quarantine` |
 | WhatsApp wacli | experimental local WhatsApp access through a curated `wacli` adapter | `families/whatsapp-wacli` | `agent-toolbelt-whatsapp-wacli` |
 | Skills.sh Scout | public skill alternative discovery before creating or expanding skills | `families/skills-sh-scout` | `agent-toolbelt-skills-sh-scout` |
+| Specification-Gated Implementation | staged implementation with repeated specification reconciliation and zero unresolved deferrals at completion | `families/spec-gated-implementation` | - |
 
 ## Install skills
 
@@ -47,12 +48,13 @@ Public skill names:
 - `outlook-classic-mail`
 - `whatsapp-wacli`
 - `skills-sh-scout`
+- `spec-gated-implementation`
 
 Read [Publishing and installing from skills.sh](docs/skills-sh.md) before installing account-backed or local-machine skills. Several skills require Windows desktop apps, local CLIs, or explicit user confirmation before visible actions.
 
 ## Repo layout
 
-- `families/`: independent tool families with their own package, tests, and agent integrations where stable; some families are intentionally Codex-only
+- `families/`: independent tool families with their own package where needed, tests, and agent integrations; instruction-only families intentionally omit a runtime package
 - `packages/core/`: shared helpers and packaged assets
 - `docs/`: cross-cutting install and prerequisite guidance
 - `tests/`: repo-level layout, isolation, and portability checks

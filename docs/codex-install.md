@@ -1,6 +1,6 @@
 # Codex install guide
 
-Each family ships its own Codex skill bundle. Install only the family you want.
+Each runtime family ships its own Codex skill bundle. Instruction-only skills use one canonical cross-agent directory. Install only what you want.
 
 ## Skill locations
 
@@ -16,6 +16,7 @@ Each family ships its own Codex skill bundle. Install only the family you want.
 - Skills.sh Scout: `families/skills-sh-scout/codex/skills/skills-sh-scout`
 - Skroutz CLI: `families/skroutz-cli/codex/skills/skroutz-cli`
 - AliExpress CLI: `families/aliexpress-cli/codex/skills/aliexpress-cli`
+- Specification-Gated Implementation: `families/spec-gated-implementation/codex/skills/spec-gated-implementation`
 
 ## Install flow
 

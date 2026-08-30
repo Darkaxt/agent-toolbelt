@@ -90,6 +90,10 @@ EXPECTED_FAMILIES = {
         "has_codex": False,
         "has_claude": False,
     },
+    "spec-gated-implementation": {
+        "runtime": False,
+        "has_claude": False,
+    },
 }
 
 
@@ -131,6 +135,14 @@ class MonorepoLayoutTests(unittest.TestCase):
             with self.subTest(family=family_name):
                 family_root = REPO_ROOT / "families" / family_name
                 self.assertTrue((family_root / "README.md").is_file())
+                if not metadata.get("runtime", True):
+                    self.assertFalse((family_root / "pyproject.toml").exists())
+                    self.assertFalse((family_root / "src").exists())
+                    self.assertFalse((family_root / "tests").exists())
+                    self.assertTrue((family_root / "codex").is_dir())
+                    self.assertFalse((family_root / "claude").exists())
+                    continue
+
                 self.assertTrue((family_root / "pyproject.toml").is_file())
                 self.assertTrue((family_root / "src").is_dir())
                 self.assertTrue((family_root / "tests").is_dir())
@@ -162,6 +174,21 @@ class MonorepoLayoutTests(unittest.TestCase):
 
     def test_root_runtime_package_is_removed(self):
         self.assertFalse((REPO_ROOT / "src" / "agent_toolbelt").exists())
+
+    def test_instruction_only_skill_has_no_fake_runtime_family(self):
+        family_root = REPO_ROOT / "families" / "spec-gated-implementation"
+        skill_root = family_root / "codex" / "skills" / "spec-gated-implementation"
+
+        self.assertTrue((skill_root / "SKILL.md").is_file())
+        self.assertTrue((skill_root / "agents" / "openai.yaml").is_file())
+        self.assertFalse((family_root / "pyproject.toml").exists())
+        self.assertFalse((family_root / "src").exists())
+
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        codex_install = (REPO_ROOT / "docs" / "codex-install.md").read_text(encoding="utf-8")
+        claude_install = (REPO_ROOT / "docs" / "claude-install.md").read_text(encoding="utf-8")
+        for text in (readme, codex_install, claude_install):
+            self.assertIn("families/spec-gated-implementation", text)
 
     def test_antigravity_replaces_retired_gemini_public_skill(self):
         self.assertFalse((REPO_ROOT / "families" / "gemini").exists())

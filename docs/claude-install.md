@@ -1,6 +1,6 @@
 # Claude install guide
 
-Each family ships its own self-contained local marketplace with one plugin.
+Each runtime family ships its own self-contained local marketplace with one plugin. Instruction-only skills can be copied directly to the Claude-compatible personal skill root.
 
 ## Marketplace locations
 
@@ -16,9 +16,15 @@ Each family ships its own self-contained local marketplace with one plugin.
 - Skroutz CLI: `families/skroutz-cli/claude/marketplaces/agent-toolbelt-local`
 - AliExpress CLI: `families/aliexpress-cli/claude/marketplaces/agent-toolbelt-local`
 
+## Instruction-only skills
+
+- Specification-Gated Implementation: `families/spec-gated-implementation/codex/skills/spec-gated-implementation`
+
 ## Install flow
 
 1. Open the family README you want.
 2. Validate that family marketplace path with `claude plugins validate`.
 3. Add that marketplace path with `claude plugins marketplace add ... --scope user`.
 4. Install the single plugin exposed by that family marketplace.
+
+For an instruction-only skill, copy its canonical folder directly into the Claude-compatible personal skills directory instead of creating a marketplace plugin.
