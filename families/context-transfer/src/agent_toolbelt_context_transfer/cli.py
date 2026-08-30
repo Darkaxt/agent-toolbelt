@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from . import archive, context_transfer
+from . import archive, context_transfer, handoff
 
 
 DEFAULT_ARCHIVE_ROOT = Path(r"E:\Codex\ThreadArchives")
@@ -46,6 +46,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     verify_parser.add_argument("--archive", required=True)
     verify_parser.add_argument("--seven-zip-path")
+
+    catalog_parser = subparsers.add_parser(
+        "catalog",
+        help="Stream a source tree into bounded excerpts and exact rollout offsets.",
+    )
+    catalog_parser.add_argument("--manifest", required=True)
+    catalog_parser.add_argument("--max-entries-per-thread", type=int, default=12)
+    catalog_parser.add_argument("--max-total-entries", type=int, default=1200)
+    catalog_parser.add_argument("--excerpt-chars", type=int, default=600)
+    catalog_parser.add_argument("--output")
+
+    validate_handoff_parser = subparsers.add_parser(
+        "validate-handoff",
+        help="Validate CONTEXT_TRANSFER.md against the selected task tree.",
+    )
+    validate_handoff_parser.add_argument("--manifest", required=True)
+    validate_handoff_parser.add_argument("--handoff", required=True)
+
+    validate_acceptance_parser = subparsers.add_parser(
+        "validate-acceptance",
+        help="Validate destination acceptance and its handoff binding.",
+    )
+    validate_acceptance_parser.add_argument("--manifest", required=True)
+    validate_acceptance_parser.add_argument("--handoff", required=True)
+    validate_acceptance_parser.add_argument("--acceptance", required=True)
     return parser
 
 
@@ -75,6 +100,21 @@ def _codex_home(explicit: str | None) -> Path:
     return Path(explicit or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
 
 
+def _write_explicit_output(payload: dict[str, Any], value: str | None) -> str | None:
+    if not value:
+        return None
+    output = Path(value).resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(f".{output.name}.partial")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    os.replace(temporary, output)
+    return str(output)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
@@ -85,18 +125,7 @@ def main(argv: list[str] | None = None) -> int:
                 codex_home=_codex_home(args.codex_home),
                 archive_root=args.archive_root,
             )
-            output_path = None
-            if args.output:
-                output = Path(args.output).resolve()
-                output.parent.mkdir(parents=True, exist_ok=True)
-                temporary = output.with_name(f".{output.name}.partial")
-                temporary.write_text(
-                    json.dumps(result, indent=2, sort_keys=True) + "\n",
-                    encoding="utf-8",
-                    newline="\n",
-                )
-                os.replace(temporary, output)
-                output_path = str(output)
+            output_path = _write_explicit_output(result, args.output)
         elif args.operation == "pack":
             result = archive.pack_recovery(
                 inspection_manifest_path=args.manifest,
@@ -112,6 +141,27 @@ def main(argv: list[str] | None = None) -> int:
                 seven_zip_path=args.seven_zip_path,
             )
             output_path = None
+        elif args.operation == "catalog":
+            result = handoff.build_evidence_catalog(
+                inspection_manifest_path=args.manifest,
+                max_entries_per_thread=args.max_entries_per_thread,
+                max_total_entries=args.max_total_entries,
+                excerpt_chars=args.excerpt_chars,
+            )
+            output_path = _write_explicit_output(result, args.output)
+        elif args.operation == "validate-handoff":
+            result = handoff.validate_handoff(
+                handoff_path=args.handoff,
+                inspection_manifest_path=args.manifest,
+            )
+            output_path = None
+        elif args.operation == "validate-acceptance":
+            result = handoff.validate_destination_acceptance(
+                acceptance_path=args.acceptance,
+                handoff_path=args.handoff,
+                inspection_manifest_path=args.manifest,
+            )
+            output_path = None
         else:  # pragma: no cover - argparse owns command validation
             raise context_transfer.ContextTransferError(
                 "unsupported_operation",
@@ -124,7 +174,11 @@ def main(argv: list[str] | None = None) -> int:
         }
         if output_path:
             payload["output_path"] = output_path
-    except (context_transfer.ContextTransferError, archive.ArchiveError) as exc:
+    except (
+        context_transfer.ContextTransferError,
+        archive.ArchiveError,
+        handoff.HandoffError,
+    ) as exc:
         payload = _failure(args.operation, exc)
 
     print(json.dumps(payload, indent=2, sort_keys=True))

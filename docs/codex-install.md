@@ -13,6 +13,7 @@ Each runtime family ships its own Codex skill bundle. Instruction-only skills us
 - Mail Domain Quarantine: `families/mail-domain-quarantine/codex/skills/mail-domain-quarantine`
 - LinkedIn CV: `families/linkedin-cv/codex/skills/linkedin-cv`
 - Codex Thread Recall: `families/codex-thread-recall/codex/skills/codex-thread-recall`
+- Context Transfer: `families/context-transfer/codex/skills/context-transfer`
 - Skills.sh Scout: `families/skills-sh-scout/codex/skills/skills-sh-scout`
 - Skroutz CLI: `families/skroutz-cli/codex/skills/skroutz-cli`
 - AliExpress CLI: `families/aliexpress-cli/codex/skills/aliexpress-cli`

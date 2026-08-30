@@ -425,6 +425,83 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertEqual(payload["error"]["kind"], "archive_test_failed")
 
+    def test_catalog_cli_writes_only_explicit_bounded_output(self):
+        from agent_toolbelt_context_transfer import cli
+
+        output_path = self.root / "catalog.json"
+        with mock.patch.object(
+            cli.handoff,
+            "build_evidence_catalog",
+            return_value={"schema": "catalog", "entry_count": 3},
+        ) as build_catalog:
+            exit_code, payload = self.run_cli(
+                "catalog",
+                "--manifest",
+                "D:/inspection.json",
+                "--max-entries-per-thread",
+                "8",
+                "--max-total-entries",
+                "500",
+                "--excerpt-chars",
+                "400",
+                "--output",
+                str(output_path),
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(output_path.is_file())
+        self.assertEqual(payload["output_path"], str(output_path.resolve()))
+        build_catalog.assert_called_once_with(
+            inspection_manifest_path="D:/inspection.json",
+            max_entries_per_thread=8,
+            max_total_entries=500,
+            excerpt_chars=400,
+        )
+
+    def test_validate_handoff_cli_forwards_inputs(self):
+        from agent_toolbelt_context_transfer import cli
+
+        with mock.patch.object(
+            cli.handoff,
+            "validate_handoff",
+            return_value={"ok": True, "handoff_sha256": "abc"},
+        ) as validate:
+            exit_code, payload = self.run_cli(
+                "validate-handoff",
+                "--manifest",
+                "D:/inspection.json",
+                "--handoff",
+                "D:/CONTEXT_TRANSFER.md",
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["operation"], "validate-handoff")
+        validate.assert_called_once_with(
+            handoff_path="D:/CONTEXT_TRANSFER.md",
+            inspection_manifest_path="D:/inspection.json",
+        )
+
+    def test_validate_acceptance_cli_returns_structured_failure(self):
+        from agent_toolbelt_context_transfer import cli, handoff
+
+        with mock.patch.object(
+            cli.handoff,
+            "validate_destination_acceptance",
+            side_effect=handoff.HandoffError("acceptance_incomplete", "missing evidence"),
+        ):
+            exit_code, payload = self.run_cli(
+                "validate-acceptance",
+                "--manifest",
+                "D:/inspection.json",
+                "--handoff",
+                "D:/CONTEXT_TRANSFER.md",
+                "--acceptance",
+                "D:/destination-acceptance.json",
+            )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(payload["error"]["kind"], "acceptance_incomplete")
+
     def test_module_invocation_executes_cli(self):
         environment = dict(os.environ)
         environment["PYTHONPATH"] = os.pathsep.join(

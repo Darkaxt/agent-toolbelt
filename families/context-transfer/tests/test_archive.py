@@ -128,7 +128,41 @@ class ArchiveIntegrationTests(unittest.TestCase):
         self.fixture.add_edge("root", "child")
         self.archive_root = self.root / "archives"
         self.handoff_path = self.root / "CONTEXT_TRANSFER.md"
-        self.handoff_path.write_text("# Continuation\n\nVerified handoff.\n", encoding="utf-8")
+        self.handoff_path.write_text(
+            """# Context Transfer
+
+## Current Objective
+Continue Apollo.
+
+## Authoritative Specifications And Plans
+Use the accepted specification.
+
+## Completed Work With Evidence
+Focused tests pass.
+
+## Active Stage And Exact Next Actions
+Verify the archive.
+
+## Unresolved Blockers And Required Deferrals
+No blockers or deferrals.
+
+## Durable Decisions And User Constraints
+Preserve source state.
+
+## Failed Approaches Not To Repeat
+Do not trust stale state.
+
+## Repositories Branches And Artifacts
+No repository mutation in this fixture.
+
+## Child-Agent Contribution Map
+child: completed fixture work.
+
+## Uncertainties Requiring Verification
+None.
+""",
+            encoding="utf-8",
+        )
         self.inventory = context_transfer.inventory_thread_tree(
             source_thread_id="root",
             destination_thread_id="destination",
@@ -208,6 +242,15 @@ class ArchiveIntegrationTests(unittest.TestCase):
             self.pack()
 
         self.assertEqual(raised.exception.kind, "inspection_not_ready")
+        self.assertFalse(self.archive_root.exists())
+
+    def test_incomplete_handoff_prevents_pack(self):
+        self.handoff_path.write_text("# Incomplete\n", encoding="utf-8")
+
+        with self.assertRaises(archive.ArchiveError) as raised:
+            self.pack()
+
+        self.assertEqual(raised.exception.kind, "handoff_incomplete")
         self.assertFalse(self.archive_root.exists())
 
     def test_external_handoff_tamper_is_detected(self):

@@ -333,6 +333,15 @@ def pack_recovery(
     rollouts = _validated_rollouts(inventory)
     if not handoff_source.is_file():
         raise ArchiveError("handoff_missing", f"Handoff file was not found: {handoff_source}")
+    from . import handoff as handoff_contract
+
+    try:
+        handoff_contract.validate_handoff(
+            handoff_path=handoff_source,
+            inspection_manifest_path=inspection_path,
+        )
+    except handoff_contract.HandoffError as exc:
+        raise ArchiveError(exc.kind, str(exc), details=exc.details) from exc
 
     root = Path(archive_root).resolve()
     if os.name == "nt" and root.drive.casefold() == "c:":

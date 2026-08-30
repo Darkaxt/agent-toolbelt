@@ -7,6 +7,7 @@ $ExpectedSkills = @(
   @{ Name = "skroutz-cli"; Path = "families/skroutz-cli/codex/skills/skroutz-cli/SKILL.md" },
   @{ Name = "aliexpress-cli"; Path = "families/aliexpress-cli/codex/skills/aliexpress-cli/SKILL.md" },
   @{ Name = "codex-thread-recall"; Path = "families/codex-thread-recall/codex/skills/codex-thread-recall/SKILL.md" },
+  @{ Name = "context-transfer"; Path = "families/context-transfer/codex/skills/context-transfer/SKILL.md" },
   @{ Name = "everything-search"; Path = "families/everything/codex/skills/everything-search/SKILL.md" },
   @{ Name = "antigravity-cli"; Path = "families/antigravity/codex/skills/antigravity-cli/SKILL.md" },
   @{ Name = "linkedin-cv"; Path = "families/linkedin-cv/codex/skills/linkedin-cv/SKILL.md" },

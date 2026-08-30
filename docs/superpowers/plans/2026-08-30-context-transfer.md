@@ -110,7 +110,7 @@ Requirements: all specification requirements and acceptance criteria.
 | Planning | passed | All requirements mapped to Stages 1-6 | 0 | 0 | Approved design converted into the authoritative specification and compact plan. |
 | 1 | passed | CT-1, CT-2, CT-13; dry-run acceptance | 0 | 0 | 16 focused tests pass. Live read-only inventory: 102 rollouts, 101 closed edges, 8,000,165,603 bytes, zero blockers, no archive-root creation, unchanged live database size and mtime. |
 | 2 | passed | CT-5, CT-6, CT-7; archive-layout acceptance | 0 | 0 | 29 cumulative tests pass, including real NanaZip pack/test/extract round trips, maximum LZMA2 solid argument checks, direct partial-to-final transaction flow, internal/external metadata hashes, representative rollout extraction, and corruption/downgrade/incomplete rejection. |
-| 3 | pending | - | - | 0 | - |
+| 3 | passed | CT-1, CT-3, CT-4, CT-8, CT-14; handoff acceptance | 0 | 0 | 43 cumulative family tests pass. Streaming catalog retains only bounded excerpts and offsets; exact handoff sections and child IDs are required; destination acceptance rejects missing objectives or repository evidence; pack revalidates the handoff. Codex-only skill, wrapper, validator, and monorepo checks pass. |
 | 4 | pending | - | - | 0 | - |
 | 5 | pending | - | - | 0 | - |
 | 6 | pending | - | - | 0 | - |
