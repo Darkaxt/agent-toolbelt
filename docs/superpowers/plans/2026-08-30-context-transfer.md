@@ -111,7 +111,7 @@ Requirements: all specification requirements and acceptance criteria.
 | 1 | passed | CT-1, CT-2, CT-13; dry-run acceptance | 0 | 0 | 16 focused tests pass. Live read-only inventory: 102 rollouts, 101 closed edges, 8,000,165,603 bytes, zero blockers, no archive-root creation, unchanged live database size and mtime. |
 | 2 | passed | CT-5, CT-6, CT-7; archive-layout acceptance | 0 | 0 | 29 cumulative tests pass, including real NanaZip pack/test/extract round trips, maximum LZMA2 solid argument checks, direct partial-to-final transaction flow, internal/external metadata hashes, representative rollout extraction, and corruption/downgrade/incomplete rejection. |
 | 3 | passed | CT-1, CT-3, CT-4, CT-8, CT-14; handoff acceptance | 0 | 0 | 43 cumulative family tests pass. Streaming catalog retains only bounded excerpts and offsets; exact handoff sections and child IDs are required; destination acceptance rejects missing objectives or repository evidence; pack revalidates the handoff. Codex-only skill, wrapper, validator, and monorepo checks pass. |
-| 4 | pending | - | - | 0 | - |
+| 4 | passed | CT-9, CT-10, CT-11, CT-13; deletion acceptance | 0 | 0 | 55 cumulative tests pass. Ticket issue binds verified archive, accepted handoff, exact task tree, and Codex archived-state evidence; apply requires the separately reviewed ticket ID and deletes only unchanged listed files. Changed files are skipped, new files ignored, replay/tamper/outside-root cases rejected, and no recursive, wildcard, cache, or SQLite deletion path exists. |
 | 5 | pending | - | - | 0 | - |
 | 6 | pending | - | - | 0 | - |
 

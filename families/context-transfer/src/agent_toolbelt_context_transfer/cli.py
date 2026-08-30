@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from . import archive, context_transfer, handoff
+from . import archive, context_transfer, handoff, retirement
 
 
 DEFAULT_ARCHIVE_ROOT = Path(r"E:\Codex\ThreadArchives")
@@ -71,6 +71,23 @@ def build_parser() -> argparse.ArgumentParser:
     validate_acceptance_parser.add_argument("--manifest", required=True)
     validate_acceptance_parser.add_argument("--handoff", required=True)
     validate_acceptance_parser.add_argument("--acceptance", required=True)
+
+    ticket_parser = subparsers.add_parser(
+        "issue-deletion-ticket",
+        help="Issue a single-use ticket after archive, acceptance, and archival gates pass.",
+    )
+    ticket_parser.add_argument("--verification", required=True)
+    ticket_parser.add_argument("--acceptance", required=True)
+    ticket_parser.add_argument("--archived-state", required=True)
+    ticket_parser.add_argument("--confirm-live-retirement", action="store_true")
+
+    deletion_parser = subparsers.add_parser(
+        "apply-deletion",
+        help="Delete only unchanged exact files bound to one reviewed ticket.",
+    )
+    deletion_parser.add_argument("--ticket", required=True)
+    deletion_parser.add_argument("--ticket-id", required=True)
+    deletion_parser.add_argument("--confirm-delete", action="store_true")
     return parser
 
 
@@ -162,6 +179,21 @@ def main(argv: list[str] | None = None) -> int:
                 inspection_manifest_path=args.manifest,
             )
             output_path = None
+        elif args.operation == "issue-deletion-ticket":
+            result = retirement.issue_deletion_ticket(
+                verification_path=args.verification,
+                acceptance_path=args.acceptance,
+                archived_state_path=args.archived_state,
+                confirm_live_retirement=args.confirm_live_retirement,
+            )
+            output_path = None
+        elif args.operation == "apply-deletion":
+            result = retirement.apply_deletion_ticket(
+                ticket_path=args.ticket,
+                ticket_id=args.ticket_id,
+                confirm_delete=args.confirm_delete,
+            )
+            output_path = None
         else:  # pragma: no cover - argparse owns command validation
             raise context_transfer.ContextTransferError(
                 "unsupported_operation",
@@ -178,6 +210,7 @@ def main(argv: list[str] | None = None) -> int:
         context_transfer.ContextTransferError,
         archive.ArchiveError,
         handoff.HandoffError,
+        retirement.RetirementError,
     ) as exc:
         payload = _failure(args.operation, exc)
 

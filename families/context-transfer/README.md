@@ -13,8 +13,8 @@ agent-toolbelt-context-transfer validate-handoff --manifest inspection.json --ha
 agent-toolbelt-context-transfer validate-acceptance --manifest inspection.json --handoff CONTEXT_TRANSFER.md --acceptance destination-acceptance.json
 agent-toolbelt-context-transfer pack --manifest inspection.json --handoff CONTEXT_TRANSFER.md --archive-root "E:\Codex\ThreadArchives"
 agent-toolbelt-context-transfer verify --archive <thread-tree.7z>
-agent-toolbelt-context-transfer issue-deletion-ticket --verification <verification.json> --acceptance <destination-acceptance.json> --archived-state <archived-state.json>
-agent-toolbelt-context-transfer apply-deletion --ticket <deletion-ticket.json>
+agent-toolbelt-context-transfer issue-deletion-ticket --verification <verification.json> --acceptance <destination-acceptance.json> --archived-state <archived-state.json> --confirm-live-retirement
+agent-toolbelt-context-transfer apply-deletion --ticket <deletion-ticket.json> --ticket-id <reviewed-id> --confirm-delete
 agent-toolbelt-context-transfer restore --archive <thread-tree.7z>
 ```
 

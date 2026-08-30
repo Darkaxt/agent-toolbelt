@@ -502,6 +502,54 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertEqual(payload["error"]["kind"], "acceptance_incomplete")
 
+    def test_issue_deletion_ticket_cli_requires_and_forwards_confirmation(self):
+        from agent_toolbelt_context_transfer import cli
+
+        with mock.patch.object(
+            cli.retirement,
+            "issue_deletion_ticket",
+            return_value={"ok": True, "ticket_path": "E:/deletion-ticket.json"},
+        ) as issue:
+            exit_code, payload = self.run_cli(
+                "issue-deletion-ticket",
+                "--verification",
+                "E:/verification.json",
+                "--acceptance",
+                "E:/destination-acceptance.json",
+                "--archived-state",
+                "E:/archived-state.json",
+                "--confirm-live-retirement",
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["operation"], "issue-deletion-ticket")
+        issue.assert_called_once_with(
+            verification_path="E:/verification.json",
+            acceptance_path="E:/destination-acceptance.json",
+            archived_state_path="E:/archived-state.json",
+            confirm_live_retirement=True,
+        )
+
+    def test_apply_deletion_cli_returns_structured_failure(self):
+        from agent_toolbelt_context_transfer import cli, retirement
+
+        with mock.patch.object(
+            cli.retirement,
+            "apply_deletion_ticket",
+            side_effect=retirement.RetirementError("ticket_already_used", "used"),
+        ):
+            exit_code, payload = self.run_cli(
+                "apply-deletion",
+                "--ticket",
+                "E:/deletion-ticket.json",
+                "--ticket-id",
+                "a" * 64,
+                "--confirm-delete",
+            )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(payload["error"]["kind"], "ticket_already_used")
+
     def test_module_invocation_executes_cli(self):
         environment = dict(os.environ)
         environment["PYTHONPATH"] = os.pathsep.join(

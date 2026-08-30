@@ -86,8 +86,8 @@ This phase always requires explicit live-retirement authorization for the select
 2. Verify through task retrieval that the source is archived.
 3. Record archived-state evidence.
 4. Run issue-deletion-ticket only after archive verification and destination acceptance.
-5. Review the ticket exact paths, hashes, archive binding, and handoff binding.
-6. Run apply-deletion only with the reviewed ticket.
+5. Review the ticket exact paths, hashes, archive binding, handoff binding, and returned ticket ID.
+6. Run apply-deletion with the reviewed ticket path, the separately reviewed ticket-id value, and confirm-delete.
 7. Confirm residual manifest-bound rollout bytes are zero. Changed files must be skipped and require a fresh ticket; newly created files are ignored.
 
 Do not claim disk reclamation from Codex archival alone.
