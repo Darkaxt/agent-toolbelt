@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from . import archive, context_transfer, handoff, retirement
+from . import archive, context_transfer, handoff, restore, retirement
 
 
 DEFAULT_ARCHIVE_ROOT = Path(r"E:\Codex\ThreadArchives")
@@ -88,6 +88,13 @@ def build_parser() -> argparse.ArgumentParser:
     deletion_parser.add_argument("--ticket", required=True)
     deletion_parser.add_argument("--ticket-id", required=True)
     deletion_parser.add_argument("--confirm-delete", action="store_true")
+
+    restore_parser = subparsers.add_parser(
+        "restore",
+        help="Restore absent exact rollout paths from a verified recovery archive.",
+    )
+    restore_parser.add_argument("--archive", required=True)
+    restore_parser.add_argument("--seven-zip-path")
     return parser
 
 
@@ -194,6 +201,12 @@ def main(argv: list[str] | None = None) -> int:
                 confirm_delete=args.confirm_delete,
             )
             output_path = None
+        elif args.operation == "restore":
+            result = restore.restore_recovery_archive(
+                archive_path=args.archive,
+                seven_zip_path=args.seven_zip_path,
+            )
+            output_path = None
         else:  # pragma: no cover - argparse owns command validation
             raise context_transfer.ContextTransferError(
                 "unsupported_operation",
@@ -211,6 +224,7 @@ def main(argv: list[str] | None = None) -> int:
         archive.ArchiveError,
         handoff.HandoffError,
         retirement.RetirementError,
+        restore.RestoreError,
     ) as exc:
         payload = _failure(args.operation, exc)
 

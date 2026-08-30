@@ -550,6 +550,29 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertEqual(payload["error"]["kind"], "ticket_already_used")
 
+    def test_restore_cli_forwards_archive_and_seven_zip(self):
+        from agent_toolbelt_context_transfer import cli
+
+        with mock.patch.object(
+            cli.restore,
+            "restore_recovery_archive",
+            return_value={"ok": True, "restored_file_count": 2},
+        ) as restore_archive:
+            exit_code, payload = self.run_cli(
+                "restore",
+                "--archive",
+                "E:/thread-tree.7z",
+                "--seven-zip-path",
+                "D:/Tools/7z.exe",
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["operation"], "restore")
+        restore_archive.assert_called_once_with(
+            archive_path="E:/thread-tree.7z",
+            seven_zip_path="D:/Tools/7z.exe",
+        )
+
     def test_module_invocation_executes_cli(self):
         environment = dict(os.environ)
         environment["PYTHONPATH"] = os.pathsep.join(
