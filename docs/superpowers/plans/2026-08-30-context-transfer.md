@@ -5,10 +5,9 @@ Authoritative specification: `docs/superpowers/specs/2026-08-30-context-transfer
 ## Authorization
 
 - Design and plan creation: authorized.
-- Implementation: `not_yet_authorized`.
-- Earliest requested implementation date: August 31, 2026.
-- Do not execute an implementation stage until the user explicitly resumes or authorizes implementation.
-- Once authorized for this unchanged scope, record `already_authorized` and do not ask again between stages.
+- Implementation: `already_authorized` by the user's explicit `continue` instruction.
+- Do not ask again between stages for this unchanged implementation scope.
+- Destructive retirement of a live source task remains separately gated by archive verification, destination acceptance, verified Codex archival, and explicit live-retirement authorization.
 
 ## Stage 1: Read-Only Task-Tree Inventory
 
@@ -109,7 +108,7 @@ Requirements: all specification requirements and acceptance criteria.
 | Stage | Status | Satisfied requirements | Blockers | Tracked deferrals | Evidence |
 | --- | --- | --- | --- | --- | --- |
 | Planning | passed | All requirements mapped to Stages 1-6 | 0 | 0 | Approved design converted into the authoritative specification and compact plan. |
-| 1 | waiting_for_authorization | - | implementation not authorized before August 31, 2026 | 0 | - |
+| 1 | passed | CT-1, CT-2, CT-13; dry-run acceptance | 0 | 0 | 16 focused tests pass. Live read-only inventory: 102 rollouts, 101 closed edges, 8,000,165,603 bytes, zero blockers, no archive-root creation, unchanged live database size and mtime. |
 | 2 | pending | - | - | 0 | - |
 | 3 | pending | - | - | 0 | - |
 | 4 | pending | - | - | 0 | - |

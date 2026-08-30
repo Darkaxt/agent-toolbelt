@@ -107,6 +107,7 @@ class MonorepoLayoutTests(unittest.TestCase):
             [
                 "packages/core",
                 "families/adb-archive-transfer",
+                "families/context-transfer",
                 "families/antigravity",
                 "families/everything",
                 "families/media",
