@@ -12,7 +12,7 @@ def parser():
     commands = result.add_subparsers(dest='command', required=True)
     begin = commands.add_parser('begin')
     begin.add_argument('--workspace', required=True)
-    begin.add_argument('--scan-root', action='append', help='Additional discovery roots; defaults to known temp roots')
+    begin.add_argument('--scan-root', action='append', help='Scan only these roots when supplied; otherwise workspace and known temp roots')
     register = commands.add_parser('register')
     register.add_argument('--transaction', required=True)
     register.add_argument('--path', required=True)

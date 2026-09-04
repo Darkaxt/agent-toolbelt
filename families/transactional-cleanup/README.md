@@ -27,7 +27,14 @@ agent-toolbelt-transactional-cleanup status --transaction <id>
 agent-toolbelt-transactional-cleanup revoke --ticket <id>
 ```
 
-`--state-root` is a global option for isolated test state. For pre-existing known
+`--state-root` is a global option for isolated test state. For targeted
+generated output, supply `begin --workspace <repo> --scan-root <exact-output>` to
+inventory only that output. Repeated explicit roots replace workspace/Temp defaults;
+the workspace remains context, not an implicit traversal. Include it explicitly
+as another scan root only when its inventory is wanted. Broad Temp and critical
+roots remain protected from registration; a bounded generated output root can be
+registered with evidence. Existing transactions keep their original coverage.
+For pre-existing known
 generated output, registration requires `--regenerated` with explicit provenance.
 Without it, pre-existing modified files are protected. New untracked source files
 are not automatically considered generated. Known cache directories are classified

@@ -67,3 +67,19 @@ new skill. The broad query's lexical legal-review match was rejected after body 
 No blockers or tracked implementation deferrals remain within the specified v1
 boundary. No real user build folder was deleted as an implementation test, no
 background automation was installed, and no permission-policy bypass is claimed.
+
+## Targeted Scan Correction
+
+Root cause: begin unconditionally prepended the workspace even when explicit scan
+roots were supplied. Targeted snapshots therefore traversed unrelated source trees
+while holding the operation lock. A failing regression reproduced the extra root.
+
+Explicit scan roots now replace defaults; workspace remains context and protected
+from root-level deletion. Default invocation retains workspace/known-temp scanning.
+Bounded output roots can be registered explicitly, but broad Temp/critical roots
+remain protected. Existing snapshots are not altered and running processes are not
+interrupted. state_busy still correctly rejects overlapping helper operations.
+
+Verification covers exact scan arguments, honest workspace coverage, targeted
+pre-existing generated-output deletion and broad Temp rejection, plus full family
+and root regression suites. No deferrals in this correction.

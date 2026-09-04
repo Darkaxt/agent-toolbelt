@@ -60,6 +60,11 @@ transaction contains:
 The transaction is host-scoped. The workspace is used for Git protection,
 classification, and reporting, not to exclude artifacts written elsewhere.
 
+Targeted discovery: repeated `begin --scan-root <path>` replaces the default
+workspace/known-temp inventory. The workspace remains context but is not traversed
+unless explicitly included or contained in a selected root. Without explicit roots,
+the default inventory is unchanged. Existing transactions retain their roots.
+
 `register` lets an agent or wrapper record a known generated output as soon as
 it is created. Registration records provenance and expected artifact kind but
 does not make the path automatically deletable.

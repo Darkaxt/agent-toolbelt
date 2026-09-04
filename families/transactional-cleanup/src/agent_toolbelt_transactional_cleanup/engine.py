@@ -246,7 +246,7 @@ class Engine:
         workspace = fs.canonical(workspace)
         if not workspace.is_dir():
             raise CleanupError('workspace_missing', 'Workspace must be an existing directory')
-        roots = [str(workspace)]
+        roots = [str(workspace)] if not scan_roots else []
         if scan_roots is None:
             roots.extend(str(p) for p in [Path(os.environ.get('TEMP', 'D:/Temp')), Path('D:/Temp'),
                                          Path('E:/Temp'),
@@ -257,9 +257,11 @@ class Engine:
         transaction = secrets.token_hex(16)
         payload = {'host': host(), 'policy': POLICY, 'transaction_id': transaction,
                    'workspace': str(workspace), 'created_at': now(), 'state': 'open',
-                   'roots': roots, 'scan_roots': list(roots), 'baseline': self.scan(roots), 'registrations': [],
+                   'roots': roots, 'scan_roots': list(roots), 'scan_mode': 'explicit' if scan_roots else 'default',
+                   'baseline': self.scan(roots), 'registrations': [],
                    'free_space': {str(p): shutil.disk_usage(p).free for p in roots if Path(p).exists()},
-                   'discovery_coverage': {'workspace': True, 'known_or_explicit_roots': roots,
+                   'discovery_coverage': {'workspace': any(fs.within(workspace, Path(p)) for p in roots),
+                                          'known_or_explicit_roots': roots,
                                           'explicit_registration': True, 'usn': 'unavailable_v1',
                                           'etw': 'unavailable_v1', 'complete_host_coverage': False}}
         self.save(self.path(transaction + '.json'), payload)
@@ -271,7 +273,8 @@ class Engine:
             raise CleanupError('review_frozen', 'Registration is closed after review')
         path = fs.canonical(path)
         reason = self.protection(path)
-        if reason or str(path) in payload['scan_roots']:
+        if reason or path == Path(payload['workspace']) or (
+                str(path) in payload['scan_roots'] and payload.get('scan_mode') != 'explicit'):
             raise CleanupError('protected_path', reason or 'workspace_root')
         if kind not in KINDS or not evidence.strip():
             raise CleanupError('provenance_required', 'Supply a generated artifact kind and concrete provenance')
