@@ -50,6 +50,14 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual(result['discovery_coverage']['usn'], 'unavailable_v1')
         self.assertTrue(Path(result['manifest_path']).is_file())
 
+    def test_installed_helper_metadata_is_protected_with_custom_state(self):
+        local = self.root / 'local'
+        with patch.dict(os.environ, LOCALAPPDATA=str(local)):
+            for relative in ('active.json', 'releases/abc/release.json', 'state/key'):
+                target = local / 'Tools/transactional-cleanup' / relative
+                with self.assertRaises(CleanupError):
+                    self.engine.register(self.transaction, target, 'temporary', 'must not authorize helper files', True)
+
     def test_external_root_registered_before_creation(self):
         out = self.output(self.root / 'external')
         ticket = self.ticket()
@@ -319,6 +327,59 @@ except CleanupError as error:
         self.assertLessEqual(len(result['diagnostics']), 100)
         self.assertFalse(out.exists())
         self.assertFalse(self.engine.path(ticket + '.journal').exists())
+
+    def test_interrupted_terminal_cleanup_recovers_through_status(self):
+        out = self.output()
+        ticket = self.ticket()
+        with patch.object(self.engine, 'finish', side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.engine.apply(ticket)
+        self.assertFalse(out.exists())
+        result = self.engine.status(self.transaction)
+        self.assertFalse(result['detailed_state_retained'])
+        self.assertEqual(result['deleted_bytes'], 9)
+        self.assertEqual(result['result_counts']['deleted'], 3)
+        self.assertFalse(self.engine.path(self.transaction + '.manifest.json').exists())
+
+    def test_truncated_last_journal_record_is_recovered(self):
+        out = self.output()
+        ticket = self.ticket()
+        with fs.handle(out / 'a.bin', ancestor=True):
+            self.engine.apply(ticket)
+        with self.engine.path(ticket + '.journal').open('ab') as stream:
+            stream.write(b'{"interrupted":')
+        result = self.engine.apply(ticket)
+        self.assertEqual(result['ticket_state'], 'applied')
+        self.assertFalse(out.exists())
+
+    def test_audit_retention_is_bounded(self):
+        for index in range(101):
+            transaction = f'{index + 1000:032x}'
+            ticket = {'ticket_id': f'{index + 1000:064x}', 'state': 'applied'}
+            payload = {'transaction_id': transaction}
+            result = {'transaction_id': transaction, 'workspace': str(self.work),
+                      'deleted_bytes': 0, 'state': 'applied'}
+            self.engine.finish(payload, ticket, result)
+        summaries = [p for p in self.engine.root.glob('*.json') if len(p.stem) == 32
+                     and self.engine.load(p).get('completed_at')]
+        self.assertEqual(len(summaries), 100)
+
+    def test_git_failure_protects_registered_outputs(self):
+        subprocess.run(['git', 'init', str(self.work)], check=True, capture_output=True)
+        self.output()
+        with patch('agent_toolbelt_transactional_cleanup.engine.subprocess.run', side_effect=OSError):
+            result = self.engine.review(self.transaction)
+        self.assertEqual(result['candidate_count'], 0)
+
+    def test_review_root_cannot_become_authority_for_all_temp(self):
+        for path in (Path(self.work.anchor), Path('D:/Temp')):
+            with self.subTest(path=path), self.assertRaises(CleanupError):
+                self.engine.register(self.transaction, path, 'temporary', 'bad root', True)
+        scan = self.root / 'known-temp'
+        scan.mkdir()
+        transaction = self.engine.begin(self.work, [scan])['transaction_id']
+        with self.assertRaises(CleanupError):
+            self.engine.register(transaction, scan, 'temporary', 'entire scan root', True)
 
 
 if __name__ == '__main__':

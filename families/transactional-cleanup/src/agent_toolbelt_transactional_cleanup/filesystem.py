@@ -50,11 +50,16 @@ if os.name == 'nt':
                     ('size_low', wintypes.DWORD), ('links', wintypes.DWORD),
                     ('index_high', wintypes.DWORD), ('index_low', wintypes.DWORD)]
 
+    class FileIdInfo(ctypes.Structure):
+        _fields_ = [('volume', ctypes.c_ulonglong), ('identifier', ctypes.c_ubyte * 16)]
+
     kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
                                    ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
     kernel.CreateFileW.restype = wintypes.HANDLE
     kernel.GetFileInformationByHandle.argtypes = [wintypes.HANDLE, ctypes.POINTER(FileInfo)]
     kernel.GetFileInformationByHandle.restype = wintypes.BOOL
+    kernel.GetFileInformationByHandleEx.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+    kernel.GetFileInformationByHandleEx.restype = wintypes.BOOL
     kernel.SetFileInformationByHandle.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
     kernel.SetFileInformationByHandle.restype = wintypes.BOOL
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
@@ -81,12 +86,15 @@ def from_handle(opened) -> dict:
     info = FileInfo()
     if not kernel.GetFileInformationByHandle(opened, ctypes.byref(info)):
         raise ctypes.WinError(ctypes.get_last_error())
+    file_id = FileIdInfo()
+    if not kernel.GetFileInformationByHandleEx(opened, 18, ctypes.byref(file_id), ctypes.sizeof(file_id)):
+        raise ctypes.WinError(ctypes.get_last_error())
     return {
-        'identity': f'{info.volume}:{info.index_high}:{info.index_low}:{info.created.dwHighDateTime}:{info.created.dwLowDateTime}',
+        'identity': f'{file_id.volume}:{bytes(file_id.identifier).hex()}:{info.created.dwHighDateTime}:{info.created.dwLowDateTime}',
         'size': (info.size_high << 32) | info.size_low,
         'mtime': (info.written.dwHighDateTime << 32) | info.written.dwLowDateTime,
         'links': info.links, 'directory': bool(info.attributes & 0x10),
-        'reparse': bool(info.attributes & 0x400), 'volume': info.volume,
+        'reparse': bool(info.attributes & 0x400), 'volume': file_id.volume,
     }
 
 

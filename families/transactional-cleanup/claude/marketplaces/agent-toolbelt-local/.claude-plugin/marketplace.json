@@ -1,0 +1,5 @@
+{
+  "name": "agent-toolbelt-local",
+  "owner": {"name": "Darkaxt"},
+  "plugins": [{"name": "transactional-cleanup", "source": "./plugins/transactional-cleanup", "version": "0.1.0", "strict": false}]
+}

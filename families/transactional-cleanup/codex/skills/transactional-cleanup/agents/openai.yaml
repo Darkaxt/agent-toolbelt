@@ -1,0 +1,4 @@
+interface:
+  display_name: "Transactional Cleanup"
+  short_description: "Review and reclaim generated files with exact snapshot tickets"
+  default_prompt: "Use $transactional-cleanup to review generated output and reclaim only the ticketed files."

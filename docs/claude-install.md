@@ -5,6 +5,7 @@ Each runtime family ships its own self-contained local marketplace with one plug
 ## Marketplace locations
 
 - ADB Archive Transfer: `families/adb-archive-transfer/claude/marketplaces/agent-toolbelt-local`
+- Transactional Cleanup: `families/transactional-cleanup/claude/marketplaces/agent-toolbelt-local`; run the family's `scripts/install.py` for its local runtime and personal skills.
 - Antigravity Review: `families/antigravity/claude/marketplaces/agent-toolbelt-local`
 - Everything: `families/everything/claude/marketplaces/agent-toolbelt-local`
 - Media: `families/media/claude/marketplaces/agent-toolbelt-local`

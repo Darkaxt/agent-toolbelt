@@ -160,13 +160,24 @@ class Engine:
         if path == Path(path.anchor) or path == Path.home() or path == Path.home().parent:
             return 'critical_root'
         protected = [self.root, Path(__file__).absolute().parent]
+        local = Path(os.environ.get('LOCALAPPDATA', Path.home() / '.local/share'))
+        protected.append(fs.canonical(local / 'Tools/transactional-cleanup'))
         for var in ('SystemRoot', 'windir'):
             if os.environ.get(var):
                 protected.append(fs.canonical(os.environ[var]))
         for folder in ('.codex', '.agents', '.claude'):
             protected.append(Path.home() / folder)
-        if any(fs.within(path, p) or fs.within(p, path) for p in protected):
+        if any(fs.within(path, p) for p in protected):
             return 'protected_root'
+        if any(fs.within(p, path) for p in protected):
+            return 'protected_ancestor'
+        temp_roots = [Path('D:/Temp'), Path('E:/Temp')]
+        if os.environ.get('TEMP'):
+            temp_roots.append(fs.canonical(os.environ['TEMP']))
+        if os.environ.get('LOCALAPPDATA'):
+            temp_roots.append(fs.canonical(os.environ['LOCALAPPDATA']) / 'Temp')
+        if path in temp_roots:
+            return 'scan_root'
         for var in ('ProgramFiles', 'ProgramFiles(x86)', 'ProgramData', 'LOCALAPPDATA', 'APPDATA'):
             if os.environ.get(var) and path == fs.canonical(os.environ[var]):
                 return 'critical_root'
@@ -216,8 +227,11 @@ class Engine:
                 if reason:
                     entries[key] = {'path': key, 'excluded': reason}
                     # A repository root itself is protected, but generated descendants can be inventoried.
-                    if reason == 'repository_root':
-                        pending.extend(path.iterdir())
+                    if reason in {'repository_root', 'scan_root', 'protected_ancestor'}:
+                        try:
+                            pending.extend(path.iterdir())
+                        except OSError as exc:
+                            entries[key]['scan_error'] = type(exc).__name__
                     continue
                 try:
                     info = fs.identity(path)
@@ -235,14 +249,15 @@ class Engine:
         roots = [str(workspace)]
         if scan_roots is None:
             roots.extend(str(p) for p in [Path(os.environ.get('TEMP', 'D:/Temp')), Path('D:/Temp'),
-                                         Path('E:/Temp')] if p.is_dir())
+                                         Path('E:/Temp'),
+                                         Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData/Local')) / 'Temp'] if p.is_dir())
         else:
             roots.extend(str(fs.canonical(p)) for p in scan_roots)
         roots = list(dict.fromkeys(roots))
         transaction = secrets.token_hex(16)
         payload = {'host': host(), 'policy': POLICY, 'transaction_id': transaction,
                    'workspace': str(workspace), 'created_at': now(), 'state': 'open',
-                   'roots': roots, 'baseline': self.scan(roots), 'registrations': [],
+                   'roots': roots, 'scan_roots': list(roots), 'baseline': self.scan(roots), 'registrations': [],
                    'free_space': {str(p): shutil.disk_usage(p).free for p in roots if Path(p).exists()},
                    'discovery_coverage': {'workspace': True, 'known_or_explicit_roots': roots,
                                           'explicit_registration': True, 'usn': 'unavailable_v1',
@@ -256,7 +271,7 @@ class Engine:
             raise CleanupError('review_frozen', 'Registration is closed after review')
         path = fs.canonical(path)
         reason = self.protection(path)
-        if reason or path == Path(payload['workspace']):
+        if reason or str(path) in payload['scan_roots']:
             raise CleanupError('protected_path', reason or 'workspace_root')
         if kind not in KINDS or not evidence.strip():
             raise CleanupError('provenance_required', 'Supply a generated artifact kind and concrete provenance')
@@ -279,7 +294,8 @@ class Engine:
             baseline = payload['baseline'].get(key)
             registrations = [r for r in payload['registrations'] if fs.within(path, Path(r['path']))]
             registration = max(registrations, key=lambda r: len(r['path']), default=None)
-            reason = info.get('excluded') or self.git_reason(path)
+            git_status = self.git_reason(path) if not info.get('excluded') else None
+            reason = info.get('excluded') or git_status
             if path == Path(payload['workspace']) or key in payload['roots'] and not registration:
                 reason = reason or 'scan_root'
             if not reason and (info['reparse'] or not info['directory'] and info['links'] != 1):
@@ -296,6 +312,8 @@ class Engine:
                           'reason': reason or 'attributed_generated_output',
                           'kind': registration['kind'] if registration else 'compiler-output',
                           'evidence': registration['evidence'] if registration else 'recognized cache directory',
+                          'discovery_source': 'explicit_registration' if registration else 'baseline_inventory',
+                          'git_status': git_status or 'not_tracked_or_outside_repository',
                           'preexisting': existed})
         manifest = {'host': host(), 'policy': POLICY, 'transaction_id': transaction,
                     'created_at': now(), 'workspace': payload['workspace'], 'items': items}
@@ -414,8 +432,16 @@ class Engine:
         ticket = self.load(self.path(ticket_id + '.json')) if ticket_id else {}
         if ticket.get('entries'):
             self.journal(ticket, dry_run=True)
+        if ticket.get('state') in {'applied', 'revoked'} and 'entries' in ticket:
+            report = self.report('status', payload, ticket_id=ticket_id, ticket_state=ticket['state'],
+                                 result_counts=dict(Counter(i['result'] for i in ticket['entries'])),
+                                 deleted_bytes=ticket['deleted_bytes'])
+            self.finish(payload, ticket, report)
+            payload = self.txn(transaction)
+            ticket = self.load(self.path(ticket_id + '.json'))
         return self.report('status', payload, ticket_id=ticket_id, ticket_state=ticket.get('state'),
-                           result_counts=dict(Counter(i['result'] for i in ticket.get('entries', []))),
+                           result_counts=(dict(Counter(i['result'] for i in ticket['entries']))
+                                          if 'entries' in ticket else ticket.get('result_counts', {})),
                            deleted_bytes=ticket.get('deleted_bytes', 0),
                            detailed_state_retained=not bool(payload.get('completed_at')),
                            residual_helper_files=[p.name for p in self.root.glob('*.pending')])

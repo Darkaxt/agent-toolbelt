@@ -32,8 +32,8 @@ concrete provenance explanation; ordinary modified baseline files remain protect
 | Stage | State | Blockers | Deferrals | Evidence |
 | --- | --- | --- | --- | --- |
 | 1 | passed | 0 | 0 | Windows identity, baseline/external registration, Git/protected roots and junction/hard-link exclusions tested. |
-| 2 | passed | 0 | 0 | 26 tests pass, including concurrent writes/new files/replacements, actual sharing violations, journal replay, signed host-bound tickets, dry run, revoke, and terminal detail removal. |
-| 3 | pending | - | 0 | CLI, skills, installed behavior and repo synchronization |
+| 2 | passed | 0 | 0 | Concurrent writes/new files/replacements, actual sharing violations, journal replay, signed host-bound tickets, dry run, revoke, and terminal detail removal pass. |
+| 3 | passed | 0 | 0 | 35 family tests and 40 root tests pass; skills.sh validates 17 skills; installed Codex/agents/Claude copies validate and run from outside the checkout. Publication is the final delivery operation. |
 
 All specification sections and acceptance criteria map to these stages. Completion
 requires zero blockers and zero deferrals. The previously reported proxy build folder
@@ -42,3 +42,28 @@ is a separate live cleanup operation; implementation tests use owned disposable 
 Public preflight inspected the suggested legal-review and Prisma adapter skills;
 neither implements Windows snapshot cleanup. Narrowed scout recommended creating a
 new skill. The broad query's lexical legal-review match was rejected after body review.
+
+## Final Evidence And Specification Reconciliation
+
+- Acceptance 1-5 and 8: installed-wrapper integration performs begin, explicit
+  registration, immutable review, hash-bound ticket, dry run, apply and status.
+  Actual Windows probes cover same-object changes, replacements, new concurrent
+  files, empty-directory removal and partial retry without expanding membership.
+- Acceptance 6-7: protected roots, original scan roots, installed helper metadata,
+  Git tracked/newly staged files, unavailable Git, junctions, hard links, Windows
+  sharing locks and item-local failures have regression coverage. Full 128-bit
+  Windows file IDs and pinned ancestor handles bind exact deletion.
+- Acceptance 9-10: discovery explicitly reports unavailable USN/ETW; journal crash
+  recovery, interrupted final append, terminal compaction and the 100-summary
+  retention bound pass. Logical deleted bytes are not claimed as allocation savings.
+- Acceptance 11-12: `python -B -m unittest discover -s
+  families/transactional-cleanup/tests -p "test_*.py"` passes 35 tests;
+  root discovery passes 40 tests; `uv lock --check`, `git diff --check`, and
+  `scripts/validate_skills_sh.ps1` pass. Source and installed skill validators pass.
+  The shared installed runtime hashes match its deployment manifest; all three
+  installed wrappers run from D:\Temp. Synthetic temporary trees were removed;
+  the real installer reports no deployment residuals.
+
+No blockers or tracked implementation deferrals remain within the specified v1
+boundary. No real user build folder was deleted as an implementation test, no
+background automation was installed, and no permission-policy bypass is claimed.
