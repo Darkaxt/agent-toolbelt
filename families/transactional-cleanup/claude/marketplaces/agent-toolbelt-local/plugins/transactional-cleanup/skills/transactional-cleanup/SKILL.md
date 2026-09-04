@@ -16,8 +16,10 @@ ticket is a procedural review gate, not a request for another user approval.
 ## Workflow
 
 1. Before disk-intensive work, run `begin --workspace <repo>`. Known temporary
-   roots are also inventoried; use repeated `--scan-root <path>` to select them
-   explicitly. Reports state the actual discovery coverage.
+   roots are also inventoried by default. For targeted work, repeated
+   `--scan-root <path>` replaces ALL default roots, including the workspace.
+   Include the workspace explicitly only when its inventory is wanted.
+   Reports state actual coverage; existing transactions retain their original roots.
 2. Register specific outputs with `register --transaction <id> --path <output>
    --kind compiler-output --evidence "<command or tool that creates this output>"`.
    Register before creation when possible. A registration cannot authorize a
@@ -40,7 +42,8 @@ Keep normal installed commands on their default helper state.
 
 When a build started without a transaction, first inspect the exact folder and
 verify its generated provenance and whether an installed application depends on it.
-Begin a transaction, then explicitly register that bounded output with
+Begin with `--workspace <repo> --scan-root <exact-output-folder>` so unrelated
+workspace and Temp trees are not traversed. Then register that bounded output with
 `--regenerated --kind explicit-generated-output --evidence "<verified provenance>"`.
 This is the specification's explicitly registered pre-existing generated-output
 path. Ordinary pre-existing modified files remain protected. Never use

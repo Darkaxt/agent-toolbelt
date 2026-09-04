@@ -50,6 +50,36 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual(result['discovery_coverage']['usn'], 'unavailable_v1')
         self.assertTrue(Path(result['manifest_path']).is_file())
 
+    def test_explicit_roots_do_not_scan_workspace(self):
+        target = self.root / 'target'
+        target.mkdir()
+        with patch.object(self.engine, 'scan', wraps=self.engine.scan) as scan:
+            result = self.engine.begin(self.work, [target])
+            scan.assert_called_once_with([str(target)])
+        self.assertFalse(result['discovery_coverage']['workspace'])
+        self.assertEqual(result['discovery_coverage']['known_or_explicit_roots'], [str(target)])
+        self.assertEqual(result['workspace'], str(self.work))
+        with self.assertRaises(CleanupError):
+            self.engine.register(result['transaction_id'], self.work, 'temporary', 'workspace remains protected', True)
+
+    def test_targeted_existing_output_workflow(self):
+        target = self.root / 'old-build'
+        target.mkdir()
+        (target / 'out.bin').write_bytes(b'generated')
+        transaction = self.engine.begin(self.work, [target])['transaction_id']
+        self.engine.register(transaction, target, 'compiler-output', 'verified disposable fixture', True)
+        review = self.engine.review(transaction)
+        ticket = self.engine.ticket(transaction, review['manifest_sha256'])['ticket_id']
+        self.assertEqual(self.engine.apply(ticket)['deleted_bytes'], 9)
+        self.assertFalse(target.exists())
+        self.assertTrue(self.work.exists())
+
+    def test_explicit_broad_temp_root_still_protected(self):
+        with patch.object(self.engine, 'scan', return_value={}):
+            transaction = self.engine.begin(self.work, ['D:/Temp'])['transaction_id']
+        with self.assertRaises(CleanupError):
+            self.engine.register(transaction, 'D:/Temp', 'temporary', 'cannot approve a whole Temp root', True)
+
     def test_installed_helper_metadata_is_protected_with_custom_state(self):
         local = self.root / 'local'
         with patch.dict(os.environ, LOCALAPPDATA=str(local)):
@@ -377,9 +407,10 @@ except CleanupError as error:
                 self.engine.register(self.transaction, path, 'temporary', 'bad root', True)
         scan = self.root / 'known-temp'
         scan.mkdir()
-        transaction = self.engine.begin(self.work, [scan])['transaction_id']
-        with self.assertRaises(CleanupError):
-            self.engine.register(transaction, scan, 'temporary', 'entire scan root', True)
+        with patch.dict(os.environ, TEMP=str(scan)):
+            transaction = self.engine.begin(self.work, [scan])['transaction_id']
+            with self.assertRaises(CleanupError):
+                self.engine.register(transaction, scan, 'temporary', 'entire configured Temp root', True)
 
 
 if __name__ == '__main__':
