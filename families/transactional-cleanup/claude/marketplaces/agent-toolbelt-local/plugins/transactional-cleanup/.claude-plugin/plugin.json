@@ -1,0 +1,6 @@
+{
+  "name": "transactional-cleanup",
+  "version": "0.1.0",
+  "description": "Reviewed snapshot cleanup with exact Windows file identity and retryable tickets.",
+  "license": "MIT"
+}

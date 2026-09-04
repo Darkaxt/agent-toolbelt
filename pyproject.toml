@@ -3,6 +3,7 @@ members = [
   "packages/core",
   "families/adb-archive-transfer",
   "families/context-transfer",
+  "families/transactional-cleanup",
   "families/antigravity",
   "families/everything",
   "families/media",

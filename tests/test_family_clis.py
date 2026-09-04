@@ -10,6 +10,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 FAMILY_IMPORTS = {
+    "transactional-cleanup": (
+        REPO_ROOT / "families" / "transactional-cleanup" / "src",
+        "agent_toolbelt_transactional_cleanup.cli",
+    ),
     "adb-archive-transfer": (
         REPO_ROOT / "families" / "adb-archive-transfer" / "src",
         "agent_toolbelt_adb_archive_transfer.cli",

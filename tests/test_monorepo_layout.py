@@ -6,6 +6,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 EXPECTED_FAMILIES = {
+    "transactional-cleanup": {
+        "project_name": "agent-toolbelt-transactional-cleanup",
+        "script_name": "agent-toolbelt-transactional-cleanup",
+        "package_dir": "agent_toolbelt_transactional_cleanup",
+        "has_claude": True,
+    },
     "adb-archive-transfer": {
         "project_name": "agent-toolbelt-adb-archive-transfer",
         "script_name": "agent-toolbelt-adb-archive-transfer",
@@ -114,6 +120,7 @@ class MonorepoLayoutTests(unittest.TestCase):
                 "packages/core",
                 "families/adb-archive-transfer",
                 "families/context-transfer",
+                "families/transactional-cleanup",
                 "families/antigravity",
                 "families/everything",
                 "families/media",
