@@ -34,6 +34,14 @@ the workspace remains context, not an implicit traversal. Include it explicitly
 as another scan root only when its inventory is wanted. Broad Temp and critical
 roots remain protected from registration; a bounded generated output root can be
 registered with evidence. Existing transactions keep their original coverage.
+`--scan-root D:\Temp` intentionally inventories the entire Temp tree, twice across
+begin/review. Registering a small set of outputs afterwards does not narrow it.
+For multiple known outputs, repeat `--scan-root` for those exact output folders.
+Registration matching uses ancestor lookup instead of an inventory-by-registration
+cross-product; filesystem traversal and full snapshot serialization still scale
+with the selected inventory. `state_busy` means another operation owns the lock,
+not that its work has timed out. Wait for that operation's completion, not another
+parallel review. A completed `reviewed` transaction should not be reviewed again.
 For pre-existing known
 generated output, registration requires `--regenerated` with explicit provenance.
 Without it, pre-existing modified files are protected. New untracked source files

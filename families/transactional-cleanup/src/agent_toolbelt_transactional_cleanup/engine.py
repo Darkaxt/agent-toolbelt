@@ -291,12 +291,20 @@ class Engine:
         if payload['state'] != 'open':
             raise CleanupError('review_frozen', 'This snapshot has already been reviewed')
         current = self.scan(payload['roots'])
+        registrations_by_path = {}
+        # Match exact ancestors, most specific first, rather than scanning every
+        # registration for every inventory entry. Stable ordering preserves ties.
+        for registration in sorted(payload['registrations'], key=lambda r: len(r['path']), reverse=True):
+            registrations_by_path.setdefault(os.path.normcase(str(Path(registration['path']))), registration)
         items = []
         for key, info in current.items():
             path = Path(key)
             baseline = payload['baseline'].get(key)
-            registrations = [r for r in payload['registrations'] if fs.within(path, Path(r['path']))]
-            registration = max(registrations, key=lambda r: len(r['path']), default=None)
+            registration = None
+            for ancestor in (path, *path.parents):
+                registration = registrations_by_path.get(os.path.normcase(str(ancestor)))
+                if registration is not None:
+                    break
             git_status = self.git_reason(path) if not info.get('excluded') else None
             reason = info.get('excluded') or git_status
             if path == Path(payload['workspace']) or key in payload['roots'] and not registration:

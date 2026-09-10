@@ -20,6 +20,8 @@ ticket is a procedural review gate, not a request for another user approval.
    `--scan-root <path>` replaces ALL default roots, including the workspace.
    Include the workspace explicitly only when its inventory is wanted.
    Reports state actual coverage; existing transactions retain their original roots.
+   Do not choose an entire Temp root for a known list of build leftovers: repeat
+   `--scan-root` for each exact output folder. Registration does not narrow scans.
 2. Register specific outputs with `register --transaction <id> --path <output>
    --kind compiler-output --evidence "<command or tool that creates this output>"`.
    Register before creation when possible. A registration cannot authorize a
@@ -37,6 +39,11 @@ ticket is a procedural review gate, not a request for another user approval.
 
 All commands accept `--state-root <directory>` before the command for test isolation.
 Keep normal installed commands on their default helper state.
+
+If an operation returns `state_busy`, wait for the owning operation to finish.
+Do not launch parallel reviews or infer a hang solely from elapsed time. Broad
+inventories can require substantial traversal and metadata processing. Once a
+review has completed, inspect its existing manifest instead of running it again.
 
 ## Existing Build Leftovers
 

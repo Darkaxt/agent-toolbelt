@@ -50,6 +50,38 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual(result['discovery_coverage']['usn'], 'unavailable_v1')
         self.assertTrue(Path(result['manifest_path']).is_file())
 
+    def test_review_matching_does_not_compare_every_registration_for_each_file(self):
+        payload = self.engine.txn(self.transaction)
+        payload['registrations'] = [
+            {'path': str(self.work / f'build-{i}'), 'kind': 'compiler-output',
+             'evidence': f'output {i}', 'regenerated': False} for i in range(133)]
+        self.engine.save(self.engine.path(self.transaction + '.json'), payload)
+        entries = {str(self.work / f'build-{i % 133}' / 'obj' / f'{i}.bin'):
+                   {'path': str(self.work / f'build-{i % 133}' / 'obj' / f'{i}.bin'),
+                    'excluded': 'synthetic_inventory'} for i in range(500)}
+        with patch.object(self.engine, 'scan', return_value=entries), patch.object(fs, 'within', wraps=fs.within) as within:
+            review = self.engine.review(self.transaction)
+        self.assertLess(within.call_count, 5000, 'Matching must not rescan all 133 registrations for every entry')
+        manifest = self.engine.load(Path(review['manifest_path']))
+        self.assertEqual([item['evidence'] for item in manifest['items']],
+                         [f'output {i % 133}' for i in range(500)])
+
+    def test_review_matching_preserves_deepest_first_tie_and_component_boundaries(self):
+        out = self.output()
+        nested = out / 'nested'
+        nested.mkdir()
+        (nested / 'one.bin').write_bytes(b'x')
+        unrelated = self.work / 'building'
+        unrelated.mkdir()
+        (unrelated / 'source.py').write_text('keep')
+        self.engine.register(self.transaction, nested, 'test-output', 'deep first')
+        self.engine.register(self.transaction, str(nested).upper(), 'temporary', 'duplicate must not win')
+        review = self.engine.review(self.transaction)
+        items = {i['path']: i for i in self.engine.load(Path(review['manifest_path']))['items']}
+        self.assertEqual(items[str(nested / 'one.bin')]['evidence'], 'deep first')
+        self.assertEqual(items[str(out / 'a.bin')]['evidence'], 'test compiler output')
+        self.assertEqual(items[str(unrelated / 'source.py')]['decision'], 'excluded')
+
     def test_explicit_roots_do_not_scan_workspace(self):
         target = self.root / 'target'
         target.mkdir()
