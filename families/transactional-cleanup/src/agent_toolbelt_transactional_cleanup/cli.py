@@ -52,7 +52,16 @@ def main(argv=None):
         if args.command == 'status':
             result = engine.status(args.transaction)
         else:
-            with engine.locked():
+            transaction = getattr(args, 'transaction', None)
+            if args.command == 'begin':
+                roots = engine.begin_roots(args.workspace, args.scan_root, args.include_known_temp_roots)
+            elif args.command == 'register':
+                roots = [*engine.transaction_roots(args.transaction), args.path]
+            elif args.command in {'apply', 'revoke'}:
+                roots, transaction = engine.ticket_roots(args.ticket)
+            else:
+                roots = engine.transaction_roots(args.transaction)
+            with engine.locked(roots, operation=args.command, transaction=transaction):
                 if args.command == 'begin':
                     result = engine.begin(args.workspace, args.scan_root, args.include_known_temp_roots)
                 elif args.command == 'register':

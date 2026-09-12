@@ -286,6 +286,20 @@ it accepts an optional transaction identifier and otherwise reports the active o
 most recently updated transaction. Progress is observational only and never uses a
 timeout to cancel or classify the underlying operation.
 
+Filesystem operations claim their canonical target roots. Operations whose roots
+are disjoint may run concurrently; operations whose roots are equal or have an
+ancestor/descendant relationship must serialize. Root-claim bookkeeping may use a
+brief global coordinator, and SQLite may serialize short write transactions, but
+neither mechanism may hold a global lock for the duration of filesystem traversal
+or deletion. Claims must be process-owned so an exited process cannot leave a
+permanent lock. A pre-upgrade process holding the legacy global lock remains a
+temporary compatibility conflict.
+
+An empty abandoned `.git` directory is not sufficient evidence that a path belongs
+to a repository. Explicitly registered non-repository generated output remains
+eligible when all other safety checks pass. Once a real Git repository marker is
+present, failure to inspect tracked files remains fail-closed.
+
 After a ticket reaches a terminal state, the helper removes detailed temporary
 inventory data and retains a small metadata-only audit summary. The summary
 contains transaction and ticket identifiers, workspace, timestamps, counts,
@@ -417,6 +431,10 @@ Codex/Claude skill bundles, and skills.sh discovery if the skill is made public.
 14. Apply does not force one durable filesystem flush per deleted object.
 15. Agents can observe long-running progress without interrupting or racing the
     active operation.
+16. Disjoint target roots can be processed concurrently while overlapping roots
+    remain mutually exclusive and stale process-owned claims are reclaimed.
+17. Explicit non-repository generated output is not rejected by an empty `.git`
+    marker, while real repository inspection failures remain protected.
 
 ## Deferred Decisions
 

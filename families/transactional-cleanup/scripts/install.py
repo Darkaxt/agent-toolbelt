@@ -25,7 +25,7 @@ def copy_sources(source, destination):
         fs.check_chain(path)
         fs.check_chain(destination / path.relative_to(source))
     shutil.copytree(source, destination, dirs_exist_ok=True,
-                    ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '*.pyo'))
+                    ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '*.pyo', '*.egg-info'))
 
 
 def active_legacy_state(state_root):
@@ -43,6 +43,28 @@ def active_legacy_state(state_root):
             active.append({'path': str(path), 'bytes': path.stat().st_size,
                            'state': match.group(1).decode()})
     return active
+
+
+def retire_release(root, source, metadata, residuals):
+    source = Path(source)
+    if source.parent.parent != root / 'releases' or source.is_symlink() or not source.is_dir():
+        return
+    fs.check_chain(source)
+    for relative, expected in metadata.get('hashes', {}).items():
+        path = source / relative
+        fs.check_chain(path)
+        if path.resolve().is_relative_to(source.resolve()) and path.is_file():
+            if hashlib.sha256(path.read_bytes()).hexdigest() == expected:
+                path.unlink()
+            else:
+                residuals.append(str(path))
+    for path in sorted(source.rglob('*'), key=lambda p: len(p.parts), reverse=True):
+        if path.is_dir() and not any(path.iterdir()):
+            path.rmdir()
+    if not any(source.iterdir()):
+        source.rmdir()
+        (source.parent / 'release.json').unlink(missing_ok=True)
+        source.parent.rmdir()
 
 
 def install(home=None, local=None):
@@ -79,7 +101,7 @@ def install(home=None, local=None):
     legacy_active = active_legacy_state(root / 'state')
     metadata = {'source': str(source), 'hashes': hashes}
     if previous and legacy_active:
-        metadata['legacy_source'] = previous['source']
+        metadata['legacy_source'] = previous.get('legacy_source', previous['source'])
     (release / 'release.json').write_text(json.dumps(metadata, indent=2), encoding='utf-8')
     skill_source = FAMILY / 'codex/skills/transactional-cleanup'
     for destination in destinations:
@@ -87,32 +109,25 @@ def install(home=None, local=None):
     temporary = root / 'active.pending'
     temporary.write_text(json.dumps(metadata, indent=2), encoding='utf-8')
     os.replace(temporary, active_path)
-    # Retire only unchanged files explicitly listed by the preceding deployment.
+    # Retire only unchanged files explicitly listed by each superseded deployment.
     residuals = []
-    if previous and not legacy_active:
-        old = Path(previous['source'])
-        if old.parent.parent == root / 'releases' and old != source and not old.is_symlink():
-            fs.check_chain(old)
-            for relative, expected in previous.get('hashes', {}).items():
-                path = old / relative
-                fs.check_chain(path)
-                if path.resolve().is_relative_to(old.resolve()) and path.is_file():
-                    if hashlib.sha256(path.read_bytes()).hexdigest() == expected:
-                        path.unlink()
-                    else:
-                        residuals.append(str(path))
-            for path in sorted(old.rglob('*'), key=lambda p: len(p.parts), reverse=True):
-                if path.is_dir() and not any(path.iterdir()):
-                    path.rmdir()
-            if not any(old.iterdir()):
-                old.rmdir()
-                (old.parent / 'release.json').unlink(missing_ok=True)
-                old.parent.rmdir()
+    retained = {source.resolve()}
+    if metadata.get('legacy_source'):
+        retained.add(Path(metadata['legacy_source']).resolve())
+    for release_dir in list((root / 'releases').iterdir()):
+        release_metadata = release_dir / 'release.json'
+        try:
+            recorded = json.loads(release_metadata.read_text(encoding='utf-8'))
+            old = Path(recorded['source'])
+        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            continue
+        if old.resolve() not in retained:
+            retire_release(root, old, recorded, residuals)
     return {'ok': True, 'active_runtime': str(source), 'skills': [str(p) for p in destinations],
             'deployment_residuals': residuals,
             'legacy_active_state_count': len(legacy_active),
             'legacy_active_state_bytes': sum(item['bytes'] for item in legacy_active),
-            'legacy_runtime_retained': previous['source'] if previous and legacy_active else None,
+            'legacy_runtime_retained': metadata.get('legacy_source'),
             'warnings': (['Active v1 JSON snapshots remain isolated and the prior runtime was retained for recovery.']
                          if legacy_active else [])}
 
