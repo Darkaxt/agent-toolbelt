@@ -60,10 +60,12 @@ transaction contains:
 The transaction is host-scoped. The workspace is used for Git protection,
 classification, and reporting, not to exclude artifacts written elsewhere.
 
-Targeted discovery: repeated `begin --scan-root <path>` replaces the default
-workspace/known-temp inventory. The workspace remains context but is not traversed
-unless explicitly included or contained in a selected root. Without explicit roots,
-the default inventory is unchanged. Existing transactions retain their roots.
+Targeted discovery is the default. `begin --workspace <path>` inventories only the
+workspace. Repeated `begin --scan-root <path>` replaces that workspace inventory;
+the workspace remains context but is not traversed unless explicitly selected or
+contained in a selected root. Known host temporary roots are included only through
+the explicit `--include-known-temp-roots` opt-in. Existing transactions retain the
+roots recorded when they began.
 
 `register` lets an agent or wrapper record a known generated output as soon as
 it is created. Registration records provenance and expected artifact kind but
@@ -216,8 +218,13 @@ be inventoried and ticketed at item level.
 Additional rules:
 
 - Never follow reparse points, junctions, mount points, or symlink targets.
-- Reject reparse-point deletion by default.
-- Detect multiple hard links and protect ambiguous objects.
+- Reject reparse-point deletion by default. An explicit generated-output
+  registration may opt into deletion of ticketed leaf symlink/junction names;
+  the helper opens the leaf reparse object itself and never enumerates its target.
+- Protect multiple hard links by default. An explicit generated-output registration
+  may opt into deletion of exact ticketed hard-link names. Deleting one name does
+  not remove data reachable through unticketed links, and authority never expands
+  to other link names.
 - Never delete tracked or modified repository files.
 - Never delete a repository-untracked file solely because it is untracked;
   generated provenance is still required.
@@ -252,9 +259,32 @@ Proposed state root:
 %LOCALAPPDATA%\Tools\transactional-cleanup\state
 ```
 
-Transaction and ticket files contain paths and metadata but never source-file
-contents. Logs contain operation identifiers, counts, byte totals, decisions,
-and failure kinds.
+Transactional state is stored in a helper-owned SQLite database using WAL mode.
+The database contains paths and metadata but never source-file contents. Baseline,
+manifest, ticket membership, and item results are normalized records: tickets
+reference immutable candidate manifest rows rather than copying the complete path
+inventory into another serialized document.
+
+Baseline and review traversal must stream rows into bounded database batches. The
+helper must not construct a complete broad-root inventory, manifest, or ticket in
+process memory. Manifest integrity is an ordered digest of signed manifest rows;
+ticket integrity binds the host, policy, transaction, manifest digest, and exact
+candidate count. An `inspect` command provides bounded, paginated manifest rows for
+human review without materializing the whole manifest.
+
+Apply results and progress are durably committed in bounded batches rather than
+forcing a filesystem synchronization for each deleted object. A crash between an
+exact deletion and its next committed result is safe: the next application sees
+that same ticketed object as `already_missing`; no new path can acquire authority.
+Logs contain operation identifiers, counts, byte totals, decisions, and failure
+kinds.
+
+Long-running begin, review, and apply operations publish lock-free progress with
+phase, processed count, total count when known, processed bytes, update time, and
+owner process. `status` is read-only and does not acquire the global mutation lock;
+it accepts an optional transaction identifier and otherwise reports the active or
+most recently updated transaction. Progress is observational only and never uses a
+timeout to cancel or classify the underlying operation.
 
 After a ticket reaches a terminal state, the helper removes detailed temporary
 inventory data and retains a small metadata-only audit summary. The summary
@@ -307,9 +337,10 @@ Every command should include:
 - `errors`
 - `failure_kind`
 
-`review` additionally returns the manifest path and SHA-256. `ticket` returns
-ticket state and the bound manifest hash. `apply` returns per-state counts and
-bounded item diagnostics without printing file contents.
+`review` additionally returns a database manifest reference and SHA-256. `inspect`
+returns a bounded page of manifest rows. `ticket` returns ticket state and the bound
+manifest hash. `apply` returns per-state counts and bounded item diagnostics without
+printing file contents.
 
 ## Test Plan
 
@@ -336,6 +367,15 @@ Unit tests must cover:
 16. Partial application retaining only unresolved original entries.
 17. State cleanup and bounded metadata-only audit retention.
 18. JSON output containing no file contents.
+19. Default discovery inventories only the workspace; known temporary roots require
+    explicit opt-in and explicit scan roots replace defaults.
+20. Streaming persistence does not duplicate complete baseline or manifest payloads
+    into transaction and ticket documents.
+21. Apply durability is bounded by database batches rather than one durable flush
+    per item, while interrupted retries retain exact-ticket semantics.
+22. Status remains readable while a mutation operation owns the helper lock and
+    reports incremental phase/count/byte progress.
+23. Manifest inspection is bounded and paginated.
 
 Integration tests should create a disposable tree on `D:\Temp` when available,
 modify it concurrently between review and apply, and prove that:
@@ -372,6 +412,11 @@ Codex/Claude skill bundles, and skills.sh discovery if the skill is made public.
     indefinite backup or audit growth.
 11. Focused, root, and installed-skill validation pass before publication.
 12. Repository and installed skill state are synchronized after implementation.
+13. Broad inventories use bounded-memory streaming state and tickets do not contain
+    a second copy of candidate metadata.
+14. Apply does not force one durable filesystem flush per deleted object.
+15. Agents can observe long-running progress without interrupting or racing the
+    active operation.
 
 ## Deferred Decisions
 

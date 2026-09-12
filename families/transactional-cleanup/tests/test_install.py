@@ -13,6 +13,24 @@ FAMILY = Path(__file__).resolve().parents[1]
 
 
 class InstalledWorkflowTests(unittest.TestCase):
+    def test_upgrade_retains_previous_runtime_for_active_legacy_state(self):
+        with tempfile.TemporaryDirectory(dir='D:/Temp') as directory:
+            root = Path(directory)
+            home, local = root / 'home', root / 'local'
+            command = [sys.executable, '-B', str(FAMILY / 'scripts/install.py'),
+                       '--home', str(home), '--local-appdata', str(local)]
+            first = json.loads(subprocess.run(command, capture_output=True, text=True, check=True).stdout)
+            state = local / 'Tools/transactional-cleanup/state'
+            state.mkdir(parents=True)
+            (state / ('a' * 32 + '.json')).write_text(
+                '{"payload":{"state":"open"},"mac":"legacy"}', encoding='utf-8')
+            second = json.loads(subprocess.run(command, capture_output=True, text=True, check=True).stdout)
+            self.assertEqual(second['legacy_active_state_count'], 1)
+            self.assertEqual(second['legacy_runtime_retained'], first['active_runtime'])
+            self.assertTrue(Path(first['active_runtime']).is_dir())
+            active = json.loads((local / 'Tools/transactional-cleanup/active.json').read_text())
+            self.assertEqual(active['legacy_source'], first['active_runtime'])
+
     @unittest.skipUnless(os.name == 'nt', 'Windows junction guard')
     def test_redirected_skill_destination_rejected_before_deployment(self):
         with tempfile.TemporaryDirectory(dir='D:/Temp') as directory:
@@ -52,7 +70,8 @@ class InstalledWorkflowTests(unittest.TestCase):
             wrapper = home / '.codex/skills/transactional-cleanup/scripts/invoke_transactional_cleanup.py'
             def run(*args):
                 process = subprocess.run([sys.executable, '-B', str(wrapper), *args],
-                                         cwd=root, env=env, capture_output=True, text=True, check=True)
+                                         cwd=root, env=env, capture_output=True, text=True)
+                self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
                 return json.loads(process.stdout)
             start = run('begin', '--workspace', str(work), '--scan-root', str(work))
             transaction = start['transaction_id']

@@ -9,6 +9,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import re
 
 sys.dont_write_bytecode = True
 FAMILY = Path(__file__).resolve().parents[1]
@@ -25,6 +26,23 @@ def copy_sources(source, destination):
         fs.check_chain(destination / path.relative_to(source))
     shutil.copytree(source, destination, dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '*.pyo'))
+
+
+def active_legacy_state(state_root):
+    active = []
+    if not state_root.is_dir():
+        return active
+    for path in state_root.glob('*.json'):
+        if '.manifest.' in path.name or len(path.stem) not in (32, 64):
+            continue
+        with path.open('rb') as stream:
+            stream.seek(max(0, path.stat().st_size - 1024 * 1024))
+            tail = stream.read()
+        match = re.search(br'"state":"([^"]+)"', tail)
+        if match and match.group(1).decode() in {'open', 'reviewed', 'ticketed', 'issued', 'partially_applied'}:
+            active.append({'path': str(path), 'bytes': path.stat().st_size,
+                           'state': match.group(1).decode()})
+    return active
 
 
 def install(home=None, local=None):
@@ -58,7 +76,10 @@ def install(home=None, local=None):
               for p in source.rglob('*.py')}
     active_path = root / 'active.json'
     previous = json.loads(active_path.read_text()) if active_path.exists() else None
+    legacy_active = active_legacy_state(root / 'state')
     metadata = {'source': str(source), 'hashes': hashes}
+    if previous and legacy_active:
+        metadata['legacy_source'] = previous['source']
     (release / 'release.json').write_text(json.dumps(metadata, indent=2), encoding='utf-8')
     skill_source = FAMILY / 'codex/skills/transactional-cleanup'
     for destination in destinations:
@@ -68,7 +89,7 @@ def install(home=None, local=None):
     os.replace(temporary, active_path)
     # Retire only unchanged files explicitly listed by the preceding deployment.
     residuals = []
-    if previous:
+    if previous and not legacy_active:
         old = Path(previous['source'])
         if old.parent.parent == root / 'releases' and old != source and not old.is_symlink():
             fs.check_chain(old)
@@ -88,7 +109,12 @@ def install(home=None, local=None):
                 (old.parent / 'release.json').unlink(missing_ok=True)
                 old.parent.rmdir()
     return {'ok': True, 'active_runtime': str(source), 'skills': [str(p) for p in destinations],
-            'deployment_residuals': residuals}
+            'deployment_residuals': residuals,
+            'legacy_active_state_count': len(legacy_active),
+            'legacy_active_state_bytes': sum(item['bytes'] for item in legacy_active),
+            'legacy_runtime_retained': previous['source'] if previous and legacy_active else None,
+            'warnings': (['Active v1 JSON snapshots remain isolated and the prior runtime was retained for recovery.']
+                         if legacy_active else [])}
 
 
 if __name__ == '__main__':

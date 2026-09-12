@@ -12,18 +12,31 @@ def parser():
     commands = result.add_subparsers(dest='command', required=True)
     begin = commands.add_parser('begin')
     begin.add_argument('--workspace', required=True)
-    begin.add_argument('--scan-root', action='append', help='Scan only these roots when supplied; otherwise workspace and known temp roots')
+    begin.add_argument('--scan-root', action='append', help='Scan only these roots when supplied; otherwise scan only the workspace')
+    begin.add_argument('--include-known-temp-roots', action='store_true',
+                       help='Explicitly add known Temp roots to the workspace inventory')
     register = commands.add_parser('register')
     register.add_argument('--transaction', required=True)
     register.add_argument('--path', required=True)
     register.add_argument('--kind', choices=KINDS, required=True)
     register.add_argument('--evidence', required=True, help='Concrete generated-output provenance')
     register.add_argument('--regenerated', action='store_true', help='Explicitly identify a pre-existing disposable generated output')
-    for name in ('review', 'status', 'ticket'):
+    register.add_argument('--allow-hardlinks', action='store_true',
+                          help='Allow deletion of exact ticketed hard-link names; other links remain intact')
+    register.add_argument('--allow-leaf-reparse', action='store_true',
+                          help='Allow deletion of exact ticketed leaf symlinks/junctions without traversing targets')
+    for name in ('review', 'ticket'):
         command = commands.add_parser(name)
         command.add_argument('--transaction', required=True)
         if name == 'ticket':
             command.add_argument('--manifest-sha256', required=True, help='Hash from the separately inspected review')
+    inspect = commands.add_parser('inspect')
+    inspect.add_argument('--transaction', required=True)
+    inspect.add_argument('--offset', type=int, default=0)
+    inspect.add_argument('--limit', type=int, default=100)
+    inspect.add_argument('--decision', choices=('candidate', 'excluded'))
+    status = commands.add_parser('status')
+    status.add_argument('--transaction', help='Omit to inspect the active or most recent transaction')
     apply = commands.add_parser('apply')
     apply.add_argument('--ticket', required=True)
     apply.add_argument('--dry-run', action='store_true')
@@ -36,19 +49,25 @@ def main(argv=None):
     args = parser().parse_args(argv)
     try:
         engine = Engine(args.state_root)
-        with engine.locked():
-            if args.command == 'begin':
-                result = engine.begin(args.workspace, args.scan_root)
-            elif args.command == 'register':
-                result = engine.register(args.transaction, args.path, args.kind, args.evidence, args.regenerated)
-            elif args.command == 'ticket':
-                result = engine.ticket(args.transaction, args.manifest_sha256)
-            elif args.command == 'apply':
-                result = engine.apply(args.ticket, args.dry_run)
-            elif args.command == 'revoke':
-                result = engine.revoke(args.ticket)
-            else:
-                result = getattr(engine, args.command)(args.transaction)
+        if args.command == 'status':
+            result = engine.status(args.transaction)
+        else:
+            with engine.locked():
+                if args.command == 'begin':
+                    result = engine.begin(args.workspace, args.scan_root, args.include_known_temp_roots)
+                elif args.command == 'register':
+                    result = engine.register(args.transaction, args.path, args.kind, args.evidence,
+                                             args.regenerated, args.allow_hardlinks, args.allow_leaf_reparse)
+                elif args.command == 'review':
+                    result = engine.review(args.transaction)
+                elif args.command == 'ticket':
+                    result = engine.ticket(args.transaction, args.manifest_sha256)
+                elif args.command == 'apply':
+                    result = engine.apply(args.ticket, args.dry_run)
+                elif args.command == 'revoke':
+                    result = engine.revoke(args.ticket)
+                elif args.command == 'inspect':
+                    result = engine.inspect(args.transaction, args.offset, args.limit, args.decision)
     except (CleanupError, OSError, ValueError, RuntimeError) as exc:
         result = {'ok': False, 'operation': args.command,
                   'failure_kind': getattr(exc, 'kind', type(exc).__name__),

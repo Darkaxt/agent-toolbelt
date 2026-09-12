@@ -80,7 +80,7 @@ try {
     if (-not $HasCompatibility) {
       Fail "missing compatibility metadata in $($Skill.Path)"
     }
-    if ($Frontmatter -notmatch "(?m)^\s+version:\s*`"0\.1\.0`"\s*$") {
+    if ($Frontmatter -notmatch "(?m)^\s+version:\s*`"\d+\.\d+\.\d+`"\s*$") {
       Fail "missing metadata.version in $($Skill.Path)"
     }
   }
