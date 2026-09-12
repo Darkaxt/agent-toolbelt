@@ -9,7 +9,14 @@ sys.dont_write_bytecode = True
 PACKAGE = "agent_toolbelt_transactional_cleanup"
 
 
-def source_root():
+def legacy_state_id(arguments):
+    for flag in ("--transaction", "--ticket"):
+        if flag in arguments and arguments.index(flag) + 1 < len(arguments):
+            return arguments[arguments.index(flag) + 1]
+    return None
+
+
+def source_root(arguments=None):
     override = os.environ.get("AGENT_TOOLBELT_HOME")
     if override:
         source = Path(override) / "families/transactional-cleanup/src"
@@ -19,7 +26,15 @@ def source_root():
     base = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local/share"))
     active = base / "Tools/transactional-cleanup/active.json"
     if active.is_file():
-        source = Path(json.loads(active.read_text(encoding="utf-8"))["source"])
+        metadata = json.loads(active.read_text(encoding="utf-8"))
+        arguments = list(sys.argv[1:] if arguments is None else arguments)
+        state = Path(arguments[arguments.index("--state-root") + 1]) if "--state-root" in arguments else base / "Tools/transactional-cleanup/state"
+        identifier = legacy_state_id(arguments)
+        legacy = metadata.get("legacy_source")
+        if identifier and legacy and (state / f"{identifier}.json").is_file():
+            source = Path(legacy)
+        else:
+            source = Path(metadata["source"])
         if (source / PACKAGE / "cli.py").is_file():
             return source
         raise RuntimeError("Installed cleanup runtime is incomplete; rerun the installer")

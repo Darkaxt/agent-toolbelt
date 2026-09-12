@@ -47,20 +47,63 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual(result['candidate_bytes'], 9)
         self.assertTrue((out / 'a.bin').exists())
         self.assertFalse(result['discovery_coverage']['complete_host_coverage'])
-        self.assertEqual(result['discovery_coverage']['usn'], 'unavailable_v1')
+        self.assertEqual(result['discovery_coverage']['usn'], 'unavailable_v2')
         self.assertTrue(Path(result['manifest_path']).is_file())
+        self.assertEqual(result['manifest_ref'], f'sqlite:manifest/{self.transaction}')
+
+    def test_review_matching_does_not_compare_every_registration_for_each_file(self):
+        for index in range(133):
+            self.engine.register(self.transaction, self.work / f'build-{index}', 'compiler-output', f'output {index}')
+        entries = [{'path': str(self.work / f'build-{i % 133}' / 'obj' / f'{i}.bin'),
+                    'excluded': 'synthetic_inventory'} for i in range(500)]
+        with patch.object(self.engine, 'scan', return_value=iter(entries)), patch.object(fs, 'within', wraps=fs.within) as within:
+            review = self.engine.review(self.transaction)
+        self.assertLess(within.call_count, 5000, 'Matching must not rescan all 133 registrations for every entry')
+        manifest = self.engine.inspect(self.transaction, limit=500)
+        self.assertEqual([item['evidence'] for item in manifest['page_items']],
+                         [f'output {i % 133}' for i in range(500)])
+
+    def test_review_matching_preserves_deepest_first_tie_and_component_boundaries(self):
+        out = self.output()
+        nested = out / 'nested'
+        nested.mkdir()
+        (nested / 'one.bin').write_bytes(b'x')
+        unrelated = self.work / 'building'
+        unrelated.mkdir()
+        (unrelated / 'source.py').write_text('keep')
+        self.engine.register(self.transaction, nested, 'test-output', 'deep first')
+        self.engine.register(self.transaction, str(nested).upper(), 'temporary', 'duplicate must not win')
+        review = self.engine.review(self.transaction)
+        items = {i['path']: i for i in self.engine.inspect(self.transaction, limit=100)['page_items']}
+        self.assertEqual(items[str(nested / 'one.bin')]['evidence'], 'deep first')
+        self.assertEqual(items[str(out / 'a.bin')]['evidence'], 'test compiler output')
+        self.assertEqual(items[str(unrelated / 'source.py')]['decision'], 'excluded')
 
     def test_explicit_roots_do_not_scan_workspace(self):
         target = self.root / 'target'
         target.mkdir()
         with patch.object(self.engine, 'scan', wraps=self.engine.scan) as scan:
             result = self.engine.begin(self.work, [target])
-            scan.assert_called_once_with([str(target)])
+            self.assertEqual(scan.call_args_list[0].args[0], [str(target)])
         self.assertFalse(result['discovery_coverage']['workspace'])
         self.assertEqual(result['discovery_coverage']['known_or_explicit_roots'], [str(target)])
         self.assertEqual(result['workspace'], str(self.work))
         with self.assertRaises(CleanupError):
             self.engine.register(result['transaction_id'], self.work, 'temporary', 'workspace remains protected', True)
+
+    def test_default_begin_scans_only_workspace(self):
+        with patch.object(self.engine, 'scan', wraps=self.engine.scan) as scan:
+            result = self.engine.begin(self.work)
+            self.assertEqual(scan.call_args_list[0].args[0], [str(self.work)])
+        self.assertEqual(result['discovery_coverage']['known_or_explicit_roots'], [str(self.work)])
+
+    def test_known_temp_roots_require_explicit_opt_in(self):
+        known = self.root / 'known-temp'
+        known.mkdir()
+        with patch.object(self.engine, '_known_temp_roots', return_value=[str(known)]):
+            result = self.engine.begin(self.work, include_known_temp_roots=True)
+        self.assertEqual(result['discovery_coverage']['known_or_explicit_roots'],
+                         [str(self.work), str(known)])
 
     def test_targeted_existing_output_workflow(self):
         target = self.root / 'old-build'
@@ -172,16 +215,20 @@ class CleanupTests(unittest.TestCase):
             self.engine.apply(ticket)
         state = self.engine.status(self.transaction)
         self.assertFalse(state['detailed_state_retained'])
-        self.assertFalse(self.engine.path(self.transaction + '.manifest.json').exists())
-        self.assertNotIn(str(out), self.engine.path(ticket + '.json').read_text())
+        with self.assertRaises(CleanupError):
+            self.engine.inspect(self.transaction)
+        self.assertNotIn(str(out).encode(), self.engine.db_path.read_bytes())
 
     def test_tampered_manifest_and_forged_ticket_fail(self):
         self.output()
         ticket = self.ticket()
-        path = self.engine.path(self.transaction + '.manifest.json')
-        data = json.loads(path.read_bytes())
-        data['payload']['items'][0]['path'] = str(self.root / 'unrelated')
-        path.write_text(json.dumps(data))
+        connection = self.engine.connect()
+        try:
+            connection.execute("UPDATE manifest SET item_json='{}' WHERE transaction_id=? AND ordinal=0",
+                               (self.transaction,))
+            connection.commit()
+        finally:
+            connection.close()
         with self.assertRaises(CleanupError):
             self.engine.apply(ticket)
         with self.assertRaises(CleanupError):
@@ -221,6 +268,37 @@ class CleanupTests(unittest.TestCase):
         self.assertTrue((out / 'a.bin').exists())
         self.assertTrue((self.root / 'other-link').exists())
         self.assertFalse((out / 'b.bin').exists())
+
+    def test_explicit_hardlink_authority_deletes_only_ticketed_name(self):
+        external = self.root / 'external-link.bin'
+        out = self.work / 'build'
+        self.engine.register(self.transaction, out, 'compiler-output', 'hard-linked build output',
+                             allow_hardlinks=True)
+        out.mkdir()
+        target = out / 'native.obj'
+        target.write_bytes(b'native')
+        os.link(target, external)
+        result = self.engine.apply(self.ticket())
+        self.assertEqual(result['ticket_state'], 'applied', result)
+        self.assertFalse(target.exists())
+        self.assertEqual(external.read_bytes(), b'native')
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows junctions')
+    def test_explicit_leaf_reparse_authority_removes_link_not_target(self):
+        import _winapi
+        out = self.work / 'build'
+        target = self.root / 'target'
+        target.mkdir()
+        (target / 'keep.bin').write_bytes(b'keep')
+        self.engine.register(self.transaction, out, 'compiler-output', 'linked build output',
+                             allow_leaf_reparse=True)
+        out.mkdir()
+        link = out / 'linked'
+        _winapi.CreateJunction(str(target), str(link))
+        result = self.engine.apply(self.ticket())
+        self.assertEqual(result['ticket_state'], 'applied', result)
+        self.assertFalse(os.path.lexists(link))
+        self.assertEqual((target / 'keep.bin').read_bytes(), b'keep')
 
     def test_revoke_preserves_files_and_rejects_apply(self):
         out = self.output()
@@ -303,21 +381,18 @@ class CleanupTests(unittest.TestCase):
     def test_interrupted_apply_replays_only_original_snapshot(self):
         out = self.output()
         ticket = self.ticket()
-        original = self.engine.journal_item
-        calls = []
-        def crash_after_record(t, item):
-            original(t, item)
-            calls.append(item['path'])
-            raise KeyboardInterrupt()
-        with patch.object(self.engine, 'journal_item', side_effect=crash_after_record):
+        with patch.object(self.engine, '_flush_results', side_effect=KeyboardInterrupt):
             with self.assertRaises(KeyboardInterrupt):
                 self.engine.apply(ticket)
+        out.mkdir(exist_ok=True)
         (out / 'concurrent.bin').write_bytes(b'keep')
         fresh = Engine(self.root / 'state')
         result = fresh.apply(ticket)
-        self.assertEqual(result['deleted_bytes'], 9)
+        self.assertEqual(result['deleted_bytes'], 0)
         self.assertTrue((out / 'concurrent.bin').exists())
-        self.assertEqual(fresh.status(self.transaction)['result_counts']['deleted'], 2)
+        counts = fresh.status(self.transaction)['result_counts']
+        self.assertEqual(counts['already_missing'], 2)
+        self.assertEqual(counts['replaced_after_scan'], 1)
 
     def test_state_lock_is_process_owned_and_released(self):
         code = '''import sys
@@ -336,11 +411,58 @@ except CleanupError as error:
         with self.engine.locked():
             pass
 
+    def test_status_is_lock_free_and_reports_progress(self):
+        connection = self.engine.connect()
+        try:
+            self.engine._set_progress(connection, self.transaction, 'review', 'inventory', 256, None, 4096)
+            connection.commit()
+        finally:
+            connection.close()
+        with self.engine.locked():
+            result = self.engine.status(self.transaction)
+        self.assertEqual(result['progress']['operation'], 'review')
+        self.assertEqual(result['progress']['processed_items'], 256)
+        self.assertEqual(result['progress']['processed_bytes'], 4096)
+
+    def test_begin_progress_is_visible_during_streaming_inventory(self):
+        observed = []
+        def inventory(_roots):
+            for index in range(300):
+                if index == 1:
+                    observed.append(self.engine.status())
+                yield {'path': str(self.work / f'synthetic-{index}'), 'excluded': 'synthetic'}
+        with patch.object(self.engine, 'scan', side_effect=inventory):
+            self.engine.begin(self.work)
+        self.assertEqual(observed[0]['progress']['operation'], 'begin')
+        self.assertEqual(observed[0]['progress']['phase'], 'inventory')
+
+    def test_apply_commits_results_in_bounded_batches_not_per_item(self):
+        out = self.output()
+        for index in range(513):
+            (out / f'{index}.bin').write_bytes(b'x')
+        ticket = self.ticket()
+        with patch.object(self.engine, '_flush_results', wraps=self.engine._flush_results) as flush:
+            result = self.engine.apply(ticket)
+        self.assertEqual(result['ticket_state'], 'applied')
+        self.assertEqual(flush.call_count, 3)
+
+    def test_cli_accepts_explicit_link_authorities_and_manifest_paging(self):
+        registered = cli.parser().parse_args([
+            'register', '--transaction', 'a' * 32, '--path', str(self.work / 'build'),
+            '--kind', 'compiler-output', '--evidence', 'fixture',
+            '--allow-hardlinks', '--allow-leaf-reparse'])
+        self.assertTrue(registered.allow_hardlinks)
+        self.assertTrue(registered.allow_leaf_reparse)
+        inspected = cli.parser().parse_args([
+            'inspect', '--transaction', 'a' * 32, '--offset', '20', '--limit', '50',
+            '--decision', 'candidate'])
+        self.assertEqual((inspected.offset, inspected.limit, inspected.decision), (20, 50, 'candidate'))
+
     def test_non_ntfs_entries_protected_without_fallback_deletion(self):
         out = self.output()
         original = fs.identity
-        def fat_identity(path):
-            return {**original(path), 'filesystem': 'FAT32'}
+        def fat_identity(path, **kwargs):
+            return {**original(path, **kwargs), 'filesystem': 'FAT32'}
         with patch.object(fs, 'identity', side_effect=fat_identity):
             review = self.engine.review(self.transaction)
         self.assertEqual(review['candidate_count'], 0)
@@ -356,7 +478,7 @@ except CleanupError as error:
         self.assertTrue(result['diagnostics_truncated'])
         self.assertLessEqual(len(result['diagnostics']), 100)
         self.assertFalse(out.exists())
-        self.assertFalse(self.engine.path(ticket + '.journal').exists())
+        self.assertLess(self.engine.db_path.stat().st_size, 2 * 1024 * 1024)
 
     def test_interrupted_terminal_cleanup_recovers_through_status(self):
         out = self.output()
@@ -366,33 +488,41 @@ except CleanupError as error:
                 self.engine.apply(ticket)
         self.assertFalse(out.exists())
         result = self.engine.status(self.transaction)
-        self.assertFalse(result['detailed_state_retained'])
+        self.assertTrue(result['detailed_state_retained'])
         self.assertEqual(result['deleted_bytes'], 9)
         self.assertEqual(result['result_counts']['deleted'], 3)
-        self.assertFalse(self.engine.path(self.transaction + '.manifest.json').exists())
+        self.assertEqual(result['progress']['phase'], 'interrupted')
 
-    def test_truncated_last_journal_record_is_recovered(self):
+    def test_uncommitted_result_batch_is_recovered(self):
         out = self.output()
         ticket = self.ticket()
-        with fs.handle(out / 'a.bin', ancestor=True):
-            self.engine.apply(ticket)
-        with self.engine.path(ticket + '.journal').open('ab') as stream:
-            stream.write(b'{"interrupted":')
+        with patch.object(self.engine, '_flush_results', side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.engine.apply(ticket)
         result = self.engine.apply(ticket)
         self.assertEqual(result['ticket_state'], 'applied')
         self.assertFalse(out.exists())
 
     def test_audit_retention_is_bounded(self):
-        for index in range(101):
-            transaction = f'{index + 1000:032x}'
-            ticket = {'ticket_id': f'{index + 1000:064x}', 'state': 'applied'}
-            payload = {'transaction_id': transaction}
-            result = {'transaction_id': transaction, 'workspace': str(self.work),
-                      'deleted_bytes': 0, 'state': 'applied'}
-            self.engine.finish(payload, ticket, result)
-        summaries = [p for p in self.engine.root.glob('*.json') if len(p.stem) == 32
-                     and self.engine.load(p).get('completed_at')]
-        self.assertEqual(len(summaries), 100)
+        connection = self.engine.connect()
+        try:
+            template = connection.execute('SELECT * FROM transactions WHERE transaction_id=?',
+                                          (self.transaction,)).fetchone()
+            columns = list(template.keys())
+            values = [template[column] for column in columns]
+            for index in range(101):
+                values[columns.index('transaction_id')] = f'{index + 1000:032x}'
+                values[columns.index('completed_at')] = f'2026-01-01T00:00:{index:03d}Z'
+                connection.execute(f"INSERT INTO transactions ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
+                                   values)
+            connection.execute('DELETE FROM transactions WHERE transaction_id=?', (self.transaction,))
+            old = [row[0] for row in connection.execute('''SELECT transaction_id FROM transactions
+                WHERE completed_at IS NOT NULL ORDER BY completed_at DESC LIMIT -1 OFFSET 100''')]
+            connection.executemany('DELETE FROM transactions WHERE transaction_id=?', [(value,) for value in old])
+            connection.commit()
+            self.assertEqual(connection.execute('SELECT COUNT(*) FROM transactions').fetchone()[0], 100)
+        finally:
+            connection.close()
 
     def test_git_failure_protects_registered_outputs(self):
         subprocess.run(['git', 'init', str(self.work)], check=True, capture_output=True)

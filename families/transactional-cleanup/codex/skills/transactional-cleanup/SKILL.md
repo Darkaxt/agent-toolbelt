@@ -3,7 +3,7 @@ name: transactional-cleanup
 description: Clean generated build, deployment, browser, media and temporary artifacts through reviewed snapshots and exact-file deletion tickets. Use when a task leaves local output to reclaim, including output outside its workspace.
 license: MIT
 metadata:
-  version: "0.1.0"
+  version: "0.2.0"
   compatibility: Windows 10/11, Python 3.11+, NTFS/ReFS identity. Codex and Claude; installed local helper required.
 ---
 
@@ -15,28 +15,39 @@ ticket is a procedural review gate, not a request for another user approval.
 
 ## Workflow
 
-1. Before disk-intensive work, run `begin --workspace <repo>`. Known temporary
-   roots are also inventoried by default. For targeted work, repeated
-   `--scan-root <path>` replaces ALL default roots, including the workspace.
+1. Before disk-intensive work, run `begin --workspace <repo>`. It inventories only
+   that workspace. For targeted work, repeated `--scan-root <path>` replaces the
+   workspace scan. Add known Temp roots only with `--include-known-temp-roots`.
    Include the workspace explicitly only when its inventory is wanted.
    Reports state actual coverage; existing transactions retain their original roots.
+   Do not choose an entire Temp root for a known list of build leftovers: repeat
+   `--scan-root` for each exact output folder. Registration does not narrow scans.
 2. Register specific outputs with `register --transaction <id> --path <output>
    --kind compiler-output --evidence "<command or tool that creates this output>"`.
    Register before creation when possible. A registration cannot authorize a
    repository root, tracked file, helper installation, or protected system path.
 3. Finish and verify the primary task, then run `review --transaction <id>`.
-   Inspect the candidate/exclusion diagnostics, byte estimate and signed manifest
-   at `manifest_path`. The full manifest is available when diagnostics are capped.
+   Inspect candidate/exclusion diagnostics and byte estimate. When diagnostics are
+   capped, page the signed manifest with `inspect --transaction <id> --offset <n>
+   --limit 100`, optionally filtering with `--decision candidate|excluded`.
 4. In a separate invocation run `ticket --transaction <id>
    --manifest-sha256 <reviewed hash>`. No paths can be added after review.
 5. Use `apply --ticket <opaque id> --dry-run` if useful, then
    `apply --ticket <opaque id>`. Read result counts and reclaimed bytes.
-6. Use `status --transaction <id>` for residuals. Retry the same ticket after
+6. Use `status --transaction <id>` for residuals, or bare `status` to observe the
+   active/latest operation. It is lock-free and reports phase/count/byte progress.
+   Retry the same ticket after
    locks release. Do not report completion while `partially_applied` remains.
    `revoke --ticket <id>` explicitly abandons unresolved cleanup without deleting it.
 
 All commands accept `--state-root <directory>` before the command for test isolation.
 Keep normal installed commands on their default helper state.
+
+If an operation returns `state_busy`, wait for the owning operation to finish.
+Use lock-free `status` to observe it. Do not launch parallel reviews or infer a hang
+solely from elapsed time. Broad inventories still require filesystem traversal, but
+state is streamed in bounded batches. Once a
+review has completed, inspect its existing manifest instead of running it again.
 
 ## Existing Build Leftovers
 
@@ -57,8 +68,11 @@ path. Ordinary pre-existing modified files remain protected. Never use
 - A replacement at the same path is skipped as `replaced_after_scan`.
 - Locked files are retryable; other eligible files are processed independently.
 - Junctions, symlinks, hard links, tracked files and critical roots are protected.
+- Exact hard-link names or leaf symlink/junction objects may be enabled only on an
+  explicit registration with `--allow-hardlinks` or `--allow-leaf-reparse`. These
+  options never authorize another link name or traversal/deletion of a link target.
 - Directories are removed only when empty. No recursive directory deletion occurs.
-- USN/ETW tracking is unavailable in v1; never claim complete host coverage.
+- USN/ETW tracking is unavailable in v2; never claim complete host coverage.
 - No expiry or execution cancellation timeout. No process killing, backups or quarantine.
 - Terminal transactions retain a compact summary; detailed inventories are removed.
 - This helper remains subject to command policy. If its invocation is rejected,

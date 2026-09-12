@@ -31,8 +31,9 @@ def reparse(path: Path) -> bool:
     return stat.S_ISLNK(info.st_mode) or bool(getattr(info, 'st_file_attributes', 0) & 0x400)
 
 
-def check_chain(path: Path) -> None:
-    for part in (*reversed(path.parents), path):
+def check_chain(path: Path, *, allow_leaf_reparse: bool = False) -> None:
+    parts = reversed(path.parents) if allow_leaf_reparse else (*reversed(path.parents), path)
+    for part in parts:
         try:
             if reparse(part):
                 raise ValueError(f'Reparse point protected: {part}')
@@ -98,8 +99,8 @@ def from_handle(opened) -> dict:
     }
 
 
-def identity(path: Path) -> dict:
-    check_chain(path)
+def identity(path: Path, *, allow_leaf_reparse: bool = False) -> dict:
+    check_chain(path, allow_leaf_reparse=allow_leaf_reparse)
     if os.name == 'nt':
         with handle(path) as opened:
             info = from_handle(opened)
@@ -138,11 +139,15 @@ def delete_exact(entry: dict, *, dry_run: bool = False) -> tuple[str, int]:
                     return 'protected', 0
             opened = stack.enter_context(handle(path, delete=True))
             current = from_handle(opened)
-            if current['reparse'] or (not current['directory'] and current['links'] != 1):
+            if current['reparse'] and not entry.get('allow_leaf_reparse'):
+                return 'protected', 0
+            if not current['directory'] and current['links'] != 1 and not entry.get('allow_hardlinks'):
                 return 'protected', 0
             if current['identity'] != entry['identity'] or current['directory'] != entry['directory']:
                 return 'replaced_after_scan', 0
-            if current['directory'] and any(path.iterdir()):
+            # A permitted leaf reparse point is the link object itself. Never
+            # enumerate it, because that would traverse its target.
+            if current['directory'] and not current['reparse'] and any(path.iterdir()):
                 return 'not_empty', 0
             if dry_run:
                 return 'eligible', 0
