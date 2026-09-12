@@ -14,6 +14,8 @@ from typing import Any, Callable, TextIO
 
 DICTIONARY_CANDIDATES_MIB = (1536, 1024, 768, 512, 384, 256, 192, 128, 96, 64, 32)
 ENCODER_MEMORY_FACTOR = 11
+SNAPSHOT_CHUNK_BYTES = 4 * 1024 * 1024
+SNAPSHOT_PROGRESS_BYTES = 512 * 1024 * 1024
 
 
 class ArchiveError(RuntimeError):
@@ -163,16 +165,13 @@ def _validated_rollouts(inventory: dict[str, Any]) -> list[dict[str, Any]]:
         if path.is_symlink() or not path.is_file():
             raise ArchiveError("source_file_changed", f"Rollout is no longer a regular file: {path}")
         stat_result = path.stat()
-        actual_hash = _sha256_file(path)
         expected = {
             "size": record.get("size"),
             "mtime_ns": record.get("mtime_ns"),
-            "sha256": record.get("sha256"),
         }
         actual = {
             "size": stat_result.st_size,
             "mtime_ns": stat_result.st_mtime_ns,
-            "sha256": actual_hash,
         }
         if expected != actual:
             raise ArchiveError(
@@ -185,12 +184,115 @@ def _validated_rollouts(inventory: dict[str, Any]) -> list[dict[str, Any]]:
                 "thread_id": record["thread_id"],
                 "original_path": str(path),
                 "archive_path": relative.as_posix(),
-                **actual,
+                **expected,
+                "sha256": record.get("sha256"),
             }
         )
     if not validated:
         raise ArchiveError("inspection_not_ready", "Inspection contains no readable rollouts.")
     return validated
+
+
+def _snapshot_rollouts(
+    rollouts: list[dict[str, Any]],
+    *,
+    snapshot_root: Path,
+    heartbeat_stream: TextIO | None = None,
+) -> dict[str, Any]:
+    stream = heartbeat_stream or sys.stderr
+    snapshot_root.mkdir(parents=True, exist_ok=False)
+    total_bytes = 0
+
+    for item in rollouts:
+        source = Path(str(item["original_path"]))
+        relative = Path(*str(item["archive_path"]).split("/"))
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ArchiveError(
+                "unsafe_archive_path",
+                f"Snapshot member path is unsafe: {item['archive_path']}",
+            )
+        destination = snapshot_root / relative
+        expected = {
+            "size": item.get("size"),
+            "mtime_ns": item.get("mtime_ns"),
+            "sha256": item.get("sha256"),
+        }
+        try:
+            if source.is_symlink() or not source.is_file():
+                raise ArchiveError(
+                    "source_snapshot_mismatch",
+                    f"Rollout is no longer a regular file at snapshot time: {source}",
+                    details={"thread_id": item.get("thread_id")},
+                )
+            before = source.stat()
+            if before.st_size != expected["size"] or before.st_mtime_ns != expected["mtime_ns"]:
+                raise ArchiveError(
+                    "source_snapshot_mismatch",
+                    f"Rollout changed before snapshot: {source}",
+                    details={"thread_id": item.get("thread_id")},
+                )
+
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            digest = hashlib.sha256()
+            copied = 0
+            next_progress = SNAPSHOT_PROGRESS_BYTES
+            with source.open("rb") as source_handle, destination.open("xb") as destination_handle:
+                while True:
+                    chunk = source_handle.read(SNAPSHOT_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    destination_handle.write(chunk)
+                    digest.update(chunk)
+                    copied += len(chunk)
+                    if copied >= next_progress:
+                        print(
+                            f"[context-transfer] snapshotted {copied} bytes from {source.name}",
+                            file=stream,
+                            flush=True,
+                        )
+                        next_progress += SNAPSHOT_PROGRESS_BYTES
+                destination_handle.flush()
+                os.fsync(destination_handle.fileno())
+
+            after = source.stat()
+            actual = {
+                "size": copied,
+                "mtime_ns": after.st_mtime_ns,
+                "sha256": digest.hexdigest(),
+            }
+            if (
+                before.st_size != after.st_size
+                or before.st_mtime_ns != after.st_mtime_ns
+                or actual != expected
+                or destination.stat().st_size != expected["size"]
+            ):
+                raise ArchiveError(
+                    "source_snapshot_mismatch",
+                    f"Rollout changed or did not match its reviewed identity during snapshot: {source}",
+                    details={"thread_id": item.get("thread_id")},
+                )
+        except ArchiveError:
+            raise
+        except OSError as exc:
+            raise ArchiveError(
+                "source_snapshot_failed",
+                f"Could not create a verified snapshot of rollout: {source}",
+                details={"thread_id": item.get("thread_id"), "os_error": str(exc)},
+            ) from exc
+
+        total_bytes += copied
+        print(
+            f"[context-transfer] snapshot verified: {source.name} ({copied} bytes)",
+            file=stream,
+            flush=True,
+        )
+
+    return {
+        "strategy": "verified_transaction_snapshot",
+        "file_count": len(rollouts),
+        "total_bytes": total_bytes,
+        "source_paths_passed_to_seven_zip": False,
+    }
 
 
 def _run_seven_zip(
@@ -390,6 +492,7 @@ def pack_recovery(
         "total_rollout_bytes": inventory["total_rollout_bytes"],
         "handoff_sha256": _sha256_file(external_handoff),
         "rollouts": rollouts,
+        "pack_source_strategy": "verified_transaction_snapshot",
         "privacy_warning": (
             "The archive contains raw historical task rollouts and may include secrets "
             "that were present in the original conversations."
@@ -423,10 +526,12 @@ def pack_recovery(
 
     partial_archive = transaction_root / "thread-tree.7z.partial"
     final_archive = transaction_root / "thread-tree.7z"
+    snapshot_root = transaction_root / ".rollout-snapshot"
     compression = compression_arguments(dictionary_mib)
     common_switches = [*compression, "-scsUTF-8", "-y", "-bb1", "-bso1", "-bse1", "-bsp1"]
     commands: list[list[str]] = []
     try:
+        snapshot_evidence = _snapshot_rollouts(rollouts, snapshot_root=snapshot_root)
         rollout_command = [
             seven_zip,
             "a",
@@ -435,7 +540,7 @@ def pack_recovery(
             f"@{rollout_list}",
         ]
         commands.append(rollout_command)
-        _run_seven_zip(rollout_command, cwd=Path(str(inventory["codex_home"])))
+        _run_seven_zip(rollout_command, cwd=snapshot_root)
 
         metadata_command = [
             seven_zip,
@@ -476,6 +581,7 @@ def pack_recovery(
                 "arguments": compression,
                 "policy": "maximum_lzma2_solid_safe_memory_budget",
             },
+            "source_snapshot": snapshot_evidence,
             "commands": commands,
             "verified_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             **extraction,
@@ -488,6 +594,8 @@ def pack_recovery(
                 path.unlink()
         if payload_root.parent.exists():
             shutil.rmtree(payload_root.parent)
+        if snapshot_root.exists():
+            shutil.rmtree(snapshot_root)
 
 
 def verify_recovery_archive(

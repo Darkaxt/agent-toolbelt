@@ -4,7 +4,7 @@ description: Use when a fresh Codex task must take over useful context from an o
 license: MIT
 metadata:
   compatibility: Codex only. Requires local Codex state and rollout access, 7-Zip, and a non-C recovery drive.
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
 # Context Transfer
@@ -80,11 +80,11 @@ Do not proceed if any active objective is absent or uncertain evidence is presen
 
 ## Phase 4: Pack And Verify
 
-Create the archive directly under the non-C recovery root. Do not add a cancellation timeout.
+Create the archive directly under the non-C recovery root. Do not add a cancellation timeout. The helper snapshots each reviewed rollout into temporary transaction-local storage and gives 7-Zip only those verified copies; do not kill Codex or a source-task process to release a rollout handle.
 
 Run pack with the reviewed manifest, handoff, and the reviewed non-C recovery root. Then run verify against thread-tree.7z.
 
-Require maximum LZMA2 solid settings, successful 7z test, archive SHA-256, matching internal and external metadata, and representative rollout extraction.
+Require maximum LZMA2 solid settings, `source_snapshot.source_paths_passed_to_seven_zip=false`, successful 7z test, archive SHA-256, matching internal and external metadata, and representative rollout extraction. The temporary rollout snapshot must be absent after the command returns, including after failure.
 
 ## Phase 5: Archive And Retire
 
