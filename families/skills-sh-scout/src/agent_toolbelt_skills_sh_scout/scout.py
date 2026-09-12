@@ -117,13 +117,13 @@ def build_queries(workflow: str, explicit_queries: list[str] | None = None) -> l
 
 
 def default_http_get_json(url: str) -> dict[str, Any]:
-    request = urllib.request.Request(url, headers={"User-Agent": "agent-toolbelt-skills-sh-scout/0.1.0"})
+    request = urllib.request.Request(url, headers={"User-Agent": "agent-toolbelt-skills-sh-scout/0.2.0"})
     with urllib.request.urlopen(request, timeout=20) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
 def default_http_get_text(url: str) -> str:
-    request = urllib.request.Request(url, headers={"User-Agent": "agent-toolbelt-skills-sh-scout/0.1.0"})
+    request = urllib.request.Request(url, headers={"User-Agent": "agent-toolbelt-skills-sh-scout/0.2.0"})
     with urllib.request.urlopen(request, timeout=20) as response:
         return response.read().decode("utf-8", errors="replace")
 

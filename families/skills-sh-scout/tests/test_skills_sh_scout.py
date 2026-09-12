@@ -14,6 +14,41 @@ if str(FAMILY_SRC) not in sys.path:
 from agent_toolbelt_skills_sh_scout import cli, scout
 
 
+class SkillsShScoutSkillContractTests(unittest.TestCase):
+    def test_codex_and_claude_skills_route_missing_repository_skills(self):
+        skill_paths = (
+            REPO_ROOT
+            / "families"
+            / "skills-sh-scout"
+            / "codex"
+            / "skills"
+            / "skills-sh-scout"
+            / "SKILL.md",
+            REPO_ROOT
+            / "families"
+            / "skills-sh-scout"
+            / "claude"
+            / "marketplaces"
+            / "agent-toolbelt-local"
+            / "plugins"
+            / "skills-sh-scout"
+            / "skills"
+            / "skills-sh-scout"
+            / "SKILL.md",
+        )
+
+        for skill_path in skill_paths:
+            with self.subTest(skill_path=skill_path):
+                text = skill_path.read_text(encoding="utf-8")
+                self.assertIn("repository instruction", text)
+                self.assertIn("not advertised", text)
+                self.assertIn("Do not silently approximate", text)
+                self.assertIn("authorization to search", text)
+                self.assertIn("skill-installer", text)
+                self.assertIn("skills.disabled", text)
+                self.assertIn("blocker", text)
+
+
 class SkillsShScoutTests(unittest.TestCase):
     def test_query_generation_preserves_explicit_queries_first(self):
         queries = scout.build_queries(

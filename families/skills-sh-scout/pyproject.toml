@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-toolbelt-skills-sh-scout"
-version = "0.1.0"
-description = "skills.sh discovery gate for agent skill creation and expansion."
+version = "0.2.0"
+description = "skills.sh discovery gate for unavailable required skills, skill creation, and expansion."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
