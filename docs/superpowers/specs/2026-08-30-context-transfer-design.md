@@ -84,6 +84,7 @@ The transaction contains:
 
 - `thread-tree.7z.partial` while packing;
 - `thread-tree.7z` only after successful verification;
+- `.rollout-snapshot` only while packing, containing exact verified copies of the selected rollout files on the recovery drive;
 - `manifest.json` outside and inside the archive;
 - `CONTEXT_TRANSFER.md` outside and inside the archive;
 - `threads.json` with selected source-tree metadata rows;
@@ -92,6 +93,8 @@ The transaction contains:
 - `deletion-ticket.json` only after archive and handoff acceptance.
 
 Archive payload paths must preserve a manifest mapping to the original locations without embedding unrelated Codex state.
+
+7-Zip must not read live rollout paths directly. The helper must stream each reviewed rollout into `.rollout-snapshot`, verify the snapshot bytes and the source's post-copy identity against the inspection manifest, and package the snapshot using the original manifest-relative member path. This isolates 7-Zip from Codex file-handle sharing modes without killing Codex or weakening source-integrity checks. The snapshot must be removed after success or failure.
 
 ### CT-6: Maximum 7-Zip Compression
 
@@ -109,13 +112,13 @@ Do not silently downgrade compression. If the installed 7-Zip build cannot satis
 
 Run without a cancellation timeout. Long operations report progress heartbeats without terminating the compressor.
 
-Do not stage the multi-gigabyte archive on `C:`. Build the partial archive directly under the transaction root on `E:` and atomically rename it after verification.
+Do not stage the multi-gigabyte archive or rollout snapshot on `C:`. Build both under the transaction root on `E:`, package from the verified snapshot, remove the snapshot, and atomically rename the partial archive after verification.
 
 ### CT-7: Archive Verification
 
 Before issuing a deletion ticket:
 
-1. Confirm every manifest-bound rollout was read at its reviewed size and hash.
+1. Confirm every manifest-bound rollout snapshot was copied at its reviewed size and hash and that the source identity remained unchanged through the copy.
 2. Run `7z t` successfully against the complete archive.
 3. Compute and record the archive SHA-256.
 4. Verify the internal manifest and handoff hashes against the external copies.
@@ -238,7 +241,7 @@ The skill coordinates Codex task retrieval, destination analysis, source archiva
 - The helper discovers the Apollo/Beacon fixture as 102 readable rollouts with 101 closed child edges and exactly `8,000,165,603` source bytes.
 - A dry-run inventory performs no archive, task, database, or file mutation.
 - The destination handoff maps every active objective and required continuation item or blocks retirement.
-- Maximum-compression 7z packaging runs directly under `E:\Codex` without a cancellation timeout.
+- Maximum-compression 7z packaging reads a verified transaction snapshot under `E:\Codex` without touching live rollout paths or using a cancellation timeout.
 - `7z t`, archive SHA-256, internal/external manifest comparison, and representative extraction checks pass before ticket issuance.
 - The deletion ticket cannot delete new, changed, unlisted, shared, or unrelated files.
 - Source task archival occurs only after handoff acceptance and archive verification.

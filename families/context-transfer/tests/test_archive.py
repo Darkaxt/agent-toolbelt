@@ -10,6 +10,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -185,7 +186,7 @@ None.
             now=lambda: datetime(2026, 8, 31, 12, 34, 56, tzinfo=timezone.utc),
         )
 
-    def test_pack_builds_verified_transaction_without_large_staging_copy(self):
+    def test_pack_builds_verified_transaction_with_cleaned_rollout_snapshot(self):
         result = self.pack()
 
         transaction_root = Path(result["transaction_root"])
@@ -200,6 +201,7 @@ None.
         self.assertTrue((transaction_root / "spawn-edges.json").is_file())
         self.assertTrue((transaction_root / "verification.json").is_file())
         self.assertFalse((transaction_root / ".payload").exists())
+        self.assertFalse((transaction_root / ".rollout-snapshot").exists())
         self.assertFalse((transaction_root / ".verification-staging").exists())
 
         manifest = json.loads((transaction_root / "manifest.json").read_text(encoding="utf-8"))
@@ -208,6 +210,53 @@ None.
         self.assertTrue(all(Path(item["original_path"]).is_absolute() for item in manifest["rollouts"]))
         self.assertEqual(result["compression"]["arguments"], archive.compression_arguments(16))
         self.assertEqual(result["representative_extractions_verified"], 2)
+        self.assertEqual(result["source_snapshot"]["strategy"], "verified_transaction_snapshot")
+        self.assertEqual(result["source_snapshot"]["file_count"], 2)
+        self.assertEqual(
+            result["source_snapshot"]["total_bytes"],
+            self.root_rollout.stat().st_size + self.child_rollout.stat().st_size,
+        )
+
+    def test_pack_never_passes_live_rollout_paths_to_seven_zip(self):
+        real_run = archive._run_seven_zip
+        observed_snapshot = False
+
+        def reject_live_rollout_access(arguments, *, cwd=None, heartbeat_stream=None):
+            nonlocal observed_snapshot
+            if len(arguments) > 1 and arguments[1] == "a" and any(
+                str(value).endswith(".rollouts.lst") for value in arguments
+            ):
+                observed_snapshot = True
+                self.assertIsNotNone(cwd)
+                snapshot_root = Path(cwd).resolve()
+                self.assertEqual(snapshot_root.name, ".rollout-snapshot")
+                self.assertNotEqual(snapshot_root, self.fixture.codex_home.resolve())
+                for item in self.inventory["threads"]:
+                    relative = Path(item["rollout_path"]).resolve().relative_to(
+                        self.fixture.codex_home.resolve()
+                    )
+                    self.assertTrue((snapshot_root / relative).is_file())
+            return real_run(arguments, cwd=cwd, heartbeat_stream=heartbeat_stream)
+
+        with mock.patch.object(archive, "_run_seven_zip", side_effect=reject_live_rollout_access):
+            result = self.pack()
+
+        self.assertTrue(observed_snapshot)
+        self.assertTrue(result["ok"])
+
+    def test_snapshot_identity_mismatch_fails_without_archive_or_staging_residue(self):
+        payload = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        payload["threads"][0]["sha256"] = "0" * 64
+        self.manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        with self.assertRaises(archive.ArchiveError) as raised:
+            self.pack()
+
+        self.assertEqual(raised.exception.kind, "source_snapshot_mismatch")
+        transactions = list(self.archive_root.rglob("*")) if self.archive_root.exists() else []
+        self.assertFalse(any(path.name == "thread-tree.7z" for path in transactions))
+        self.assertFalse(any(path.name == "thread-tree.7z.partial" for path in transactions))
+        self.assertFalse(any(path.name == ".rollout-snapshot" for path in transactions))
 
     def test_verify_rechecks_archive_hash_internal_metadata_and_representatives(self):
         packed = self.pack()

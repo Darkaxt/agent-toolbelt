@@ -2,7 +2,7 @@
 
 Codex-only task-tree inventory, compact handoff coordination, verified recovery archives, manifest-bound local retirement, and conflict-safe restore.
 
-The implementation follows `docs/superpowers/specs/2026-08-30-context-transfer-design.md`. It remains read-only until a verified archive, destination acceptance, verified Codex archived state, and explicit live-retirement authorization permit exact-file retirement.
+The implementation follows `docs/superpowers/specs/2026-08-30-context-transfer-design.md`. It remains read-only until a verified archive, destination acceptance, verified Codex archived state, and explicit live-retirement authorization permit exact-file retirement. Packing copies reviewed rollout bytes into a temporary transaction-local snapshot so 7-Zip never opens Codex's live rollout paths directly.
 
 ## Commands
 
@@ -36,6 +36,7 @@ The installer creates a versioned release under `CODEX_HOME/tools/context-transf
 - No source-task self-summary.
 - No broad or wildcard deletion.
 - No archive staging on `C:`.
+- No 7-Zip access to live rollout paths; verified snapshots are removed after packing or failure.
 - No hard execution timeout.
 - No live task archival or rollout deletion without the explicit retirement gate.
 - Raw archives may contain historical secrets and must remain local and access-controlled.

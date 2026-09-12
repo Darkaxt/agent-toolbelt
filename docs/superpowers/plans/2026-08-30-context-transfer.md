@@ -115,4 +115,25 @@ Requirements: all specification requirements and acceptance criteria.
 | 5 | passed | CT-11, CT-12, CT-13; restore acceptance | 0 | 0 | 62 cumulative tests pass. Real NanaZip round trips restore every absent exact path with matching hashes, skip identical files, block conflicts before placement, enforce target-volume free space, reject corruption, report missing metadata rows through read-only SQLite, and clean exact staging. |
 | 6 | passed | All CT-1 through CT-14 implementation and non-destructive acceptance criteria | 0 | 0 | 69 family tests, 40 root tests, 28 focused wiring tests, skill validation, and skills.sh validation for 16 skills pass. The Codex-only skill resolves a single clean staged runtime through active.json. Fresh installed-runtime acceptance again found 102 readable rollouts, 101 closed edges, 8,000,165,603 bytes, zero blockers, and no archive-root mutation; bounded catalog preparation retained 306 short offset-backed entries with no full-text index. Synthetic pack, retirement, and restore transactions prove the destructive paths. The real Apollo/Beacon pack, task archival, ticket issue, and deletion were not invoked because CT-8 through CT-10 deliberately retain a separate explicit live-retirement authorization gate. |
 
+## Stage 7: Live-Rollout Handle Isolation
+
+Status: COMPLETE
+
+Requirements: CT-5, CT-6, CT-7, and the archive-layout acceptance criteria.
+
+- Reproduce the Windows sharing-mode gap where Python can inspect a rollout but 7-Zip cannot open the same live path.
+- Snapshot each reviewed rollout into exact transaction-local storage on the recovery drive.
+- Verify snapshot hash, size, and stable source identity before packaging.
+- Package only snapshot paths while preserving original archive member paths.
+- Remove snapshot storage after success or failure, with no source mutation or process termination.
+
+Verification:
+
+- A regression test rejects any 7-Zip rollout command rooted at the live `CODEX_HOME`.
+- Snapshot mismatch produces no final or partial archive and leaves no snapshot residue.
+- Existing archive verification, retirement, restore, runtime, and wiring tests remain green.
+- The staged installed runtime resolves the corrected package before this stage becomes COMPLETE.
+
+Closure evidence: the family suite passes with real 7-Zip pack, test, extraction, retirement, and restore coverage; the focused wiring suite and skill validators pass. The regression proves 7-Zip receives only transaction-snapshot paths, snapshot identity mismatches produce no archive, and temporary snapshots are absent after completion. Codex now resolves the corrected versioned runtime and skill `0.1.1`. Blockers: 0. Tracked deferrals: 0.
+
 Implementation completion requires every stage to pass, `blockers = 0`, `tracked_deferrals = 0`, verified synthetic recovery evidence, and zero residual manifest-bound files in the end-to-end retirement fixture. Applying the workflow to a selected real task remains a separately authorized operation and is not an implementation deferral.
