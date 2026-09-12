@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import ctypes
 import hashlib
 import hmac
 import json
@@ -22,6 +23,7 @@ KINDS = ('temporary', 'compiler-output', 'package-cache', 'browser-artifact',
 GENERATED = {'__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache'}
 RETRY = {'locked', 'failed', 'not_empty'}
 BATCH_SIZE = 256
+CLAIM_VERSION = 1
 
 
 def now():
@@ -70,10 +72,10 @@ class Engine:
         self._initialize()
 
     def connect(self):
-        connection = sqlite3.connect(self.db_path, timeout=0)
+        # WAL permits concurrent readers and short writers from disjoint cleanup jobs.
+        connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
         connection.execute('PRAGMA foreign_keys=ON')
-        connection.execute('PRAGMA busy_timeout=0')
         connection.execute('PRAGMA secure_delete=ON')
         return connection
 
@@ -143,7 +145,7 @@ class Engine:
             connection.close()
 
     @contextmanager
-    def locked(self):
+    def _legacy_lock(self):
         fs.check_chain(self.root)
         with (self.root / 'operation.lock').open('a+b') as stream:
             if os.fstat(stream.fileno()).st_size == 0:
@@ -167,6 +169,160 @@ class Engine:
                     msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
                 else:
                     fcntl.flock(stream, fcntl.LOCK_UN)
+
+    @contextmanager
+    def _coordination_lock(self):
+        """Serialize only root-claim bookkeeping, never filesystem work."""
+        if os.name == 'nt':
+            kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+            kernel.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+            kernel.CreateMutexW.restype = ctypes.c_void_p
+            kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+            kernel.WaitForSingleObject.restype = ctypes.c_uint
+            kernel.ReleaseMutex.argtypes = [ctypes.c_void_p]
+            kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+            name = 'Local\\AgentToolbeltTransactionalCleanup-' + hashlib.sha256(
+                str(self.root).casefold().encode()).hexdigest()
+            handle = kernel.CreateMutexW(None, False, name)
+            if not handle:
+                raise ctypes.WinError(ctypes.get_last_error())
+            result = kernel.WaitForSingleObject(handle, 0xFFFFFFFF)
+            if result not in {0, 0x80}:
+                kernel.CloseHandle(handle)
+                raise CleanupError('state_busy', 'Unable to acquire cleanup coordination mutex')
+            try:
+                yield
+            finally:
+                kernel.ReleaseMutex(handle)
+                kernel.CloseHandle(handle)
+            return
+        with (self.root / 'coordination.lock').open('a+b') as stream:
+            import fcntl
+            fcntl.flock(stream, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(stream, fcntl.LOCK_UN)
+
+    @staticmethod
+    def _lock_stream(stream, blocking=False):
+        stream.seek(0)
+        if os.name == 'nt':
+            import msvcrt
+            msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(stream, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+
+    @staticmethod
+    def _unlock_stream(stream):
+        stream.seek(0)
+        if os.name == 'nt':
+            import msvcrt
+            msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(stream, fcntl.LOCK_UN)
+
+    @staticmethod
+    def _roots_overlap(left, right):
+        return any(fs.within(a, b) or fs.within(b, a) for a in left for b in right)
+
+    def _remove_claim(self, directory):
+        for name in ('claim.json', 'owner.lock'):
+            (directory / name).unlink(missing_ok=True)
+        try:
+            directory.rmdir()
+        except OSError:
+            pass
+
+    def _live_claims(self):
+        claims_root = self.root / 'claims'
+        claims_root.mkdir(exist_ok=True)
+        live = []
+        for directory in claims_root.iterdir():
+            if not directory.is_dir():
+                continue
+            metadata_path, owner_path = directory / 'claim.json', directory / 'owner.lock'
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding='utf-8'))
+                owner = owner_path.open('a+b')
+                if os.fstat(owner.fileno()).st_size == 0:
+                    owner.write(b'0'); owner.flush()
+                try:
+                    self._lock_stream(owner)
+                except OSError:
+                    owner.close()
+                    metadata['roots'] = [str(fs.canonical(value)) for value in metadata.get('roots', [])]
+                    live.append(metadata)
+                    continue
+                self._unlock_stream(owner); owner.close()
+            except (OSError, ValueError, json.JSONDecodeError):
+                pass
+            self._remove_claim(directory)
+        return live
+
+    @contextmanager
+    def locked(self, roots=None, *, operation='mutation', transaction=None):
+        """Claim disjoint target roots; no roots retains the legacy global lock API."""
+        if roots is None:
+            with self._legacy_lock():
+                yield
+            return
+        roots = list(dict.fromkeys(str(fs.canonical(value)) for value in roots))
+        canonical_roots = [Path(value) for value in roots]
+        token = secrets.token_hex(16)
+        claim_dir = self.root / 'claims' / token
+        owner = None
+        with self._coordination_lock():
+            # Do not overlap a process still running the pre-root-claim runtime.
+            try:
+                with self._legacy_lock():
+                    pass
+            except CleanupError as exc:
+                raise CleanupError('state_busy', 'A legacy helper operation owns the global state lock') from exc
+            for claim in self._live_claims():
+                other_roots = [Path(value) for value in claim['roots']]
+                if self._roots_overlap(canonical_roots, other_roots):
+                    raise CleanupError(
+                        'target_busy',
+                        f"Target overlaps active {claim.get('operation', 'operation')} "
+                        f"for transaction {claim.get('transaction') or 'pending'}")
+            claim_dir.mkdir(parents=True)
+            owner = (claim_dir / 'owner.lock').open('a+b')
+            owner.write(b'0'); owner.flush(); self._lock_stream(owner)
+            metadata = {'version': CLAIM_VERSION, 'token': token, 'pid': os.getpid(),
+                        'operation': operation, 'transaction': transaction,
+                        'roots': roots, 'created_at': now()}
+            (claim_dir / 'claim.json').write_text(json.dumps(metadata, ensure_ascii=True), encoding='utf-8')
+        try:
+            yield
+        finally:
+            with self._coordination_lock():
+                if owner is not None:
+                    self._unlock_stream(owner); owner.close()
+                self._remove_claim(claim_dir)
+
+    def begin_roots(self, workspace, scan_roots=None, include_known_temp_roots=False):
+        workspace = fs.canonical(workspace)
+        if scan_roots:
+            roots = [str(fs.canonical(path)) for path in scan_roots]
+        else:
+            roots = [str(workspace)]
+            if include_known_temp_roots:
+                roots.extend(self._known_temp_roots())
+        return list(dict.fromkeys(roots))
+
+    def transaction_roots(self, transaction):
+        return self.txn(transaction)['roots']
+
+    def ticket_roots(self, ticket_id):
+        connection = self.connect()
+        try:
+            ticket = self._ticket(connection, ticket_id)
+            return self._payload(self._row(connection, ticket['transaction_id']))['roots'], ticket['transaction_id']
+        finally:
+            connection.close()
 
     def protection(self, path):
         path = fs.canonical(path)
@@ -207,7 +363,21 @@ class Engine:
 
     def git_reason(self, path):
         parent = path if path.is_dir() else path.parent
-        repo = next((value for value in (parent, *parent.parents) if (value / '.git').exists()), None)
+        # Empty .git directories are often abandoned tool markers, not repositories.
+        # Non-empty or file markers remain fail-closed if Git cannot inspect them.
+        repo = None
+        for value in (parent, *parent.parents):
+            marker = value / '.git'
+            if not marker.exists():
+                continue
+            if marker.is_dir():
+                try:
+                    if not any(marker.iterdir()):
+                        continue
+                except OSError:
+                    pass
+            repo = value
+            break
         if repo is None:
             return None
         if repo not in self.repo_cache:
@@ -289,16 +459,13 @@ class Engine:
         workspace = fs.canonical(workspace)
         if not workspace.is_dir():
             raise CleanupError('workspace_missing', 'Workspace must be an existing directory')
+        roots = self.begin_roots(workspace, scan_roots, include_known_temp_roots)
         if scan_roots:
-            roots = [str(fs.canonical(path)) for path in scan_roots]
             scan_mode = 'explicit'
         else:
-            roots = [str(workspace)]
             scan_mode = 'workspace'
             if include_known_temp_roots:
-                roots.extend(self._known_temp_roots())
                 scan_mode = 'workspace_and_known_temp'
-        roots = list(dict.fromkeys(roots))
         transaction = secrets.token_hex(16)
         free_space = {root: shutil.disk_usage(root).free for root in roots if Path(root).exists()}
         coverage = {'workspace': any(fs.within(workspace, Path(root)) for root in roots),
@@ -382,6 +549,8 @@ class Engine:
                                    (transaction, ordinal, str(path), path_key(path)))
                 connection.execute('UPDATE transactions SET roots_json=? WHERE transaction_id=?',
                                    (encoded(roots).decode(), transaction))
+                # Do not retain a SQLite writer while the new root is traversed.
+                connection.commit()
                 self._insert_baseline(connection, transaction, [str(path)])
             connection.execute('''INSERT INTO registrations
                 (transaction_id,path,path_key,kind,evidence,regenerated,allow_hardlinks,allow_leaf_reparse)

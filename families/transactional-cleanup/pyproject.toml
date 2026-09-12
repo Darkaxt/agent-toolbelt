@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-toolbelt-transactional-cleanup"
-version = "0.2.0"
+version = "0.3.0"
 description = "Reviewed snapshot cleanup with Windows file identity and deletion tickets"
 requires-python = ">=3.11"
 license = {text = "MIT"}

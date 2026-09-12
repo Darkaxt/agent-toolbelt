@@ -30,6 +30,14 @@ class InstalledWorkflowTests(unittest.TestCase):
             self.assertTrue(Path(first['active_runtime']).is_dir())
             active = json.loads((local / 'Tools/transactional-cleanup/active.json').read_text())
             self.assertEqual(active['legacy_source'], first['active_runtime'])
+            third = json.loads(subprocess.run(command, capture_output=True, text=True, check=True).stdout)
+            active = json.loads((local / 'Tools/transactional-cleanup/active.json').read_text())
+            self.assertEqual(active['legacy_source'], first['active_runtime'])
+            self.assertEqual(third['legacy_runtime_retained'], first['active_runtime'])
+            self.assertTrue(Path(first['active_runtime']).is_dir())
+            self.assertFalse(Path(second['active_runtime']).exists())
+            releases = local / 'Tools/transactional-cleanup/releases'
+            self.assertEqual(len([path for path in releases.iterdir() if path.is_dir()]), 2)
 
     @unittest.skipUnless(os.name == 'nt', 'Windows junction guard')
     def test_redirected_skill_destination_rejected_before_deployment(self):

@@ -411,6 +411,61 @@ except CleanupError as error:
         with self.engine.locked():
             pass
 
+    def test_disjoint_root_locks_can_run_concurrently_but_overlaps_are_rejected(self):
+        first = self.root / 'first'
+        second = self.root / 'second'
+        nested = first / 'nested'
+        first.mkdir()
+        second.mkdir()
+        code = '''import sys
+from pathlib import Path
+from agent_toolbelt_transactional_cleanup.engine import Engine
+with Engine(Path(sys.argv[1])).locked([Path(sys.argv[2])], operation='review', transaction='child'):
+    print('locked', flush=True)
+    sys.stdin.readline()
+'''
+        environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / 'src'))
+        process = subprocess.Popen([sys.executable, '-B', '-c', code, str(self.root / 'state'), str(first)],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   text=True, env=environment)
+        try:
+            self.assertEqual(process.stdout.readline().strip(), 'locked')
+            with self.engine.locked([second], operation='review', transaction='parent'):
+                pass
+            with self.assertRaises(CleanupError) as raised:
+                with self.engine.locked([nested], operation='apply', transaction='overlap'):
+                    pass
+            self.assertEqual(raised.exception.kind, 'target_busy')
+        finally:
+            process.stdin.write('\n')
+            process.stdin.flush()
+            process.wait(timeout=10)
+        stderr = process.stderr.read()
+        process.stdin.close(); process.stdout.close(); process.stderr.close()
+        self.assertEqual(process.returncode, 0, stderr)
+
+    def test_dead_process_claim_is_reclaimed(self):
+        target = self.root / 'target'
+        target.mkdir()
+        code = '''import sys
+from pathlib import Path
+from agent_toolbelt_transactional_cleanup.engine import Engine
+with Engine(Path(sys.argv[1])).locked([Path(sys.argv[2])], operation='review', transaction='child'):
+    print('locked', flush=True)
+    sys.stdin.readline()
+'''
+        environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / 'src'))
+        process = subprocess.Popen([sys.executable, '-B', '-c', code, str(self.root / 'state'), str(target)],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   text=True, env=environment)
+        self.assertEqual(process.stdout.readline().strip(), 'locked')
+        process.kill()
+        process.wait(timeout=10)
+        process.stdin.close(); process.stdout.close(); process.stderr.close()
+        with self.engine.locked([target], operation='review', transaction='replacement'):
+            pass
+        self.assertEqual(list((self.root / 'state' / 'claims').iterdir()), [])
+
     def test_status_is_lock_free_and_reports_progress(self):
         connection = self.engine.connect()
         try:
@@ -530,6 +585,18 @@ except CleanupError as error:
         with patch('agent_toolbelt_transactional_cleanup.engine.subprocess.run', side_effect=OSError):
             result = self.engine.review(self.transaction)
         self.assertEqual(result['candidate_count'], 0)
+
+    def test_empty_git_marker_does_not_block_explicit_non_repository_output(self):
+        (self.work / '.git').mkdir()
+        out = self.work / '.codex-temp' / 'go-build-cache'
+        out.mkdir(parents=True)
+        (out / 'cache.bin').write_bytes(b'generated')
+        transaction = self.engine.begin(self.work, [out])['transaction_id']
+        self.engine.register(transaction, out, 'explicit-generated-output',
+                             'verified disposable Go build cache', regenerated=True)
+        result = self.engine.review(transaction)
+        self.assertEqual(result['candidate_bytes'], 9)
+        self.assertEqual(result['candidate_count'], 2)
 
     def test_review_root_cannot_become_authority_for_all_temp(self):
         for path in (Path(self.work.anchor), Path('D:/Temp')):

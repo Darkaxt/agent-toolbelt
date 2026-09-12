@@ -40,15 +40,20 @@ For multiple known outputs, repeat `--scan-root` for those exact output folders.
 Registration matching uses ancestor lookup instead of an inventory-by-registration
 cross-product. Inventory and review rows stream into bounded SQLite batches instead
 of full JSON snapshots. `status` is lock-free, accepts no transaction for the active
-or latest operation, and reports phase/count/byte progress. `state_busy` means
-another mutating operation owns the lock; inspect status rather than launching a
-parallel review. A completed `reviewed` transaction should not be reviewed again.
+or latest operation, and reports phase/count/byte progress. `target_busy` means a
+live operation owns the same target root or an ancestor/descendant; inspect status
+rather than launching an overlapping operation. Operations on disjoint explicit
+roots may run concurrently. `state_busy` is reserved for a pre-upgrade runtime that
+still owns the legacy global lock. A completed `reviewed` transaction should not be
+reviewed again.
 For pre-existing known
 generated output, registration requires `--regenerated` with explicit provenance.
 Without it, pre-existing modified files are protected. New untracked source files
 are not automatically considered generated. Known cache directories are classified
 only when the baseline proves they are new. Root inventories never traverse reparse
-points. Git failure protects repository files. Hard links and leaf reparse objects
+points. Git failure inside a real repository protects repository files. An empty
+abandoned `.git` directory is not treated as a repository and does not block an
+explicitly registered non-repository generated output. Hard links and leaf reparse objects
 remain protected unless their explicit registration adds `--allow-hardlinks` or
 `--allow-leaf-reparse`. These flags authorize only exact ticketed names: other hard
 links and symlink/junction targets remain intact.
@@ -57,8 +62,10 @@ links and symlink/junction targets remain intact.
 
 Normalized SQLite/WAL metadata and manifest rows are HMAC-bound to a local helper
 key, host identity, policy version and reviewed member set. Tickets reference exact
-candidate rows instead of copying them. Mutations serialize through an OS-owned
-lock, while status remains readable. Apply commits result/progress batches of 256
+candidate rows instead of copying them. Root claims serialize overlapping filesystem
+operations while allowing disjoint roots to run concurrently; stale claims are
+reclaimed through OS-owned lock state. SQLite serializes only its short write
+transactions, while status remains readable. Apply commits result/progress batches of 256
 items rather than synchronizing once per object. A crash before the next batch commit
 can turn an already deleted item into `already_missing` on retry, but can never add
 authority. There is no ticket expiry or command cancellation timeout. Terminal state
