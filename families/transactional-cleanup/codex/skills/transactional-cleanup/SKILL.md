@@ -3,7 +3,7 @@ name: transactional-cleanup
 description: Clean generated build, deployment, browser, media and temporary artifacts through reviewed snapshots and exact-file deletion tickets. Use when a task leaves local output to reclaim, including output outside its workspace.
 license: MIT
 metadata:
-  version: "0.3.0"
+  version: "0.4.0"
   compatibility: Windows 10/11, Python 3.11+, NTFS/ReFS identity. Codex and Claude; installed local helper required.
 ---
 
@@ -24,8 +24,10 @@ ticket is a procedural review gate, not a request for another user approval.
    `--scan-root` for each exact output folder. Registration does not narrow scans.
 2. Register specific outputs with `register --transaction <id> --path <output>
    --kind compiler-output --evidence "<command or tool that creates this output>"`.
-   Register before creation when possible. A registration cannot authorize a
+   Register before creation when possible. A normal registration cannot authorize a
    repository root, tracked file, helper installation, or protected system path.
+   Use the separate disposable-validation-repository contract below only when all
+   of its safeguards apply.
 3. Finish and verify the primary task, then run `review --transaction <id>`.
    Inspect candidate/exclusion diagnostics and byte estimate. When diagnostics are
    capped, page the signed manifest with `inspect --transaction <id> --offset <n>
@@ -64,6 +66,26 @@ path. Ordinary pre-existing modified files remain protected. Never use
 Non-Git output is supported. An empty abandoned `.git` marker does not make a path
 a repository, while failure to inspect a real repository remains fail-closed.
 
+## Disposable Validation Repositories
+
+For an exact standalone Git clone created only for temporary validation, begin with
+that clone as an explicit scan root and register the root itself:
+
+```text
+begin --workspace <real-workspace> --scan-root <recognized-temp>\validation-clone
+register --transaction <id> --path <recognized-temp>\validation-clone --kind disposable-repository --evidence "<command and purpose that created this disposable clone>" --regenerated --allow-disposable-repository
+```
+
+Use this authority only when the clone is independently reproducible and the
+evidence establishes why it is disposable. The helper requires the path to be the
+exact scan root, a strict descendant of a recognized Temp root, a normal NTFS/ReFS
+directory, and an exact Git top-level with an internal `.git` directory. It rejects
+the active workspace, linked worktrees, symlinked repositories, broad Temp roots,
+repositories outside Temp, and roots replaced after authorization. Review includes
+tracked files and `.git` metadata as exact members. New concurrent files still
+survive and produce `partially_applied`; retry or start a new review rather than
+deleting them outside the helper.
+
 ## Snapshot And Retry Contract
 
 - Apply accepts only an opaque helper-issued ticket, never a path, wildcard or shell expression.
@@ -72,6 +94,8 @@ a repository, while failure to inspect a real repository remains fail-closed.
 - A replacement at the same path is skipped as `replaced_after_scan`.
 - Locked files are retryable; other eligible files are processed independently.
 - Junctions, symlinks, hard links, tracked files and critical roots are protected.
+  The only tracked-file exception is an exact ticketed member of an explicitly
+  authorized disposable validation repository as defined above.
 - Exact hard-link names or leaf symlink/junction objects may be enabled only on an
   explicit registration with `--allow-hardlinks` or `--allow-leaf-reparse`. These
   options never authorize another link name or traversal/deletion of a link target.
