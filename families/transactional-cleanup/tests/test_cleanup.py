@@ -37,6 +37,18 @@ class CleanupTests(unittest.TestCase):
         (path / 'b.bin').write_bytes(b'beta')
         return path
 
+    def disposable_repository(self, name='validation-clone'):
+        repository = self.root / name
+        repository.mkdir()
+        subprocess.run(['git', 'init', str(repository)], check=True, capture_output=True)
+        (repository / 'Packs').mkdir()
+        (repository / 'Packs' / 'artifact.yml').write_text('name: fixture\n', encoding='utf-8')
+        subprocess.run(['git', '-C', str(repository), 'add', '.'], check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(repository), '-c', 'user.name=Cleanup Tests',
+                        '-c', 'user.email=cleanup@example.invalid', 'commit', '-m', 'fixture'],
+                       check=True, capture_output=True)
+        return repository
+
     def ticket(self):
         review = self.engine.review(self.transaction)
         return self.engine.ticket(self.transaction, review['manifest_sha256'])['ticket_id']
@@ -260,6 +272,100 @@ class CleanupTests(unittest.TestCase):
         self.assertTrue((out / 'a.bin').exists())
         self.assertTrue((out / 'tracked.py').exists())
         self.assertFalse((out / 'b.bin').exists())
+
+    def test_disposable_repository_requires_explicit_authority(self):
+        repository = self.disposable_repository()
+        transaction = self.engine.begin(self.work, [repository])['transaction_id']
+        with self.assertRaises(CleanupError):
+            self.engine.register(transaction, repository, 'disposable-repository',
+                                 'temporary Demisto validation clone', regenerated=True)
+
+    def test_disposable_repository_removes_tracked_files_and_git_metadata(self):
+        repository = self.disposable_repository()
+        transaction = self.engine.begin(self.work, [repository])['transaction_id']
+        self.engine.register(transaction, repository, 'disposable-repository',
+                             'temporary Demisto validation clone', regenerated=True,
+                             allow_disposable_repository=True)
+        review = self.engine.review(transaction)
+        manifest = self.engine.inspect(transaction, limit=1000)['page_items']
+        self.assertGreater(review['candidate_count'], 3)
+        self.assertTrue(any('.git' in Path(item['path']).parts for item in manifest
+                            if item['decision'] == 'candidate'))
+        self.assertTrue(any(item['git_status'] == 'disposable_repository_authorized'
+                            for item in manifest if item['decision'] == 'candidate'))
+        ticket = self.engine.ticket(transaction, review['manifest_sha256'])['ticket_id']
+        result = self.engine.apply(ticket)
+        self.assertEqual(result['ticket_state'], 'applied', result)
+        self.assertFalse(repository.exists())
+
+    def test_disposable_repository_keeps_concurrent_new_file(self):
+        repository = self.disposable_repository()
+        transaction = self.engine.begin(self.work, [repository])['transaction_id']
+        self.engine.register(transaction, repository, 'disposable-repository',
+                             'temporary Demisto validation clone', regenerated=True,
+                             allow_disposable_repository=True)
+        review = self.engine.review(transaction)
+        ticket = self.engine.ticket(transaction, review['manifest_sha256'])['ticket_id']
+        concurrent = repository / 'arrived-after-review.txt'
+        concurrent.write_text('keep', encoding='utf-8')
+        result = self.engine.apply(ticket)
+        self.assertEqual(result['ticket_state'], 'partially_applied', result)
+        self.assertTrue(concurrent.exists())
+        self.assertFalse((repository / 'Packs' / 'artifact.yml').exists())
+
+    def test_disposable_repository_requires_exact_temp_scan_root_and_gates(self):
+        repository = self.disposable_repository()
+        cases = [
+            ('wrong-kind', True, 'explicit-generated-output'),
+            ('missing-regenerated', False, 'disposable-repository'),
+        ]
+        for label, regenerated, kind in cases:
+            with self.subTest(label=label):
+                transaction = self.engine.begin(self.work, [repository])['transaction_id']
+                with self.assertRaises(CleanupError):
+                    self.engine.register(transaction, repository, kind, 'temporary validation clone',
+                                         regenerated=regenerated, allow_disposable_repository=True)
+        broad_transaction = self.engine.begin(self.work, [self.root])['transaction_id']
+        with self.assertRaises(CleanupError):
+            self.engine.register(broad_transaction, repository, 'disposable-repository',
+                                 'temporary validation clone', regenerated=True,
+                                 allow_disposable_repository=True)
+
+        outside_transaction = self.engine.begin(self.work, [repository])['transaction_id']
+        with patch.object(self.engine, '_temp_roots', return_value=[self.root / 'other-temp']):
+            with self.assertRaises(CleanupError) as error:
+                self.engine.register(outside_transaction, repository, 'disposable-repository',
+                                     'repository outside the configured temp boundary', regenerated=True,
+                                     allow_disposable_repository=True)
+        self.assertEqual(error.exception.kind, 'disposable_repository_location')
+
+    def test_disposable_repository_root_replacement_fails_closed(self):
+        repository = self.disposable_repository()
+        transaction = self.engine.begin(self.work, [repository])['transaction_id']
+        self.engine.register(transaction, repository, 'disposable-repository',
+                             'temporary Demisto validation clone', regenerated=True,
+                             allow_disposable_repository=True)
+        review = self.engine.review(transaction)
+        ticket = self.engine.ticket(transaction, review['manifest_sha256'])['ticket_id']
+        original = repository.with_name(repository.name + '-original')
+        repository.rename(original)
+        repository.mkdir()
+        subprocess.run(['git', 'init', str(repository)], check=True, capture_output=True)
+        with self.assertRaises(CleanupError) as error:
+            self.engine.apply(ticket)
+        self.assertEqual(error.exception.kind, 'disposable_repository_replaced')
+        self.assertTrue(repository.exists())
+        self.assertTrue((original / 'Packs' / 'artifact.yml').exists())
+
+    def test_linked_worktree_marker_is_not_disposable_repository(self):
+        repository = self.root / 'linked-worktree'
+        repository.mkdir()
+        (repository / '.git').write_text('gitdir: D:/outside/worktrees/fixture\n', encoding='utf-8')
+        transaction = self.engine.begin(self.work, [repository])['transaction_id']
+        with self.assertRaises(CleanupError):
+            self.engine.register(transaction, repository, 'disposable-repository',
+                                 'linked worktree must remain protected', regenerated=True,
+                                 allow_disposable_repository=True)
 
     def test_hardlinked_file_protected(self):
         out = self.output()
@@ -508,6 +614,11 @@ with Engine(Path(sys.argv[1])).locked([Path(sys.argv[2])], operation='review', t
             '--allow-hardlinks', '--allow-leaf-reparse'])
         self.assertTrue(registered.allow_hardlinks)
         self.assertTrue(registered.allow_leaf_reparse)
+        disposable = cli.parser().parse_args([
+            'register', '--transaction', 'a' * 32, '--path', str(self.work / 'clone'),
+            '--kind', 'disposable-repository', '--evidence', 'validation clone',
+            '--regenerated', '--allow-disposable-repository'])
+        self.assertTrue(disposable.allow_disposable_repository)
         inspected = cli.parser().parse_args([
             'inspect', '--transaction', 'a' * 32, '--offset', '20', '--limit', '50',
             '--decision', 'candidate'])

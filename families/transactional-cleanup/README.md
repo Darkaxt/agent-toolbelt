@@ -19,6 +19,7 @@ for deletion. Unsupported filesystems are reported as protected.
 ```text
 agent-toolbelt-transactional-cleanup begin --workspace <repo> --scan-root <temp-root>
 agent-toolbelt-transactional-cleanup register --transaction <id> --path <output> --kind compiler-output --evidence <provenance>
+agent-toolbelt-transactional-cleanup register --transaction <id> --path <temp-clone> --kind disposable-repository --evidence <provenance> --regenerated --allow-disposable-repository
 agent-toolbelt-transactional-cleanup review --transaction <id>
 agent-toolbelt-transactional-cleanup inspect --transaction <id> --decision candidate --offset 0 --limit 100
 agent-toolbelt-transactional-cleanup ticket --transaction <id> --manifest-sha256 <reviewed-hash>
@@ -57,6 +58,15 @@ explicitly registered non-repository generated output. Hard links and leaf repar
 remain protected unless their explicit registration adds `--allow-hardlinks` or
 `--allow-leaf-reparse`. These flags authorize only exact ticketed names: other hard
 links and symlink/junction targets remain intact.
+
+An exact standalone Git clone created only for validation may be authorized with
+`--kind disposable-repository --regenerated --allow-disposable-repository`. The
+repository must be an exact explicit scan root, a strict descendant of a recognized
+Temp root, and contain a real internal `.git` directory. Linked worktrees, the
+workspace repository, broad Temp roots, repositories outside Temp, and repositories
+whose root identity changes after review remain protected. Review includes the
+tracked files and `.git` metadata as exact ticket members. New files created after
+review survive; no recursive repository deletion is used.
 
 ## State And Limits
 

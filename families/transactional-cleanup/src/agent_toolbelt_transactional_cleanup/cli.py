@@ -25,6 +25,8 @@ def parser():
                           help='Allow deletion of exact ticketed hard-link names; other links remain intact')
     register.add_argument('--allow-leaf-reparse', action='store_true',
                           help='Allow deletion of exact ticketed leaf symlinks/junctions without traversing targets')
+    register.add_argument('--allow-disposable-repository', action='store_true',
+                          help='Allow an exact reviewed standalone repository beneath a Temp root')
     for name in ('review', 'ticket'):
         command = commands.add_parser(name)
         command.add_argument('--transaction', required=True)
@@ -66,7 +68,8 @@ def main(argv=None):
                     result = engine.begin(args.workspace, args.scan_root, args.include_known_temp_roots)
                 elif args.command == 'register':
                     result = engine.register(args.transaction, args.path, args.kind, args.evidence,
-                                             args.regenerated, args.allow_hardlinks, args.allow_leaf_reparse)
+                                             args.regenerated, args.allow_hardlinks, args.allow_leaf_reparse,
+                                             args.allow_disposable_repository)
                 elif args.command == 'review':
                     result = engine.review(args.transaction)
                 elif args.command == 'ticket':

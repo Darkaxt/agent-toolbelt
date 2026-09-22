@@ -96,6 +96,29 @@ class InstalledWorkflowTests(unittest.TestCase):
             result = run('apply', '--ticket', ticket)
             self.assertEqual(result['deleted_bytes'], 5)
             self.assertFalse(out.exists())
+
+            disposable = root / 'installed-validation-clone'
+            disposable.mkdir()
+            subprocess.run(['git', 'init', str(disposable)], check=True, capture_output=True)
+            (disposable / 'fixture.txt').write_text('tracked validation data', encoding='utf-8')
+            subprocess.run(['git', '-C', str(disposable), 'add', '.'], check=True, capture_output=True)
+            subprocess.run(['git', '-C', str(disposable), '-c', 'user.name=Cleanup Tests',
+                            '-c', 'user.email=cleanup@example.invalid', 'commit', '-m', 'fixture'],
+                           check=True, capture_output=True)
+            repository_start = run('begin', '--workspace', str(work),
+                                   '--scan-root', str(disposable))
+            repository_transaction = repository_start['transaction_id']
+            run('register', '--transaction', repository_transaction, '--path', str(disposable),
+                '--kind', 'disposable-repository', '--evidence', 'installed validation clone',
+                '--regenerated', '--allow-disposable-repository')
+            repository_review = run('review', '--transaction', repository_transaction)
+            repository_ticket = run(
+                'ticket', '--transaction', repository_transaction,
+                '--manifest-sha256', repository_review['manifest_sha256'])['ticket_id']
+            repository_result = run('apply', '--ticket', repository_ticket)
+            self.assertEqual(repository_result['ticket_state'], 'applied', repository_result)
+            self.assertFalse(disposable.exists())
+
             second = install()
             self.assertFalse(Path(first['active_runtime']).exists())
             self.assertTrue(Path(second['active_runtime']).exists())

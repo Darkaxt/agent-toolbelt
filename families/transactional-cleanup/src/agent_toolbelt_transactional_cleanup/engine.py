@@ -19,7 +19,8 @@ from . import filesystem as fs
 
 POLICY = '2'
 KINDS = ('temporary', 'compiler-output', 'package-cache', 'browser-artifact',
-         'media-intermediate', 'test-output', 'generated-report', 'explicit-generated-output')
+         'media-intermediate', 'test-output', 'generated-report', 'explicit-generated-output',
+         'disposable-repository')
 GENERATED = {'__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache'}
 RETRY = {'locked', 'failed', 'not_empty'}
 BATCH_SIZE = 256
@@ -114,7 +115,9 @@ class Engine:
                     path TEXT NOT NULL, path_key TEXT NOT NULL, kind TEXT NOT NULL,
                     evidence TEXT NOT NULL, regenerated INTEGER NOT NULL,
                     allow_hardlinks INTEGER NOT NULL DEFAULT 0,
-                    allow_leaf_reparse INTEGER NOT NULL DEFAULT 0
+                    allow_leaf_reparse INTEGER NOT NULL DEFAULT 0,
+                    allow_disposable_repository INTEGER NOT NULL DEFAULT 0,
+                    repository_identity TEXT
                 );
                 CREATE INDEX IF NOT EXISTS registrations_lookup ON registrations(transaction_id, path_key);
                 CREATE TABLE IF NOT EXISTS baseline (
@@ -140,6 +143,12 @@ class Engine:
                     deleted_bytes INTEGER NOT NULL DEFAULT 0, completed_at TEXT, ticket_mac TEXT NOT NULL
                 );
             ''')
+            registration_columns = {row[1] for row in connection.execute('PRAGMA table_info(registrations)')}
+            if 'allow_disposable_repository' not in registration_columns:
+                connection.execute('''ALTER TABLE registrations
+                    ADD COLUMN allow_disposable_repository INTEGER NOT NULL DEFAULT 0''')
+            if 'repository_identity' not in registration_columns:
+                connection.execute('ALTER TABLE registrations ADD COLUMN repository_identity TEXT')
             connection.commit()
         finally:
             connection.close()
@@ -396,8 +405,9 @@ class Engine:
             return 'git_tracked'
         return None
 
-    def scan(self, roots):
+    def scan(self, roots, disposable_roots=()):
         """Yield metadata one object at a time; callers own bounded persistence."""
+        disposable_roots = [fs.canonical(path) for path in disposable_roots]
         for root_value in roots:
             root = fs.canonical(root_value)
             pending = [root]
@@ -407,6 +417,9 @@ class Engine:
                     continue
                 key = str(path)
                 reason = self.protection(path)
+                disposable_member = any(fs.within(path, root) for root in disposable_roots)
+                if disposable_member and reason in {'repository_root', 'filesystem_or_repository_metadata'}:
+                    reason = None
                 if reason:
                     item = {'path': key, 'excluded': reason}
                     if reason in {'repository_root', 'scan_root', 'protected_ancestor'}:
@@ -428,6 +441,50 @@ class Engine:
         candidates = [Path(os.environ.get('TEMP', 'D:/Temp')), Path('D:/Temp'), Path('E:/Temp'),
                       Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData/Local')) / 'Temp']
         return [str(fs.canonical(path)) for path in candidates if path.is_dir()]
+
+    def _temp_roots(self):
+        candidates = [Path('D:/Temp'), Path('E:/Temp')]
+        if os.environ.get('TEMP'):
+            candidates.append(fs.canonical(os.environ['TEMP']))
+        if os.environ.get('LOCALAPPDATA'):
+            candidates.append(fs.canonical(os.environ['LOCALAPPDATA']) / 'Temp')
+        return list(dict.fromkeys(fs.canonical(path) for path in candidates))
+
+    def _validate_disposable_repository(self, path, expected_identity=None, require_git=True):
+        path = fs.canonical(path)
+        if not any(path != root and fs.within(path, root) for root in self._temp_roots()):
+            raise CleanupError('disposable_repository_location',
+                               'Disposable repositories must be strict descendants of a recognized Temp root')
+        try:
+            info = fs.identity(path)
+        except (OSError, ValueError) as exc:
+            raise CleanupError('disposable_repository_invalid',
+                               'Disposable repository identity is unavailable') from exc
+        if not info['directory'] or info['reparse'] or info['filesystem'] not in {'NTFS', 'ReFS'}:
+            raise CleanupError('disposable_repository_invalid',
+                               'Disposable repository must be a normal directory on NTFS or ReFS')
+        if expected_identity is not None and info['identity'] != expected_identity:
+            raise CleanupError('disposable_repository_replaced',
+                               'Disposable repository root changed after authorization')
+        if require_git:
+            marker = path / '.git'
+            try:
+                if not marker.is_dir() or fs.reparse(marker):
+                    raise CleanupError('disposable_repository_invalid',
+                                       'Only standalone repositories with an internal .git directory are supported')
+                result = subprocess.run(
+                    ['git', '-C', str(path), 'rev-parse', '--show-toplevel', '--is-inside-work-tree'],
+                    capture_output=True, check=True, text=True)
+                lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+                if len(lines) < 2 or fs.canonical(lines[0]) != path or lines[1].casefold() != 'true':
+                    raise CleanupError('disposable_repository_invalid',
+                                       'Git did not identify the exact registered path as a working-tree root')
+            except CleanupError:
+                raise
+            except (OSError, subprocess.CalledProcessError, ValueError) as exc:
+                raise CleanupError('disposable_repository_invalid',
+                                   'Git could not verify the disposable repository root') from exc
+        return info['identity']
 
     def _set_progress(self, connection, transaction, operation, phase, processed=0, total=None, processed_bytes=0):
         connection.execute('''UPDATE transactions SET active_operation=?, progress_phase=?,
@@ -528,7 +585,8 @@ class Engine:
                 'detail_retained': bool(row['detail_retained']), 'completed_at': row['completed_at']}
 
     def register(self, transaction, path, kind, evidence, regenerated=False,
-                 allow_hardlinks=False, allow_leaf_reparse=False):
+                 allow_hardlinks=False, allow_leaf_reparse=False,
+                 allow_disposable_repository=False):
         path = fs.canonical(path)
         reason = self.protection(path)
         if kind not in KINDS or not evidence.strip():
@@ -538,9 +596,24 @@ class Engine:
             row = self._row(connection, transaction)
             if row['state'] != 'open':
                 raise CleanupError('review_frozen', 'Registration is closed after review')
+            roots = json.loads(row['roots_json'])
+            repository_identity = None
+            if allow_disposable_repository:
+                if kind != 'disposable-repository' or not regenerated:
+                    raise CleanupError('disposable_repository_contract',
+                                       'Disposable repository authority requires its artifact kind and --regenerated')
+                if reason != 'repository_root' or path == Path(row['workspace']):
+                    raise CleanupError('protected_path', reason or 'workspace_root')
+                if path_key(path) not in {path_key(root) for root in roots}:
+                    raise CleanupError('disposable_repository_contract',
+                                       'Disposable repository must be an exact transaction scan root')
+                repository_identity = self._validate_disposable_repository(path)
+                reason = None
+            elif kind == 'disposable-repository':
+                raise CleanupError('disposable_repository_authority_required',
+                                   'Use --allow-disposable-repository for a verified temporary clone')
             if reason or path == Path(row['workspace']):
                 raise CleanupError('protected_path', reason or 'workspace_root')
-            roots = json.loads(row['roots_json'])
             if not any(fs.within(path, Path(root)) for root in roots):
                 roots.append(str(path))
                 ordinal = connection.execute('SELECT COALESCE(MAX(ordinal),-1)+1 FROM roots WHERE transaction_id=?',
@@ -553,10 +626,12 @@ class Engine:
                 connection.commit()
                 self._insert_baseline(connection, transaction, [str(path)])
             connection.execute('''INSERT INTO registrations
-                (transaction_id,path,path_key,kind,evidence,regenerated,allow_hardlinks,allow_leaf_reparse)
-                VALUES (?,?,?,?,?,?,?,?)''',
+                (transaction_id,path,path_key,kind,evidence,regenerated,allow_hardlinks,allow_leaf_reparse,
+                 allow_disposable_repository,repository_identity)
+                VALUES (?,?,?,?,?,?,?,?,?,?)''',
                                (transaction, str(path), path_key(path), kind, evidence, int(regenerated),
-                                int(allow_hardlinks), int(allow_leaf_reparse)))
+                                int(allow_hardlinks), int(allow_leaf_reparse),
+                                int(allow_disposable_repository), repository_identity))
             connection.commit()
             return self.report('register', self._payload(self._row(connection, transaction)))
         finally:
@@ -577,6 +652,14 @@ class Engine:
                 return registration
         return None
 
+    @staticmethod
+    def _disposable_registration_for(path, registrations):
+        for ancestor in (path, *path.parents):
+            registration = registrations.get(path_key(ancestor))
+            if registration is not None and registration['allow_disposable_repository']:
+                return registration
+        return None
+
     def _classify_batch(self, connection, transaction, workspace, roots, registrations, batch, start_ordinal):
         keys = [path_key(item['path']) for item in batch]
         placeholders = ','.join('?' for _ in keys)
@@ -588,8 +671,11 @@ class Engine:
         for offset, info in enumerate(batch):
             path = Path(info['path'])
             registration = self._registration_for(path, registrations)
-            git_status = self.git_reason(path) if not info.get('excluded') else None
-            reason = info.get('excluded') or git_status
+            disposable = self._disposable_registration_for(path, registrations)
+            allow_disposable = bool(disposable and fs.within(path, Path(disposable['path'])))
+            git_status = ('disposable_repository_authorized' if allow_disposable else
+                          (self.git_reason(path) if not info.get('excluded') else None))
+            reason = info.get('excluded') or (None if allow_disposable else git_status)
             if path == workspace or (str(path) in roots and not registration):
                 reason = reason or 'scan_root'
             allow_reparse = bool(registration and registration['allow_leaf_reparse'])
@@ -608,6 +694,10 @@ class Engine:
                 reason = 'generated_provenance_missing'
             item = {**info, 'allow_hardlinks': allow_hardlinks,
                     'allow_leaf_reparse': allow_reparse,
+                    'allow_disposable_repository': allow_disposable,
+                    'disposable_repository_root': disposable['path'] if allow_disposable else None,
+                    'disposable_repository_identity': (disposable['repository_identity']
+                                                       if allow_disposable else None),
                     'decision': 'excluded' if reason else 'candidate',
                     'reason': reason or 'attributed_generated_output',
                     'kind': registration['kind'] if registration else 'compiler-output',
@@ -653,6 +743,14 @@ class Engine:
                 raise CleanupError('review_frozen', 'This snapshot has already been reviewed')
             roots, workspace = json.loads(row['roots_json']), Path(row['workspace'])
             registrations, created_at = self._registrations(connection, transaction), now()
+            disposable_roots = []
+            for registration in registrations.values():
+                if not registration['allow_disposable_repository']:
+                    continue
+                root = Path(registration['path'])
+                self._validate_disposable_repository(
+                    root, registration['repository_identity'], require_git=True)
+                disposable_roots.append(str(root))
             connection.execute('DELETE FROM manifest WHERE transaction_id=?', (transaction,))
             connection.execute('UPDATE transactions SET manifest_created_at=? WHERE transaction_id=?',
                                (created_at, transaction))
@@ -661,7 +759,7 @@ class Engine:
             ordinal = candidate_count = candidate_bytes = excluded_count = processed_bytes = 0
             diagnostics, batch = [], []
             self.repo_cache.clear()
-            for info in self.scan(roots):
+            for info in self.scan(roots, disposable_roots):
                 batch.append(info)
                 if len(batch) < BATCH_SIZE:
                     continue
@@ -802,6 +900,20 @@ class Engine:
                 raise CleanupError('ticket_terminal', 'Ticket is unknown, already applied, or revoked')
             transaction_row = self._row(connection, ticket['transaction_id'])
             self._verify_ticket_membership(connection, ticket, transaction_row)
+            disposable_roots = {}
+            for record in connection.execute("""SELECT item_json FROM manifest
+                    WHERE transaction_id=? AND decision='candidate'""", (ticket['transaction_id'],)):
+                item = json.loads(record['item_json'])
+                root = item.get('disposable_repository_root')
+                identity = item.get('disposable_repository_identity')
+                if item.get('allow_disposable_repository') and root and identity:
+                    if root in disposable_roots and disposable_roots[root] != identity:
+                        raise CleanupError('review_mismatch', 'Disposable repository identity is inconsistent')
+                    disposable_roots[root] = identity
+            for root, identity in disposable_roots.items():
+                if os.path.lexists(root):
+                    self._validate_disposable_repository(
+                        root, identity, require_git=ticket['state'] == 'issued')
             if not dry_run:
                 self._set_progress(connection, ticket['transaction_id'], 'apply', 'deleting', 0,
                                    ticket['candidate_count'], ticket['deleted_bytes']); connection.commit()
@@ -818,7 +930,16 @@ class Engine:
                     continue
                 item = json.loads(row['item_json'])
                 path = fs.canonical(item['path'])
-                reason = self.protection(path) or self.git_reason(path)
+                disposable_root = item.get('disposable_repository_root')
+                allow_disposable = bool(
+                    item.get('allow_disposable_repository') and disposable_root and
+                    item.get('disposable_repository_identity') == disposable_roots.get(disposable_root) and
+                    fs.within(path, fs.canonical(disposable_root)))
+                reason = self.protection(path)
+                if allow_disposable and reason in {'repository_root', 'filesystem_or_repository_metadata'}:
+                    reason = None
+                if not reason and not allow_disposable:
+                    reason = self.git_reason(path)
                 result, count = ('protected', 0) if reason else fs.delete_exact(item, dry_run=dry_run)
                 result_counts[result] += 1; processed += 1
                 if len(diagnostics) < 100:

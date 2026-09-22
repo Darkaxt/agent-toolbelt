@@ -54,6 +54,11 @@ if os.name == 'nt':
     class FileIdInfo(ctypes.Structure):
         _fields_ = [('volume', ctypes.c_ulonglong), ('identifier', ctypes.c_ubyte * 16)]
 
+    class FileBasicInfo(ctypes.Structure):
+        _fields_ = [('created', ctypes.c_longlong), ('accessed', ctypes.c_longlong),
+                    ('written', ctypes.c_longlong), ('changed', ctypes.c_longlong),
+                    ('attributes', wintypes.DWORD)]
+
     kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
                                    ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
     kernel.CreateFileW.restype = wintypes.HANDLE
@@ -72,7 +77,7 @@ def handle(path: Path, *, delete: bool = False, ancestor: bool = False):
     if os.name != 'nt':
         raise RuntimeError('Windows handle deletion is required')
     # READ_DATA/LIST_DIRECTORY participates in sharing checks; attribute-only handles do not.
-    access = 0x81 | (0x10000 if delete else 0)
+    access = 0x81 | (0x10100 if delete else 0)
     share = 1 if delete else (3 if ancestor else 7)
     opened = kernel.CreateFileW(str(path), access, share, None, 3, 0x02200000, None)
     if opened == ctypes.c_void_p(-1).value:
@@ -151,6 +156,16 @@ def delete_exact(entry: dict, *, dry_run: bool = False) -> tuple[str, int]:
                 return 'not_empty', 0
             if dry_run:
                 return 'eligible', 0
+            if not current['directory']:
+                basic = FileBasicInfo()
+                if not kernel.GetFileInformationByHandleEx(
+                        opened, 0, ctypes.byref(basic), ctypes.sizeof(basic)):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                if basic.attributes & 0x1:
+                    basic.attributes &= ~0x1
+                    if not kernel.SetFileInformationByHandle(
+                            opened, 0, ctypes.byref(basic), ctypes.sizeof(basic)):
+                        raise ctypes.WinError(ctypes.get_last_error())
             # FILE_DISPOSITION_INFO uses a one-byte BOOLEAN. It refuses nonempty directories.
             disposition = ctypes.c_ubyte(1)
             if not kernel.SetFileInformationByHandle(opened, 4, ctypes.byref(disposition), 1):
