@@ -18,7 +18,7 @@ FAMILY_SRC = REPO_ROOT / "families" / "context-transfer" / "src"
 if str(FAMILY_SRC) not in sys.path:
     sys.path.insert(0, str(FAMILY_SRC))
 
-from agent_toolbelt_context_transfer import archive, context_transfer, restore
+from agent_toolbelt_context_transfer import activity, archive, context_transfer, restore
 
 
 TEMP_ROOT = Path(r"D:\Temp")
@@ -312,6 +312,35 @@ None.
 
         self.assertEqual(raised.exception.kind, "inspection_not_ready")
         self.assertFalse(self.archive_root.exists())
+
+    def test_reconciled_stale_children_can_pack_with_auditable_status_evidence(self):
+        with closing(sqlite3.connect(self.fixture.db_path)) as connection:
+            connection.execute("UPDATE thread_spawn_edges SET status='open'")
+            connection.commit()
+        inventory = context_transfer.inventory_thread_tree(
+            source_thread_id='root', destination_thread_id='destination',
+            codex_home=self.fixture.codex_home, archive_root=self.archive_root)
+        self.assertFalse(inventory['retirement_ready'])
+        self.manifest_path.write_text(json.dumps(inventory), encoding='utf-8')
+        evidence = self.root / 'activity.json'
+        evidence.write_text(json.dumps({
+            'schema': 'agent_toolbelt_context_transfer.activity_evidence.v1',
+            'source_thread_id': 'root', 'destination_thread_id': 'destination',
+            'evidence_source': 'codex_task_api', 'inspection_sha256': archive._sha256_file(self.manifest_path),
+            'observations': [{'thread_id': key, 'status': 'idle', 'host_id': 'local',
+                              'tool': 'read_thread', 'observed_at': '2026-10-04T00:00:00Z'}
+                             for key in ('root', 'child')],
+        }), encoding='utf-8')
+        reconciled = activity.reconcile_activity(inspection_manifest_path=str(self.manifest_path),
+                                                 activity_evidence_path=str(evidence))
+        self.assertTrue(reconciled['retirement_ready'])
+        self.assertEqual(reconciled['stale_inactive_child_ids'], ['child'])
+        self.manifest_path.write_text(json.dumps(reconciled), encoding='utf-8')
+        packed = self.pack()
+        manifest = json.loads((Path(packed['transaction_root']) / 'manifest.json').read_text())
+        self.assertEqual(manifest['activity_reconciliation']['evidence_source'], 'codex_task_api')
+        edges = json.loads((Path(packed['transaction_root']) / 'spawn-edges.json').read_text())
+        self.assertEqual(edges[0]['status'], 'open')
 
     def test_incomplete_handoff_prevents_pack(self):
         self.handoff_path.write_text("# Incomplete\n", encoding="utf-8")

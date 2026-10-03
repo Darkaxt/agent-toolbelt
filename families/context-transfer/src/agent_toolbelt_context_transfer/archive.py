@@ -145,6 +145,12 @@ def _validated_rollouts(inventory: dict[str, Any]) -> list[dict[str, Any]]:
             details={"blockers": inventory.get("blockers", [])},
         )
 
+    from . import activity, context_transfer
+    try:
+        activity.validate_reconciled_inventory(inventory)
+    except context_transfer.ContextTransferError as exc:
+        raise ArchiveError(exc.kind, str(exc), details=exc.details) from exc
+
     codex_home = Path(str(inventory["codex_home"])).resolve()
     validated: list[dict[str, Any]] = []
     for record in iter_rollout_records(inventory):
@@ -495,6 +501,7 @@ def pack_recovery(
         "handoff_sha256": _sha256_file(external_handoff),
         "rollouts": rollouts,
         "pack_source_strategy": "verified_transaction_snapshot",
+        "activity_reconciliation": inventory.get("activity_reconciliation"),
         "privacy_warning": (
             "The archive contains raw historical task rollouts and may include secrets "
             "that were present in the original conversations."

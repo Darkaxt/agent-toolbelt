@@ -2,6 +2,12 @@
 
 ## Authoritative Scope
 
+The 2026-10-04 user-authorized change in
+[context-transfer-stale-activity.md](context-transfer-stale-activity.md) supersedes
+the unconditional open-child blocker below: explicit bound live inactivity
+evidence may reconcile stale edges without changing SQLite. Missing recovery
+content and genuine/unknown task activity remain blockers.
+
 Improve helper protection only; do not override execution policy or retire any
 real task as part of verification.
 

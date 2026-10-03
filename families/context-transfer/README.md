@@ -9,6 +9,13 @@ rollout roots, not only the current SQLite pointer. `threads[].rollouts` and
 Read-only catalogs and provisional handoffs report retirement blockers without
 requiring children to be terminal. Packaging and deletion remain gated.
 
+Stale spawn edges can be reconciled with `reconcile-activity --manifest
+inspection.json --activity-evidence activity.json --output reconciled.json`.
+Capture explicit local task-API statuses for the source and every descendant;
+see the skill's activity-evidence reference. Idle/notLoaded evidence can clear
+stale edge blockers without SQLite mutation. Active, unknown or missing statuses
+remain blocked. Packaging rechecks task-tree metadata and rollout identities.
+
 The implementation follows `docs/superpowers/specs/2026-08-30-context-transfer-design.md`. It remains read-only until a verified archive, destination acceptance, verified Codex archived state, and explicit live-retirement authorization permit exact-file retirement. Packing copies reviewed rollout bytes into a temporary transaction-local snapshot so 7-Zip never opens Codex's live rollout paths directly.
 
 ## Commands

@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from . import archive, context_transfer, handoff, restore, retirement
+from . import activity, archive, context_transfer, handoff, restore, retirement
 
 
 DEFAULT_ARCHIVE_ROOT = Path(r"E:\Codex\ThreadArchives")
@@ -29,6 +29,11 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("--codex-home")
     inspect_parser.add_argument("--archive-root", default=str(DEFAULT_ARCHIVE_ROOT))
     inspect_parser.add_argument("--output")
+
+    activity_parser = subparsers.add_parser("reconcile-activity", help="Reconcile stale edges using bound live task-status evidence.")
+    activity_parser.add_argument("--manifest", required=True)
+    activity_parser.add_argument("--activity-evidence", required=True)
+    activity_parser.add_argument("--output")
 
     pack_parser = subparsers.add_parser(
         "pack",
@@ -149,6 +154,10 @@ def main(argv: list[str] | None = None) -> int:
                 codex_home=_codex_home(args.codex_home),
                 archive_root=args.archive_root,
             )
+            output_path = _write_explicit_output(result, args.output)
+        elif args.operation == "reconcile-activity":
+            result = activity.reconcile_activity(inspection_manifest_path=args.manifest,
+                                                 activity_evidence_path=args.activity_evidence)
             output_path = _write_explicit_output(result, args.output)
         elif args.operation == "pack":
             result = archive.pack_recovery(
