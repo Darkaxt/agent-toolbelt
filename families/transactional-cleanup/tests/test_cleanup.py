@@ -709,6 +709,77 @@ with Engine(Path(sys.argv[1])).locked([Path(sys.argv[2])], operation='review', t
         self.assertEqual(result['candidate_bytes'], 9)
         self.assertEqual(result['candidate_count'], 2)
 
+    def test_empty_git_files_in_generated_output_are_ticketed(self):
+        out = self.work / 'cache'
+        out.mkdir()
+        (out / '.git').touch()
+        (out / '.gitignore').touch()
+        transaction = self.engine.begin(self.work, [out])['transaction_id']
+        self.engine.register(transaction, out, 'explicit-generated-output',
+                             'test-owned disposable cache', regenerated=True)
+        result = self.engine.review(transaction)
+        self.assertEqual(result['candidate_count'], 3)
+        ticket = self.engine.ticket(transaction, result['manifest_sha256'])['ticket_id']
+        self.assertEqual(self.engine.apply(ticket)['ticket_state'], 'applied')
+        self.assertFalse(out.exists())
+
+    def test_empty_git_directory_in_generated_output_is_ticketed(self):
+        out = self.work / 'cache'
+        (out / '.git').mkdir(parents=True)
+        transaction = self.engine.begin(self.work, [out])['transaction_id']
+        self.engine.register(transaction, out, 'explicit-generated-output',
+                             'test-owned disposable cache', regenerated=True)
+        review = self.engine.review(transaction)
+        self.assertEqual(review['candidate_count'], 2)
+        ticket = self.engine.ticket(transaction, review['manifest_sha256'])['ticket_id']
+        self.assertEqual(self.engine.apply(ticket)['ticket_state'], 'applied')
+        self.assertFalse(out.exists())
+
+    def test_nonempty_git_marker_remains_protected(self):
+        out = self.work / 'cache'
+        out.mkdir()
+        (out / '.git').write_text('gitdir: ../real-repository', encoding='utf-8')
+        transaction = self.engine.begin(self.work, [out])['transaction_id']
+        with self.assertRaises(CleanupError):
+            self.engine.register(transaction, out, 'explicit-generated-output',
+                                 'test-owned cache', regenerated=True)
+
+    def test_linked_empty_git_marker_is_not_exempt(self):
+        marker = self.work / '.git'
+        marker.touch()
+        with patch.object(fs, 'check_chain', side_effect=ValueError('linked ancestor')):
+            self.assertFalse(self.engine._empty_git_marker(marker))
+
+    def test_empty_marker_nested_inside_repository_metadata_stays_protected(self):
+        marker = self.work / '.git' / 'objects' / '.git'
+        marker.parent.mkdir(parents=True)
+        marker.touch()
+        self.assertEqual(self.engine.protection(marker), 'filesystem_or_repository_metadata')
+
+    def test_marker_that_gains_repository_content_is_not_deleted(self):
+        out = self.work / 'cache'
+        out.mkdir()
+        marker = out / '.git'
+        marker.touch()
+        transaction = self.engine.begin(self.work, [out])['transaction_id']
+        self.engine.register(transaction, out, 'explicit-generated-output',
+                             'test-owned cache', regenerated=True)
+        review = self.engine.review(transaction)
+        ticket = self.engine.ticket(transaction, review['manifest_sha256'])['ticket_id']
+        marker.write_text('gitdir: ../real-repository', encoding='utf-8')
+        self.engine.apply(ticket)
+        self.assertTrue(marker.exists())
+
+    def test_empty_marker_inside_real_repository_does_not_bypass_tracking(self):
+        subprocess.run(['git', 'init', str(self.work)], check=True, capture_output=True)
+        out = self.work / 'cache'
+        out.mkdir()
+        (out / '.git').touch()
+        (out / '.gitignore').touch()
+        subprocess.run(['git', '-C', str(self.work), 'add', 'cache/.gitignore'],
+                       check=True, capture_output=True)
+        self.assertEqual(self.engine.git_reason(out / '.gitignore'), 'git_tracked')
+
     def test_review_root_cannot_become_authority_for_all_temp(self):
         for path in (Path(self.work.anchor), Path('D:/Temp')):
             with self.subTest(path=path), self.assertRaises(CleanupError):

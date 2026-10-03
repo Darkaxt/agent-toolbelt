@@ -3,7 +3,7 @@ name: transactional-cleanup
 description: Clean generated build, deployment, browser, media and temporary artifacts through reviewed snapshots and exact-file deletion tickets. Use when a task leaves local output to reclaim, including output outside its workspace.
 license: MIT
 metadata:
-  version: "0.4.0"
+  version: "0.4.1"
   compatibility: Windows 10/11, Python 3.11+, NTFS/ReFS identity. Codex and Claude; installed local helper required.
 ---
 
@@ -63,8 +63,13 @@ workspace and Temp trees are not traversed. Then register that bounded output wi
 This is the specification's explicitly registered pre-existing generated-output
 path. Ordinary pre-existing modified files remain protected. Never use
 `--regenerated` on a whole temp/profile/repository root.
-Non-Git output is supported. An empty abandoned `.git` marker does not make a path
-a repository, while failure to inspect a real repository remains fail-closed.
+Non-Git output is supported. Empty regular `.git` files and empty `.git`
+directories inside attributable generated output may be reviewed and ticketed.
+Zero bytes alone is not deletion authority: provenance, pre-existing-file
+authority, ancestor Git tracking, stable identity and exact-file checks apply.
+Nonempty or linked markers and real repositories remain protected. `.gitignore`
+is governed by attribution and Git tracking, not its filename. Failure to inspect
+a real repository remains fail-closed.
 
 ## Disposable Validation Repositories
 

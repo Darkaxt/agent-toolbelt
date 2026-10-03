@@ -11,6 +11,8 @@ import subprocess
 import sys
 from typing import Any, Callable, TextIO
 
+from .context_transfer import iter_rollout_records
+
 
 DICTIONARY_CANDIDATES_MIB = (1536, 1024, 768, 512, 384, 256, 192, 128, 96, 64, 32)
 ENCODER_MEMORY_FACTOR = 11
@@ -145,7 +147,7 @@ def _validated_rollouts(inventory: dict[str, Any]) -> list[dict[str, Any]]:
 
     codex_home = Path(str(inventory["codex_home"])).resolve()
     validated: list[dict[str, Any]] = []
-    for record in inventory.get("threads", []):
+    for record in iter_rollout_records(inventory):
         path = Path(str(record["rollout_path"]))
         try:
             relative = path.resolve().relative_to(codex_home)

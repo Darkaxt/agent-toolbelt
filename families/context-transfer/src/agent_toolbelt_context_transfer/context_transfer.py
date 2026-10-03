@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from contextlib import closing
 import hashlib
+import json
 import os
 from pathlib import Path
 import sqlite3
@@ -170,6 +171,11 @@ def _inspect_rollout(path_value: str, allowed_roots: tuple[Path, ...]) -> dict[s
         record["file_state"] = "missing"
         return record
     try:
+        root = next(root for root in allowed_roots if _is_within(path, root))
+        if any(_is_reparse_or_symlink(value) for value in (path.parent, *path.parent.parents)
+               if _is_within(value, root)):
+            record["file_state"] = "unsafe_path"
+            return record
         if _is_reparse_or_symlink(path) or not path.is_file():
             record["file_state"] = "unsafe_path"
             return record
@@ -186,6 +192,55 @@ def _inspect_rollout(path_value: str, allowed_roots: tuple[Path, ...]) -> dict[s
         record["file_state"] = "unreadable"
         record["file_error"] = f"{type(exc).__name__}: {exc}"
     return record
+
+
+def iter_rollout_records(inventory: dict[str, Any]):
+    """Flatten additive segments while retaining legacy single-pointer manifests."""
+    for thread in inventory.get("threads", []):
+        for segment in thread.get("rollouts", [thread]):
+            record = {**thread, **segment}
+            if segment.get("rollout_path") == thread.get("rollout_path"):
+                # Legacy top-level fields remain authoritative for the DB pointer.
+                record.update({key: thread[key] for key in
+                               ("file_state", "size", "mtime_ns", "sha256") if key in thread})
+            yield record
+
+
+def _discover_segments(roots: tuple[Path, ...], thread_ids: list[str]):
+    matches: dict[str, list[Path]] = defaultdict(list)
+    errors: list[str] = []
+    for root in roots:
+        if not root.exists():
+            continue
+        if _is_reparse_or_symlink(root):
+            errors.append(str(root))
+            continue
+        for directory, subdirs, files in os.walk(root, followlinks=False,
+                                                onerror=lambda exc: errors.append(str(exc.filename))):
+            for name in list(subdirs):
+                candidate = Path(directory) / name
+                if _is_reparse_or_symlink(candidate):
+                    subdirs.remove(name)
+                    errors.append(str(candidate))
+            for name in files:
+                if not name.startswith("rollout-") or not name.endswith(".jsonl"):
+                    continue
+                for thread_id in thread_ids:
+                    if name.endswith(f"-{thread_id}.jsonl"):
+                        matches[thread_id].append(Path(directory) / name)
+    return matches, sorted(set(errors))
+
+
+def _segment_identity(path: Path, thread_id: str) -> bool:
+    try:
+        with path.open("rb") as handle:
+            # Only the session header is needed, never arbitrary transcript content.
+            header = json.loads(handle.readline(1024 * 1024).decode("utf-8-sig"))
+        return (isinstance(header, dict) and header.get("type") == "session_meta"
+                and isinstance(header.get("payload"), dict)
+                and header["payload"].get("id") == thread_id)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
 
 
 def inventory_thread_tree(
@@ -222,6 +277,7 @@ def inventory_thread_tree(
             "FROM thread_spawn_edges ORDER BY parent_thread_id, child_thread_id"
         ).fetchall()
         order, edges, cycles = _collect_tree(source_thread_id, edge_rows)
+        discovered, discovery_errors = _discover_segments(allowed_roots, [item[0] for item in order])
 
         missing_thread_ids: list[str] = []
         records: list[dict[str, Any]] = []
@@ -231,20 +287,33 @@ def inventory_thread_tree(
                 missing_thread_ids.append(thread_id)
                 continue
             rollout = _inspect_rollout(str(row["rollout_path"]), allowed_roots)
+            segments = [rollout]
+            seen = {_normalized_path(_native_windows_path(str(row["rollout_path"])))}
+            for path in sorted(discovered.get(thread_id, [])):
+                if _normalized_path(path) in seen:
+                    continue
+                seen.add(_normalized_path(path))
+                segment = _inspect_rollout(str(path), allowed_roots)
+                if segment["file_state"] == "readable" and not _segment_identity(path, thread_id):
+                    segment["file_state"] = "unverified_identity"
+                segment["discovery_source"] = "verified_session_filename_and_header"
+                segments.append(segment)
             records.append(
                 {
                     "thread_id": thread_id,
                     "depth": depth,
                     **rollout,
                     "metadata": _metadata_from_row(row),
+                    "rollouts": segments,
                 }
             )
 
-    state_counts = Counter(item["file_state"] for item in records)
+    rollout_records = list(iter_rollout_records({"threads": records}))
+    state_counts = Counter(item["file_state"] for item in rollout_records)
     status_counts = Counter(edge["status"] for edge in edges)
     path_counts = Counter(
         _normalized_path(_native_windows_path(str(item["rollout_path"])))
-        for item in records
+        for item in rollout_records
     )
     duplicate_paths = sorted(path for path, count in path_counts.items() if count > 1)
     non_terminal = sorted(
@@ -270,6 +339,10 @@ def inventory_thread_tree(
         blockers.append("unsafe_rollout_paths")
     if duplicate_paths:
         blockers.append("duplicate_rollout_paths")
+    if state_counts["unverified_identity"]:
+        blockers.append("unverified_rollout_segments")
+    if discovery_errors:
+        blockers.append("incomplete_rollout_discovery")
 
     return {
         "schema": "agent_toolbelt_context_transfer.inventory.v1",
@@ -279,10 +352,12 @@ def inventory_thread_tree(
         "archive_root": str(_native_windows_path(archive_root)),
         "thread_count": len(order),
         "resolved_thread_count": len(records),
+        "rollout_count": len(rollout_records),
+        "rollout_discovery_errors": discovery_errors,
         "edge_count": len(edges),
         "total_rollout_bytes": sum(
             int(item["size"])
-            for item in records
+            for item in rollout_records
             if item["file_state"] == "readable"
         ),
         "terminal_status_counts": dict(sorted(status_counts.items())),

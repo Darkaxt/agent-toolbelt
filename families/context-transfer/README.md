@@ -2,6 +2,13 @@
 
 Codex-only task-tree inventory, compact handoff coordination, verified recovery archives, manifest-bound local retirement, and conflict-safe restore.
 
+Inventory includes verified earlier/resumed rollout segments in both Codex
+rollout roots, not only the current SQLite pointer. `threads[].rollouts` and
+`rollout_count` expose coverage. Filename candidates must have matching
+`session_meta.payload.id`; discovery/identity failures block retirement.
+Read-only catalogs and provisional handoffs report retirement blockers without
+requiring children to be terminal. Packaging and deletion remain gated.
+
 The implementation follows `docs/superpowers/specs/2026-08-30-context-transfer-design.md`. It remains read-only until a verified archive, destination acceptance, verified Codex archived state, and explicit live-retirement authorization permit exact-file retirement. Packing copies reviewed rollout bytes into a temporary transaction-local snapshot so 7-Zip never opens Codex's live rollout paths directly.
 
 ## Commands

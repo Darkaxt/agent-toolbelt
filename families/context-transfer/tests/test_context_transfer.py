@@ -197,6 +197,47 @@ class InventoryTests(unittest.TestCase):
         self.assertIn("non_terminal_children", result["blockers"])
         self.assertEqual(result["terminal_status_counts"], {"running": 1})
 
+    def test_discovers_earlier_verified_rollout_segments(self):
+        current = self.fixture.add_thread("root", b"current")
+        earlier = self.fixture.codex_home / "archived_sessions" / "rollout-2026-07-01-root.jsonl"
+        earlier.parent.mkdir()
+        earlier.write_text(json.dumps({"type": "session_meta", "payload": {"id": "root"}}) + "\n",
+                           encoding="utf-8")
+        result = self.inventory()
+        self.assertEqual(result["thread_count"], 1)
+        self.assertEqual(result["rollout_count"], 2)
+        self.assertEqual({item["rollout_path"] for item in result["threads"][0]["rollouts"]},
+                         {str(current), str(earlier)})
+        self.assertTrue(result["retirement_ready"])
+        from agent_toolbelt_context_transfer import archive
+        self.assertEqual(len(archive._validated_rollouts(result)), 2)
+
+    def test_filename_match_without_matching_session_identity_blocks_retirement(self):
+        self.fixture.add_thread("root", b"current")
+        other = self.fixture.sessions / "rollout-old-root.jsonl"
+        other.write_text(json.dumps({"type": "session_meta", "payload": {"id": "other"}}) + "\n",
+                         encoding="utf-8")
+        result = self.inventory()
+        self.assertFalse(result["retirement_ready"])
+        self.assertIn("unverified_rollout_segments", result["blockers"])
+
+    def test_discovery_does_not_include_incidental_filename_match(self):
+        self.fixture.add_thread("root", b"current")
+        (self.fixture.sessions / "rollout-old-not-root-extra.jsonl").write_bytes(b"unrelated")
+        result = self.inventory()
+        self.assertEqual(result["rollout_count"], 1)
+        self.assertTrue(result["retirement_ready"])
+
+    def test_incomplete_directory_discovery_blocks_retirement(self):
+        self.fixture.add_thread('root', b'current')
+        def incomplete_walk(root, *, followlinks, onerror):
+            onerror(PermissionError(13, 'test unreadable directory', str(root / 'old')))
+            return iter(())
+        with mock.patch.object(context_transfer.os, 'walk', side_effect=incomplete_walk):
+            result = self.inventory()
+        self.assertFalse(result['retirement_ready'])
+        self.assertIn('incomplete_rollout_discovery', result['blockers'])
+
     def test_missing_child_row_blocks_retirement(self):
         self.fixture.add_thread("root", b"root")
         self.fixture.add_edge("root", "missing-child")

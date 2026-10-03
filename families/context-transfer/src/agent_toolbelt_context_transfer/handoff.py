@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 from . import archive
+from .context_transfer import iter_rollout_records
 
 
 REQUIRED_HANDOFF_SECTIONS = (
@@ -66,12 +67,6 @@ def _load_inspection(path: str | os.PathLike[str]) -> dict[str, Any]:
         inventory = archive._load_inspection(Path(path))
     except archive.ArchiveError as exc:
         raise HandoffError(exc.kind, str(exc), details=exc.details) from exc
-    if not inventory.get("retirement_ready") or inventory.get("blockers"):
-        raise HandoffError(
-            "inspection_not_ready",
-            "Inspection has blockers and cannot produce a retirement handoff.",
-            details={"blockers": inventory.get("blockers", [])},
-        )
     return inventory
 
 
@@ -210,7 +205,8 @@ def build_evidence_catalog(
     entries: list[dict[str, Any]] = []
     thread_stats: list[dict[str, Any]] = []
     total_selected_before_limit = 0
-    for record in inventory["threads"]:
+    selected_by_thread: dict[str, list[list[dict[str, Any]]]] = {}
+    for record in iter_rollout_records(inventory):
         if record.get("file_state") != "readable":
             continue
         selected, stats = _catalog_thread(
@@ -218,9 +214,19 @@ def build_evidence_catalog(
             max_entries=max_entries_per_thread,
             excerpt_chars=excerpt_chars,
         )
-        entries.extend(selected)
+        selected_by_thread.setdefault(record["thread_id"], []).append(selected)
         thread_stats.append(stats)
         total_selected_before_limit += len(selected)
+
+    # Round-robin segments so an older rollout cannot be hidden by the resumed
+    # pointer, while the advertised per-thread limit still bounds the packet.
+    for groups in selected_by_thread.values():
+        selected = []
+        for index in range(max_entries_per_thread):
+            for group in groups:
+                if index < len(group) and len(selected) < max_entries_per_thread:
+                    selected.append(group[index])
+        entries.extend(selected)
 
     if len(entries) > max_total_entries:
         entries = entries[:max_total_entries]
@@ -232,7 +238,10 @@ def build_evidence_catalog(
         "storage": "bounded_excerpts_and_source_offsets",
         "raw_rollouts_remain_source_of_truth": True,
         "permanent_full_text_index_created": False,
-        "thread_count": len(thread_stats),
+        "thread_count": len(selected_by_thread),
+        "rollout_count": len(thread_stats),
+        "retirement_ready": inventory.get("retirement_ready", False),
+        "retirement_blockers": inventory.get("blockers", []),
         "entry_count": len(entries),
         "max_entries_per_thread": max_entries_per_thread,
         "max_total_entries": max_total_entries,
@@ -310,6 +319,8 @@ def validate_handoff(
         "missing_sections": [],
         "mapped_child_thread_count": len(child_ids),
         "missing_child_thread_ids": [],
+        "retirement_ready": inventory.get("retirement_ready", False),
+        "retirement_blockers": inventory.get("blockers", []),
     }
 
 
@@ -375,5 +386,7 @@ def validate_destination_acceptance(
         "acceptance_sha256": _sha256_file(path),
         "handoff_sha256": handoff_validation["handoff_sha256"],
         "critical_unmapped_objectives": [],
+        "retirement_ready": inventory.get("retirement_ready", False),
+        "retirement_blockers": inventory.get("blockers", []),
         "first_continuation_action": payload["first_continuation_action"],
     }

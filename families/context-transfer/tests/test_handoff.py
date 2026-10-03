@@ -163,16 +163,31 @@ class EvidenceCatalogTests(unittest.TestCase):
         self.assertNotIn("search_text", encoded)
         self.assertEqual(catalog["storage"], "bounded_excerpts_and_source_offsets")
 
-    def test_catalog_rejects_non_ready_inspection(self):
+    def test_catalog_allows_read_only_analysis_of_non_ready_inspection(self):
         payload = json.loads(self.fixture.manifest.read_text(encoding="utf-8"))
         payload["retirement_ready"] = False
         payload["blockers"] = ["non_terminal_children"]
         self.fixture.manifest.write_text(json.dumps(payload), encoding="utf-8")
 
-        with self.assertRaises(handoff.HandoffError) as raised:
-            handoff.build_evidence_catalog(inspection_manifest_path=self.fixture.manifest)
+        result = handoff.build_evidence_catalog(inspection_manifest_path=self.fixture.manifest)
+        self.assertGreater(result["entry_count"], 0)
+        self.assertFalse(result["retirement_ready"])
+        self.assertEqual(result["retirement_blockers"], ["non_terminal_children"])
 
-        self.assertEqual(raised.exception.kind, "inspection_not_ready")
+    def test_catalog_bounds_entries_across_all_segments_of_each_thread(self):
+        payload = self.fixture.inventory
+        earlier = self.root / "earlier.jsonl"
+        earlier.write_text(rollout_line("Decision: preserve earlier context"), encoding="utf-8")
+        payload["threads"][0]["rollouts"] = [
+            {**payload["threads"][0]},
+            {"rollout_path": str(earlier), "file_state": "readable"},
+        ]
+        self.fixture.manifest.write_text(json.dumps(payload), encoding="utf-8")
+        result = handoff.build_evidence_catalog(inspection_manifest_path=self.fixture.manifest,
+                                               max_entries_per_thread=8)
+        self.assertEqual(result["rollout_count"], 3)
+        self.assertLessEqual(sum(item["thread_id"] == "root" for item in result["entries"]), 8)
+        self.assertTrue(any(item["rollout_path"] == str(earlier) for item in result["entries"]))
 
     def test_catalog_bounds_milestone_candidates_while_streaming(self):
         observed_max_lengths: list[int | None] = []
@@ -216,6 +231,18 @@ class HandoffValidationTests(unittest.TestCase):
         self.assertEqual(result["missing_sections"], [])
         self.assertEqual(result["missing_child_thread_ids"], [])
         self.assertEqual(result["handoff_sha256"], digest(self.handoff_path))
+
+    def test_provisional_handoff_reports_retirement_blockers(self):
+        payload = self.fixture.inventory
+        payload['retirement_ready'] = False
+        payload['blockers'] = ['non_terminal_children']
+        self.fixture.manifest.write_text(json.dumps(payload), encoding='utf-8')
+        self.handoff_path.write_text(self.fixture.valid_handoff(), encoding='utf-8')
+        result = handoff.validate_handoff(handoff_path=self.handoff_path,
+                                         inspection_manifest_path=self.fixture.manifest)
+        self.assertTrue(result['ok'])
+        self.assertFalse(result['retirement_ready'])
+        self.assertEqual(result['retirement_blockers'], ['non_terminal_children'])
 
     def test_missing_section_fails(self):
         content = self.fixture.valid_handoff().replace(

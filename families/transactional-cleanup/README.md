@@ -1,5 +1,10 @@
 # Transactional Cleanup
 
+Empty regular `.git` files and empty `.git` directories in attributable generated
+output can be included in exact-file tickets. This does not exempt real Git
+metadata, tracked files, reparse points, or unproven/pre-existing user data.
+`.gitignore` uses the ordinary provenance and tracked-file rules.
+
 The helper inventories generated output, freezes a reviewed snapshot and issues an
 opaque deletion ticket. Apply processes only original ticket members. Concurrent
 new files survive; replaced objects are skipped; locked entries can be retried.
