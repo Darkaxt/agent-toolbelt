@@ -333,6 +333,16 @@ class Engine:
         finally:
             connection.close()
 
+    @staticmethod
+    def _empty_git_marker(path):
+        try:
+            fs.check_chain(path)
+            if path.is_file():
+                return path.stat().st_size == 0
+            return path.is_dir() and not any(path.iterdir())
+        except (OSError, ValueError):
+            return False
+
     def protection(self, path):
         path = fs.canonical(path)
         if path == Path(path.anchor) or path == Path.home() or path == Path.home().parent:
@@ -360,9 +370,14 @@ class Engine:
             if os.environ.get(var) and path == fs.canonical(os.environ[var]):
                 return 'critical_root'
         parts = {part.casefold() for part in path.parts}
-        if parts & {'.git', '$recycle.bin', 'system volume information', 'recovery', 'boot', '$extend'}:
+        if parts & {'$recycle.bin', 'system volume information', 'recovery', 'boot', '$extend'}:
             return 'filesystem_or_repository_metadata'
-        if (path / '.git').exists():
+        empty_leaf_marker = (path.name.casefold() == '.git'
+                             and '.git' not in {part.casefold() for part in path.parent.parts}
+                             and self._empty_git_marker(path))
+        if '.git' in parts and not empty_leaf_marker:
+            return 'filesystem_or_repository_metadata'
+        if (path / '.git').exists() and not self._empty_git_marker(path / '.git'):
             return 'repository_root'
         try:
             fs.check_chain(path, allow_leaf_reparse=True)
@@ -372,19 +387,15 @@ class Engine:
 
     def git_reason(self, path):
         parent = path if path.is_dir() else path.parent
-        # Empty .git directories are often abandoned tool markers, not repositories.
-        # Non-empty or file markers remain fail-closed if Git cannot inspect them.
+        # Empty regular markers carry no repository identity. Linked or nonempty
+        # markers remain fail-closed; an actual ancestor repository still applies.
         repo = None
         for value in (parent, *parent.parents):
             marker = value / '.git'
             if not marker.exists():
                 continue
-            if marker.is_dir():
-                try:
-                    if not any(marker.iterdir()):
-                        continue
-                except OSError:
-                    pass
+            if self._empty_git_marker(marker):
+                continue
             repo = value
             break
         if repo is None:

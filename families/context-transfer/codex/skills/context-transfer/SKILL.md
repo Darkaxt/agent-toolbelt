@@ -4,7 +4,7 @@ description: Use when a fresh Codex task must take over useful context from an o
 license: MIT
 metadata:
   compatibility: Codex only. Requires local Codex state and rollout access, 7-Zip, and a non-C recovery drive.
-  version: "0.1.1"
+  version: "0.1.2"
 ---
 
 # Context Transfer
@@ -45,11 +45,15 @@ Identify the source task with list_threads or read_thread. Use the source task I
 
 Run inspect with source-thread-id, destination-thread-id, the reviewed non-C recovery root, and an explicit output path for inspection.json.
 
-Require retirement_ready=true, no blockers, every child terminal, and every rollout readable. Inspection is read-only unless output is explicitly supplied.
+Inspection is read-only unless output is explicitly supplied. Inspect `threads[].rollouts` and `rollout_count`, not only the database's current `rollout_path`: resumed tasks can have earlier segments in sessions or archived_sessions. Discovered segments require matching session_meta identity; ambiguous or unreadable segments block retirement.
+
+`retirement_ready=false` does not prevent read-only catalog generation or provisional handoff validation. Preserve and report `retirement_blockers`; never guess that old open-child records mean terminal children, mutate SQLite, or use a hand-crafted retirement manifest. Resolve child state through supported task operations/live evidence and rerun inspection before retirement. Require retirement_ready=true, no blockers, every child terminal, and every rollout readable before packing or deleting anything.
 
 ## Phase 2: Build Bounded Evidence
 
 Run catalog against inspection.json. Use bounded excerpts and source offsets rather than a raw transcript dump.
+
+Catalogs sample every readable verified segment within per-thread/total bounds. Check truncation and unavailable segments; do not declare complete recovered context merely because the latest resumed segment was readable. A provisional handoff is useful for continuation but is not retirement authorization.
 
 Read selected recent or older source turns through read_thread when the catalog points to ambiguity. Inspect every child contribution at least through its task metadata and mapped evidence. Verify current repositories, branches, commits, pull requests, deployments, and artifacts from live repository or filesystem state; do not copy historical claims without checking them.
 

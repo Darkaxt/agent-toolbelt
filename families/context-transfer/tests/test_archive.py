@@ -18,7 +18,7 @@ FAMILY_SRC = REPO_ROOT / "families" / "context-transfer" / "src"
 if str(FAMILY_SRC) not in sys.path:
     sys.path.insert(0, str(FAMILY_SRC))
 
-from agent_toolbelt_context_transfer import archive, context_transfer
+from agent_toolbelt_context_transfer import archive, context_transfer, restore
 
 
 TEMP_ROOT = Path(r"D:\Temp")
@@ -216,6 +216,26 @@ None.
             result["source_snapshot"]["total_bytes"],
             self.root_rollout.stat().st_size + self.child_rollout.stat().st_size,
         )
+
+    def test_pack_and_restore_preserve_earlier_segment_and_current_pointer(self):
+        earlier = self.fixture.codex_home / 'archived_sessions' / 'rollout-old-root.jsonl'
+        earlier.parent.mkdir()
+        content = json.dumps({'type': 'session_meta', 'payload': {'id': 'root'}}).encode() + b'\n'
+        earlier.write_bytes(content)
+        inventory = context_transfer.inventory_thread_tree(
+            source_thread_id='root', destination_thread_id='destination',
+            codex_home=self.fixture.codex_home, archive_root=self.archive_root)
+        self.manifest_path.write_text(json.dumps(inventory), encoding='utf-8')
+        packed = self.pack()
+        manifest = json.loads((Path(packed['transaction_root']) / 'manifest.json').read_text())
+        self.assertEqual(len(manifest['rollouts']), 3)
+        self.assertIn(str(earlier), {item['original_path'] for item in manifest['rollouts']})
+        earlier.unlink()
+        self.root_rollout.unlink()
+        restored = restore.restore_recovery_archive(archive_path=packed['archive_path'], seven_zip_path=SEVEN_ZIP)
+        self.assertEqual(restored['restored_file_count'], 2)
+        self.assertEqual(earlier.read_bytes(), content)
+        self.assertTrue(self.root_rollout.exists())
 
     def test_pack_never_passes_live_rollout_paths_to_seven_zip(self):
         real_run = archive._run_seven_zip
