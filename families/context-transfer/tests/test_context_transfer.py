@@ -19,7 +19,7 @@ FAMILY_SRC = REPO_ROOT / "families" / "context-transfer" / "src"
 if str(FAMILY_SRC) not in sys.path:
     sys.path.insert(0, str(FAMILY_SRC))
 
-from agent_toolbelt_context_transfer import context_transfer
+from agent_toolbelt_context_transfer import activity, context_transfer
 
 
 TEMP_ROOT = Path(r"D:\Temp")
@@ -197,6 +197,125 @@ class InventoryTests(unittest.TestCase):
         self.assertIn("non_terminal_children", result["blockers"])
         self.assertEqual(result["terminal_status_counts"], {"running": 1})
 
+    def activity_fixture(self, statuses=None):
+        self.fixture.add_thread('root', b'root')
+        self.fixture.add_thread('child', b'child')
+        self.fixture.add_edge('root', 'child', 'open')
+        manifest = self.root / 'inspection.json'
+        manifest.write_text(json.dumps(self.inventory()), encoding='utf-8')
+        evidence = self.root / 'activity.json'
+        evidence.write_text(json.dumps({
+            'schema': 'agent_toolbelt_context_transfer.activity_evidence.v1',
+            'evidence_source': 'codex_task_api', 'inspection_sha256': sha256(manifest),
+            'source_thread_id': 'root', 'destination_thread_id': 'destination',
+            'observations': [{'thread_id': key, 'status': value, 'host_id': 'local',
+                              'tool': 'read_thread', 'observed_at': '2026-10-04T00:00:00Z'}
+                             for key, value in (statuses or {'root': 'idle', 'child': 'notLoaded'}).items()],
+        }), encoding='utf-8')
+        return manifest, evidence
+
+    def reconcile(self, manifest, evidence):
+        return activity.reconcile_activity(inspection_manifest_path=str(manifest),
+                                           activity_evidence_path=str(evidence))
+
+    def test_stale_open_child_is_reconciled_without_database_mutation(self):
+        manifest, evidence = self.activity_fixture()
+        before = sha256(self.fixture.db_path)
+        result = self.reconcile(manifest, evidence)
+        self.assertTrue(result['retirement_ready'])
+        self.assertEqual(result['stale_inactive_child_ids'], ['child'])
+        self.assertEqual(result['non_terminal_child_ids'], ['child'])
+        self.assertEqual(result['edges'][0]['status'], 'open')
+        self.assertEqual(sha256(self.fixture.db_path), before)
+
+    def test_running_and_unknown_statuses_cannot_clear_stale_edge(self):
+        for value in ('active', 'running', 'pending', 'waiting_for_approval', 'unknown'):
+            manifest, evidence = self.activity_fixture({'root': 'idle', 'child': value})
+            result = self.reconcile(manifest, evidence)
+            self.assertFalse(result['retirement_ready'])
+            self.assertEqual(result['unresolved_activity_thread_ids'], ['child'])
+            self.fixture.connection.execute('DELETE FROM thread_spawn_edges')
+            self.fixture.connection.execute('DELETE FROM threads')
+            self.fixture.connection.commit()
+
+    def test_source_activity_and_missing_observations_block_retirement(self):
+        manifest, evidence = self.activity_fixture({'root': 'active', 'child': 'idle'})
+        self.assertEqual(self.reconcile(manifest, evidence)['unresolved_activity_thread_ids'], ['root'])
+        payload = json.loads(evidence.read_text())
+        payload['observations'] = [payload['observations'][1]]
+        evidence.write_text(json.dumps(payload), encoding='utf-8')
+        self.assertFalse(self.reconcile(manifest, evidence)['retirement_ready'])
+
+    def test_live_child_with_recorded_closed_edge_still_blocks(self):
+        manifest, evidence = self.activity_fixture({'root': 'idle', 'child': 'active'})
+        self.fixture.connection.execute("UPDATE thread_spawn_edges SET status='closed'")
+        self.fixture.connection.commit()
+        manifest.write_text(json.dumps(self.inventory()), encoding='utf-8')
+        payload = json.loads(evidence.read_text())
+        payload['inspection_sha256'] = sha256(manifest)
+        evidence.write_text(json.dumps(payload), encoding='utf-8')
+        self.assertFalse(self.reconcile(manifest, evidence)['retirement_ready'])
+
+    def test_duplicate_or_foreign_host_status_evidence_is_rejected(self):
+        manifest, evidence = self.activity_fixture()
+        original = json.loads(evidence.read_text())
+        for mode in ('duplicate', 'remote'):
+            payload = json.loads(json.dumps(original))
+            if mode == 'duplicate':
+                payload['observations'].append(payload['observations'][0])
+            else:
+                payload['observations'][0]['host_id'] = 'other-host'
+            evidence.write_text(json.dumps(payload), encoding='utf-8')
+            with self.assertRaises(context_transfer.ContextTransferError):
+                self.reconcile(manifest, evidence)
+
+    def test_wrong_manifest_binding_is_rejected(self):
+        manifest, evidence = self.activity_fixture()
+        payload = json.loads(evidence.read_text())
+        payload['inspection_sha256'] = '0' * 64
+        evidence.write_text(json.dumps(payload), encoding='utf-8')
+        with self.assertRaises(context_transfer.ContextTransferError) as raised:
+            self.reconcile(manifest, evidence)
+        self.assertEqual(raised.exception.kind, 'activity_evidence_invalid')
+
+    def test_changed_task_metadata_invalidates_activity_evidence(self):
+        manifest, evidence = self.activity_fixture()
+        self.fixture.connection.execute("UPDATE threads SET updated_at=99 WHERE id='child'")
+        self.fixture.connection.commit()
+        with self.assertRaises(context_transfer.ContextTransferError) as raised:
+            self.reconcile(manifest, evidence)
+        self.assertEqual(raised.exception.kind, 'activity_state_changed')
+
+    def test_missing_rollout_blocker_cannot_be_excused_by_inactivity(self):
+        manifest, evidence = self.activity_fixture()
+        child = self.fixture.sessions / 'rollout-child.jsonl'
+        child.unlink()
+        manifest.write_text(json.dumps(self.inventory()), encoding='utf-8')
+        payload = json.loads(evidence.read_text())
+        payload['inspection_sha256'] = sha256(manifest)
+        evidence.write_text(json.dumps(payload), encoding='utf-8')
+        result = self.reconcile(manifest, evidence)
+        self.assertFalse(result['retirement_ready'])
+        self.assertIn('missing_rollouts', result['blockers'])
+
+    def test_changed_rollout_invalidates_activity_evidence(self):
+        manifest, evidence = self.activity_fixture()
+        (self.fixture.sessions / 'rollout-child.jsonl').write_bytes(b'new activity')
+        with self.assertRaises(context_transfer.ContextTransferError) as raised:
+            self.reconcile(manifest, evidence)
+        self.assertEqual(raised.exception.kind, 'activity_state_changed')
+
+    def test_pack_rechecks_reconciled_task_state(self):
+        from agent_toolbelt_context_transfer import archive
+        manifest, evidence = self.activity_fixture()
+        inventory = self.reconcile(manifest, evidence)
+        self.assertEqual(len(archive._validated_rollouts(inventory)), 2)
+        self.fixture.connection.execute("UPDATE threads SET updated_at=200 WHERE id='root'")
+        self.fixture.connection.commit()
+        with self.assertRaises(archive.ArchiveError) as raised:
+            archive._validated_rollouts(inventory)
+        self.assertEqual(raised.exception.kind, 'activity_state_changed')
+
     def test_discovers_earlier_verified_rollout_segments(self):
         current = self.fixture.add_thread("root", b"current")
         earlier = self.fixture.codex_home / "archived_sessions" / "rollout-2026-07-01-root.jsonl"
@@ -211,6 +330,14 @@ class InventoryTests(unittest.TestCase):
         self.assertTrue(result["retirement_ready"])
         from agent_toolbelt_context_transfer import archive
         self.assertEqual(len(archive._validated_rollouts(result)), 2)
+
+    def test_discovers_source_id_resume_id_filename(self):
+        self.fixture.add_thread('root', b'current')
+        resume = self.fixture.sessions / 'rollout-old-root_01a103b8-b8c7-73d1-81fa-c91b4c3c6e6a.jsonl'
+        resume.write_text(json.dumps({'type': 'session_meta', 'payload': {'id': 'root'}}) + '\n', encoding='utf-8')
+        result = self.inventory()
+        self.assertTrue(result['retirement_ready'])
+        self.assertEqual(result['rollout_count'], 2)
 
     def test_filename_match_without_matching_session_identity_blocks_retirement(self):
         self.fixture.add_thread("root", b"current")
@@ -448,6 +575,18 @@ class CliTests(unittest.TestCase):
             seven_zip_path="D:/Tools/7z.exe",
             dictionary_mib=768,
         )
+
+    def test_reconcile_activity_cli_routes_and_writes_manifest(self):
+        from agent_toolbelt_context_transfer import cli
+        output = self.root / 'reconciled.json'
+        with mock.patch.object(cli.activity, 'reconcile_activity', return_value={'retirement_ready': True}) as reconcile:
+            code, result = self.run_cli('reconcile-activity', '--manifest', 'inspection.json',
+                                        '--activity-evidence', 'activity.json', '--output', str(output))
+        self.assertEqual(code, 0)
+        self.assertTrue(output.is_file())
+        self.assertEqual(result['operation'], 'reconcile-activity')
+        reconcile.assert_called_once_with(inspection_manifest_path='inspection.json',
+                                          activity_evidence_path='activity.json')
 
     def test_verify_cli_returns_structured_archive_failure(self):
         from agent_toolbelt_context_transfer import archive, cli

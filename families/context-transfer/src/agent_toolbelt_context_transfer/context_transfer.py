@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+from uuid import UUID
 from typing import Any
 
 
@@ -225,8 +226,15 @@ def _discover_segments(roots: tuple[Path, ...], thread_ids: list[str]):
             for name in files:
                 if not name.startswith("rollout-") or not name.endswith(".jsonl"):
                     continue
+                base, separator, resume_id = name[:-6].partition("_")
+                if separator:
+                    try:
+                        if str(UUID(resume_id)) != resume_id.casefold():
+                            continue
+                    except ValueError:
+                        continue
                 for thread_id in thread_ids:
-                    if name.endswith(f"-{thread_id}.jsonl"):
+                    if base.endswith(f"-{thread_id}"):
                         matches[thread_id].append(Path(directory) / name)
     return matches, sorted(set(errors))
 
@@ -344,6 +352,8 @@ def inventory_thread_tree(
     if discovery_errors:
         blockers.append("incomplete_rollout_discovery")
 
+    from .activity import tree_fingerprint
+
     return {
         "schema": "agent_toolbelt_context_transfer.inventory.v1",
         "source_thread_id": source_thread_id,
@@ -364,6 +374,7 @@ def inventory_thread_tree(
         "file_state_counts": dict(sorted(state_counts.items())),
         "threads": records,
         "edges": edges,
+        "tree_state_sha256": tree_fingerprint(records, edges),
         "missing_thread_ids": sorted(missing_thread_ids),
         "non_terminal_child_ids": non_terminal,
         "duplicate_rollout_paths": duplicate_paths,

@@ -4,7 +4,7 @@ description: Use when a fresh Codex task must take over useful context from an o
 license: MIT
 metadata:
   compatibility: Codex only. Requires local Codex state and rollout access, 7-Zip, and a non-C recovery drive.
-  version: "0.1.2"
+  version: "0.1.3"
 ---
 
 # Context Transfer
@@ -47,7 +47,15 @@ Run inspect with source-thread-id, destination-thread-id, the reviewed non-C rec
 
 Inspection is read-only unless output is explicitly supplied. Inspect `threads[].rollouts` and `rollout_count`, not only the database's current `rollout_path`: resumed tasks can have earlier segments in sessions or archived_sessions. Discovered segments require matching session_meta identity; ambiguous or unreadable segments block retirement.
 
-`retirement_ready=false` does not prevent read-only catalog generation or provisional handoff validation. Preserve and report `retirement_blockers`; never guess that old open-child records mean terminal children, mutate SQLite, or use a hand-crafted retirement manifest. Resolve child state through supported task operations/live evidence and rerun inspection before retirement. Require retirement_ready=true, no blockers, every child terminal, and every rollout readable before packing or deleting anything.
+`retirement_ready=false` does not prevent read-only catalog generation or provisional handoff validation. Preserve and report `retirement_blockers`; never guess that old open-child records mean terminal children, mutate SQLite, or use a hand-crafted retirement manifest. Require retirement_ready=true, no blockers, every child terminal or verified inactive, and every rollout readable before packing or deleting anything.
+
+### Stale Open-Child Records
+
+An old spawn edge is not runtime status. Capture explicit live status for the source and every descendant through supported task tools, then run `reconcile-activity --manifest inspection.json --activity-evidence activity.json --output reconciled-inspection.json`. Use that returned manifest for subsequent catalog/handoff/pack steps; do not edit blockers manually.
+
+Read [references/activity-evidence.md](references/activity-evidence.md) for the metadata-only sidecar contract. Idle/notLoaded or terminal API status can establish inactivity; active, pending, unavailable, unknown or absent status cannot. Do not infer inactivity from age, an archived flag, lack of file changes or absence from a limited task listing. Missing-source-rollout API errors are errors, not idle evidence.
+
+`stale_inactive_child_ids` records verified stale edges without closing them in SQLite. Reconciliation is bound to the inspected tree; packaging rechecks task metadata and files. A changed tree or rollout requires renewed inspection/status evidence, not a retry delay or a forced deletion. Missing history still blocks retirement independently. Refresh task-status evidence immediately before the packaging handoff and never run the source while retiring it.
 
 ## Phase 2: Build Bounded Evidence
 
