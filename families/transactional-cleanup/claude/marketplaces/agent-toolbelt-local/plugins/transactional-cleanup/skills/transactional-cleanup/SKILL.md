@@ -3,7 +3,7 @@ name: transactional-cleanup
 description: Clean generated build, deployment, browser, media and temporary artifacts through reviewed snapshots and exact-file deletion tickets. Use when a task leaves local output to reclaim, including output outside its workspace.
 license: MIT
 metadata:
-  version: "0.4.2"
+  version: "0.4.3"
   compatibility: Windows 10/11, Python 3.11+, NTFS/ReFS identity. Codex and Claude; installed local helper required.
 ---
 
@@ -12,6 +12,15 @@ metadata:
 Use `scripts/invoke_transactional_cleanup.py` for attributed generated artifacts.
 Read the JSON results and inspect the review before issuing a ticket. An issued
 ticket is a procedural review gate, not a request for another user approval.
+
+Cleanup MUST NOT acquire the Gradle build mutex, join its execution queue, or be
+wrapped in the Gradle build launcher. Use this helper's own exact-target locks.
+Gradle-produced files are not automatically shared build resources: review exact
+ownership and skip outputs still used by a build. Shared cache/version retirement
+requires current consumer evidence and safe native lifecycle or owner coordination;
+ambiguous targets are preserved, not a reason to reserve the host build gate for
+an entire mixed cleanup batch. Captures, old APKs and manifest hashing do not need
+the Gradle gate. Never stop another build to obtain cleanup clearance.
 
 ## Workflow
 

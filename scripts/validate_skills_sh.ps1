@@ -2,6 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $ExpectedSkills = @(
+  @{ Name = "c-drive-maintenance"; Path = "families/c-drive-maintenance/codex/skills/c-drive-maintenance/SKILL.md" },
   @{ Name = "gradle-build-gate"; Path = "families/gradle-build-gate/codex/skills/gradle-build-gate/SKILL.md" },
   @{ Name = "transactional-cleanup"; Path = "families/transactional-cleanup/codex/skills/transactional-cleanup/SKILL.md" },
   @{ Name = "adb-archive-transfer"; Path = "families/adb-archive-transfer/codex/skills/adb-archive-transfer/SKILL.md" },

@@ -7,6 +7,7 @@ Each runtime family ships its own self-contained local marketplace with one plug
 - ADB Archive Transfer: `families/adb-archive-transfer/claude/marketplaces/agent-toolbelt-local`
 - Gradle Build Gate: `families/gradle-build-gate/claude/marketplaces/agent-toolbelt-local`; the family's `scripts/install.py` also deploys the shared runtime and personal Claude skill.
 - Transactional Cleanup: `families/transactional-cleanup/claude/marketplaces/agent-toolbelt-local`; run the family's `scripts/install.py` for its local runtime and personal skills.
+- C-Drive Maintenance: `families/c-drive-maintenance/claude/marketplaces/agent-toolbelt-local`; run the family's `scripts/install.py` for the shared runtime and personal skills.
 - Antigravity Review: `families/antigravity/claude/marketplaces/agent-toolbelt-local`
 - Everything: `families/everything/claude/marketplaces/agent-toolbelt-local`
 - Media: `families/media/claude/marketplaces/agent-toolbelt-local`

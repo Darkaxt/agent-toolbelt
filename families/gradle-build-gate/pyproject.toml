@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-toolbelt-gradle-build-gate"
-version = "0.4.0"
+version = "0.4.1"
 description = "Windows Gradle FIFO build supervision, project usage catalog and reviewed cache proposals."
 readme = "README.md"
 requires-python = ">=3.11"

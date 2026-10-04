@@ -5,6 +5,7 @@ members = [
   "families/gradle-build-gate",
   "families/context-transfer",
   "families/transactional-cleanup",
+  "families/c-drive-maintenance",
   "families/antigravity",
   "families/everything",
   "families/media",

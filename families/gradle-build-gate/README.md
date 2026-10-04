@@ -100,6 +100,8 @@ protected. Shared caches, configuration, daemon registries and JDKs are excluded
 
 "Not referenced by known projects" is not proof of global non-use. Review project
 coverage, branches and reservations before separate transactional cleanup; recheck
-references/activity under the same build gate and hold it through cleanup.
-No cleanup should run without that coordination. No timer, new task, automatic
+references/activity and skip in-use or ambiguous targets. Cleanup must not acquire
+the build mutex, join the build queue or hold up unrelated builds. Use its own
+exact-target coordination; preserve shared artifacts when safe native lifecycle
+or owner coordination cannot be established. No timer, new task, automatic
 upgrade, or automatic deletion is added. No existing cache is deleted by install.

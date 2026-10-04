@@ -6,6 +6,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 EXPECTED_FAMILIES = {
+    "c-drive-maintenance": {
+        "project_name": "agent-toolbelt-c-drive-maintenance",
+        "script_name": "agent-toolbelt-c-drive-maintenance",
+        "package_dir": "agent_toolbelt_c_drive_maintenance",
+        "has_claude": True,
+    },
     "gradle-build-gate": {
         "project_name": "agent-toolbelt-gradle-build-gate",
         "script_name": "agent-toolbelt-gradle-build-gate",
@@ -128,6 +134,7 @@ class MonorepoLayoutTests(unittest.TestCase):
                 "families/gradle-build-gate",
                 "families/context-transfer",
                 "families/transactional-cleanup",
+                "families/c-drive-maintenance",
                 "families/antigravity",
                 "families/everything",
                 "families/media",
