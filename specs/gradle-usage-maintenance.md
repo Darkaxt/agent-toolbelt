@@ -44,7 +44,7 @@ any Android project, delete existing caches, or create background automation her
    reservations, atomic concurrent updates and wrapper changes; implement catalog.
 2. Inventory and integration -- COMPLETE. U2-U6: read-only inventory/proposals,
    exact bounded roots, conservative references/activity checks, CLI/run wiring.
-3. Standing policy and delivery -- ACTIVE. U1/U6-U7: docs, regression review,
+3. Standing policy and delivery -- COMPLETE. U1/U6-U7: docs, regression review,
    actual installed read-only smoke, parity, validation, commit and sync.
 
 ## Verification Boundaries
@@ -54,6 +54,13 @@ credential omission and corrupt-catalog preservation passed in isolated fixtures
 Stage 2: reference refresh, reservations, activity/link/incomplete-scan protection,
 CLI routing and build-result preservation passed. Integrated family verification
 also passed native FIFO and authenticated graceful retirement regression checks.
+Stage 3: Codex/Claude policy parity, all three installed skill validations,
+content-addressed runtime parity, root wiring, marketplace and skills.sh checks
+passed. Read-only installed smoke inspected 24 roots and the real Gradle 8.13
+wrapper; it produced no proposals because activity was not clear. No live Gradle
+build, cache deletion or project upgrade occurred. Implementation d8da323 was
+committed and pushed to GitHub; final main-branch integration is the delivery
+endpoint, not a new implementation stage. No blockers or deferrals remain.
 
 Use isolated synthetic wrapper/cache fixtures and native metadata locking. No
 unrelated Gradle build or live cache deletion is needed to prove this extension.
