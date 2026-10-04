@@ -30,9 +30,24 @@ Deploy the verified helper/skills to Codex, agents and Claude and sync GitHub.
    517 (SQLITE_BUSY_SNAPSHOT) before the repair. Bounded exhausted pages, row
    integrity checks and structured failures now pass the focused and complete
    family tests, including concurrent claims, dry runs and partial retries.
-2. Delivery -- ACTIVE. Update guidance/version, validate and deploy S5;
-   exercise installed helper only on synthetic task-owned output and isolated
-   state. Commit and GitHub sync complete the authorized delivery.
+2. Delivery -- COMPLETE. Version 0.4.2 is deployed to Codex, agents and Claude;
+   activated-runtime hashes and all three skill bundles match repository source.
+   Installed isolated concurrency/deletion probes, skill validators, family wiring
+   and skills.sh validation passed. Repair commit f01dbde was pushed to GitHub.
+
+## Verification And Reconciliation
+
+- S1-S4: `python -B -m unittest discover -s families/transactional-cleanup/tests`
+  passed; the subsequent installed integration test also verifies an independent
+  SQLite writer committing between deletion pages in the activated runtime.
+- S5: Root family CLI/isolation/layout tests and canonical/installed skill
+  validation passed. Six focused tests were run against the actual installed
+  engine, including stale snapshots, order, integrity and partial-apply retry.
+- Installed production status successfully reads the historical transaction as
+  revoked. No residual Gradle cache deletion or ticket reuse occurred. Active
+  legacy JSON state and its recovery runtime were preserved by the installer.
+- No blockers or required deferrals remain. Deleting historical residual caches
+  is outside this repair and still requires a fresh reviewed snapshot and ticket.
 
 ## Diagnosis
 
