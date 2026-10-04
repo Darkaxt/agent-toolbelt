@@ -5,6 +5,7 @@ Each runtime family ships its own Codex skill bundle. Instruction-only skills us
 ## Skill locations
 
 - ADB Archive Transfer: `families/adb-archive-transfer/codex/skills/adb-archive-transfer`
+- Gradle Build Gate: run `python families/gradle-build-gate/scripts/install.py` for shared runtime and Codex/Claude personal skill deployment.
 - Antigravity Review: `families/antigravity/codex/skills/antigravity-cli`
 - Everything: `families/everything/codex/skills/everything-search`
 - Media: `families/media/codex/skills/yt-dlp-ffmpeg`

@@ -7,6 +7,7 @@ Start by choosing the one family you actually need:
 | Family | Use it for | Folder | Primary CLI |
 | --- | --- | --- | --- |
 | ADB Archive Transfer | endpoint-bound Android file transfer with uncompressed tiny-file bundles, direct large-file transfer, and manifest verification | `families/adb-archive-transfer` | `agent-toolbelt-adb-archive-transfer` |
+| Gradle Build Gate | shared Windows Gradle build serialization and evidence-backed low-memory supervision | `families/gradle-build-gate` | `agent-toolbelt-gradle-build-gate` |
 | Antigravity Review | independent exact-model review plus bounded public-page and prepared-video evidence analysis | `families/antigravity` | `agent-toolbelt-antigravity` |
 | Amazon CLI | Amazon product search, specs, reviews, offers, and managed session workflows through a bundled Amazon CLI client | `families/amazon-cli` | `agent-toolbelt-amazon-cli` |
 | Skroutz CLI | Skroutz.cy product search, offers, reviews, comparisons, and safe cart workflows | `families/skroutz-cli` | `agent-toolbelt-skroutz-cli` |
@@ -37,6 +38,7 @@ npx skills add Darkaxt/agent-toolbelt --all
 Public skill names:
 
 - `adb-archive-transfer`
+- `gradle-build-gate`
 - `amazon-cli`
 - `skroutz-cli`
 - `aliexpress-cli`

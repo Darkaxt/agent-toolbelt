@@ -2,6 +2,7 @@
 members = [
   "packages/core",
   "families/adb-archive-transfer",
+  "families/gradle-build-gate",
   "families/context-transfer",
   "families/transactional-cleanup",
   "families/antigravity",

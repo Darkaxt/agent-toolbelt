@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-toolbelt-gradle-build-gate"
+version = "0.1.0"
+description = "Windows Gradle named-mutex supervision with evidence-backed activity and resource profiles."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Darkaxt" }]
+dependencies = []
+
+[project.scripts]
+agent-toolbelt-gradle-build-gate = "agent_toolbelt_gradle_build_gate.cli:entrypoint"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+agent_toolbelt_gradle_build_gate = ["assets/*.ps1", "assets/*.gradle"]
