@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import sqlite3
 from pathlib import Path
 import subprocess
 import sys
@@ -62,6 +63,136 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual(result['discovery_coverage']['usn'], 'unavailable_v2')
         self.assertTrue(Path(result['manifest_path']).is_file())
         self.assertEqual(result['manifest_ref'], f'sqlite:manifest/{self.transaction}')
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows exact-file application')
+    def test_disjoint_writer_between_apply_batches_cannot_stale_the_read_snapshot(self):
+        out = self.output()
+        for number in range(6):
+            (out / f'{number}.bin').write_bytes(b'x')
+        ticket = self.ticket()
+        other = self.root / 'independent'; other.mkdir()
+        other_transaction = self.engine.begin(self.work, [other])['transaction_id']
+        delete_exact = fs.delete_exact
+        calls = 0
+        def delete_with_independent_commit(item, dry_run=False):
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                writer = self.engine.connect()
+                try:
+                    writer.execute('UPDATE transactions SET progress_processed=1 WHERE transaction_id=?',
+                                   (other_transaction,))
+                    writer.commit()
+                finally:
+                    writer.close()
+            return delete_exact(item, dry_run=dry_run)
+        with patch('agent_toolbelt_transactional_cleanup.engine.BATCH_SIZE', 2), \
+             patch.object(fs, 'delete_exact', side_effect=delete_with_independent_commit):
+            try:
+                result = self.engine.apply(ticket)
+            except sqlite3.OperationalError as error:
+                self.fail(f'Apply retained stale read snapshot: {error.sqlite_errorname} ({error.sqlite_errorcode})')
+        self.assertEqual(result['ticket_state'], 'applied')
+        self.assertEqual(result['deleted_bytes'], 15)
+        self.assertFalse(out.exists())
+        self.assertEqual(self.engine.txn(other_transaction)['state'], 'open')
+
+    def test_apply_pages_preserve_exact_child_before_parent_order(self):
+        out = self.output()
+        nested = out / 'nested' / 'deeper'
+        nested.mkdir(parents=True)
+        (nested / 'long-name.bin').write_bytes(b'x')
+        self.ticket()
+        connection = self.engine.connect()
+        try:
+            expected = [row[0] for row in connection.execute('''SELECT ordinal FROM manifest
+                WHERE transaction_id=? AND decision='candidate'
+                ORDER BY directory ASC,LENGTH(path) DESC,path''', (self.transaction,))]
+            with patch('agent_toolbelt_transactional_cleanup.engine.BATCH_SIZE', 2):
+                actual = [row['ordinal'] for row in self.engine._apply_rows(connection, self.transaction)]
+            self.assertEqual(actual, expected)
+            plan = connection.execute('''EXPLAIN QUERY PLAN SELECT ordinal FROM manifest
+                WHERE transaction_id=? AND decision='candidate'
+                ORDER BY directory,-LENGTH(path),path LIMIT 2''', (self.transaction,)).fetchall()
+            self.assertTrue(any('manifest_apply_order' in row['detail'] for row in plan))
+            self.assertFalse(any('TEMP B-TREE' in row['detail'] for row in plan))
+        finally:
+            connection.close()
+
+    def test_new_page_revalidates_signed_members_before_deleting(self):
+        out = self.output()
+        for number in range(4):
+            (out / f'{number}.bin').write_bytes(b'x')
+        ticket = self.ticket()
+        connection = self.engine.connect()
+        try:
+            victim = connection.execute('''SELECT ordinal,path FROM manifest
+                WHERE transaction_id=? AND decision='candidate'
+                ORDER BY directory,-LENGTH(path),path LIMIT 1 OFFSET 2''', (self.transaction,)).fetchone()
+        finally:
+            connection.close()
+        flush = self.engine._flush_results
+        changed = False
+        def flush_and_tamper(*args):
+            nonlocal changed
+            flush(*args)
+            if not changed:
+                writer = self.engine.connect()
+                try:
+                    writer.execute('UPDATE manifest SET item_json=? WHERE transaction_id=? AND ordinal=?',
+                                   ('{}', self.transaction, victim['ordinal']))
+                    writer.commit()
+                finally:
+                    writer.close()
+                changed = True
+        with patch('agent_toolbelt_transactional_cleanup.engine.BATCH_SIZE', 2), \
+             patch.object(self.engine, '_flush_results', side_effect=flush_and_tamper):
+            with self.assertRaises(CleanupError) as raised:
+                self.engine.apply(ticket)
+        self.assertEqual(raised.exception.kind, 'review_mismatch')
+        self.assertTrue(Path(victim['path']).exists())
+
+    def test_membership_removal_during_dry_run_cannot_report_success(self):
+        self.output()
+        ticket = self.ticket()
+        delete_exact = fs.delete_exact
+        changed = False
+        def check_and_remove_member(item, dry_run=False):
+            nonlocal changed
+            if not changed:
+                writer = self.engine.connect()
+                try:
+                    writer.execute('''DELETE FROM manifest WHERE transaction_id=? AND ordinal=
+                        (SELECT MAX(ordinal) FROM manifest WHERE transaction_id=?)''',
+                                   (self.transaction, self.transaction))
+                    writer.commit()
+                finally:
+                    writer.close()
+                changed = True
+            return delete_exact(item, dry_run=dry_run)
+        with patch.object(fs, 'delete_exact', side_effect=check_and_remove_member):
+            with self.assertRaises(CleanupError) as raised:
+                self.engine.apply(ticket, dry_run=True)
+        self.assertEqual(raised.exception.kind, 'review_mismatch')
+
+    def test_cli_sqlite_errors_are_structured_without_automatic_revocation(self):
+        for name, number, kind in (('SQLITE_BUSY_SNAPSHOT', 517, 'state_database_busy'),
+                                   ('SQLITE_LOCKED', 6, 'state_database_busy'),
+                                   ('SQLITE_CORRUPT', 11, 'state_database_error')):
+            with self.subTest(name=name):
+                error = sqlite3.OperationalError('private internal SQL must not be exposed')
+                error.sqlite_errorcode, error.sqlite_errorname = number, name
+                output = io.StringIO()
+                with patch.object(cli, 'Engine', side_effect=error), redirect_stdout(output):
+                    result = cli.main(['status'])
+                data = json.loads(output.getvalue())
+                self.assertEqual(result, 1)
+                self.assertEqual(data['failure_kind'], kind)
+                self.assertEqual(data['sqlite_error_name'], name)
+                self.assertEqual(data['sqlite_error_code'], number)
+                self.assertFalse(data['automatic_revocation'])
+                self.assertEqual(data['retry_after_diagnosis'], kind == 'state_database_busy')
+                self.assertNotIn('private internal', output.getvalue())
 
     def test_review_matching_does_not_compare_every_registration_for_each_file(self):
         for index in range(133):

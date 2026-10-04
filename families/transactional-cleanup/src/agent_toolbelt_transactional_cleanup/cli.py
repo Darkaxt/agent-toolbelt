@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 
 from .engine import Engine, CleanupError, KINDS
 
@@ -80,6 +81,16 @@ def main(argv=None):
                     result = engine.revoke(args.ticket)
                 elif args.command == 'inspect':
                     result = engine.inspect(args.transaction, args.offset, args.limit, args.decision)
+    except sqlite3.Error as exc:
+        code = getattr(exc, 'sqlite_errorcode', None)
+        busy = code is not None and (code & 0xFF) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
+        result = {'ok': False, 'operation': args.command,
+                  'failure_kind': 'state_database_busy' if busy else 'state_database_error',
+                  'sqlite_error_code': code, 'sqlite_error_name': getattr(exc, 'sqlite_errorname', None),
+                  'automatic_revocation': False, 'retry_after_diagnosis': busy,
+                  'errors': ['Helper state database operation failed; inspect saved status before retrying the same valid ticket. No automatic revocation or alternate deletion was performed.'],
+                  'warnings': (['Apply may have removed some exact ticket members before the database failure; committed byte counts are not proof of every filesystem change.']
+                               if args.command == 'apply' else [])}
     except (CleanupError, OSError, ValueError, RuntimeError) as exc:
         result = {'ok': False, 'operation': args.command,
                   'failure_kind': getattr(exc, 'kind', type(exc).__name__),

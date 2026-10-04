@@ -97,6 +97,53 @@ class InstalledWorkflowTests(unittest.TestCase):
             self.assertEqual(result['deleted_bytes'], 5)
             self.assertFalse(out.exists())
 
+            # Exercise the activated runtime, not the repository's imported Engine.
+            probe = '''
+import sys
+from pathlib import Path
+from unittest.mock import patch
+from agent_toolbelt_transactional_cleanup import cli, filesystem as fs
+from agent_toolbelt_transactional_cleanup.engine import Engine
+root = Path(sys.argv[1]); root.mkdir()
+work = root / 'work'; work.mkdir()
+engine = Engine(root / 'state')
+transaction = engine.begin(work)['transaction_id']
+output = work / 'build'
+engine.register(transaction, output, 'compiler-output', 'installed concurrency fixture')
+output.mkdir()
+for index in range(8):
+    (output / f'{index}.bin').write_bytes(b'x')
+review = engine.review(transaction)
+ticket = engine.ticket(transaction, review['manifest_sha256'])['ticket_id']
+other = root / 'other'; other.mkdir()
+independent = engine.begin(work, [other])['transaction_id']
+delete_exact = fs.delete_exact
+calls = 0
+def delete_with_writer(item, dry_run=False):
+    global calls
+    calls += 1
+    if calls == 3:
+        writer = engine.connect()
+        try:
+            writer.execute('UPDATE transactions SET progress_processed=1 WHERE transaction_id=?', (independent,))
+            writer.commit()
+        finally:
+            writer.close()
+    return delete_exact(item, dry_run=dry_run)
+with patch('agent_toolbelt_transactional_cleanup.engine.BATCH_SIZE', 2), patch.object(fs, 'delete_exact', side_effect=delete_with_writer):
+    result = cli.main(['--state-root', str(root / 'state'), 'apply', '--ticket', ticket])
+assert not output.exists()
+assert engine.txn(independent)['state'] == 'open'
+raise SystemExit(result)
+'''
+            process = subprocess.run([sys.executable, '-B', '-c', probe, str(root / 'concurrent')],
+                                     cwd=root, env=dict(env, PYTHONPATH=first['active_runtime']),
+                                     capture_output=True, text=True)
+            self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+            concurrent_result = json.loads(process.stdout)
+            self.assertEqual(concurrent_result['ticket_state'], 'applied')
+            self.assertEqual(concurrent_result['deleted_bytes'], 8)
+
             disposable = root / 'installed-validation-clone'
             disposable.mkdir()
             subprocess.run(['git', 'init', str(disposable)], check=True, capture_output=True)
