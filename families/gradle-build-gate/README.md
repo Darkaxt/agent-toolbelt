@@ -64,3 +64,42 @@ Consumer callbacks. Compilation errors expose bounded sanitized symbol/signature
 diagnostics as `adapter_compilation_failure`; runtime codes identify identity,
 registry, connection, request or exit failures. Raw registry/exception data is
 never printed. Compatibility failures still block rather than force-kill.
+
+## Version Reuse And Disk Review
+
+During already-authorized Android build-tool maintenance, the skill directs
+agents to prefer an existing newer compatible baseline, prove actual
+AGP/Kotlin/plugin/JDK compatibility with the required focused gated verification,
+and commit the scoped change. Routine builds never trigger upgrades; the helper
+does not rewrite wrappers or force every project onto the highest version.
+
+`run` records known wrapper versions and selected Gradle homes automatically.
+The shared catalog contains paths, versions, rollback/offline reservations and
+diagnostic timestamps, not commands or wrapper URLs. Metadata uses an atomic
+interprocess update; failures are reported in `usage_tracking` without hiding
+the build result.
+
+```powershell
+python codex/skills/gradle-build-gate/scripts/invoke_gradle_build_gate.py register-project --project D:/path/android --keep-version 8.6
+python codex/skills/gradle-build-gate/scripts/invoke_gradle_build_gate.py inventory
+python codex/skills/gradle-build-gate/scripts/invoke_gradle_build_gate.py cleanup-plan
+```
+
+Register relevant projects not recently built and keep versions needed for
+rollback or offline work. Repeated `--keep-version` replaces reservations;
+omitting it preserves them, while `--clear-reservations` explicitly clears them.
+`unregister-project --project <path>` removes metadata only. Read-only reports can
+include additional `--project` and `--observe-home` paths without registration.
+
+Inventory refreshes known wrappers and lists installed stable baseline candidates
+as **compatibility unverified**. Cleanup plans propose exact distribution and
+version-cache roots with logical size estimates, never delete files or grant
+deletion authority. Referenced/reserved/live versions, unknown project references,
+active/ambiguous processes, linked content and incomplete inventories are
+protected. Shared caches, configuration, daemon registries and JDKs are excluded.
+
+"Not referenced by known projects" is not proof of global non-use. Review project
+coverage, branches and reservations before separate transactional cleanup; recheck
+references/activity under the same build gate and hold it through cleanup.
+No cleanup should run without that coordination. No timer, new task, automatic
+upgrade, or automatic deletion is added. No existing cache is deleted by install.

@@ -32,6 +32,9 @@ class ExecutionTicket:
 class Contracts(unittest.TestCase):
     def setUp(self):
         self.gate = importlib.import_module("agent_toolbelt_gradle_build_gate.gate")
+        tracking = patch("agent_toolbelt_gradle_build_gate.usage.record_project", return_value={"ok": True})
+        self.tracking = tracking.start()
+        self.addCleanup(tracking.stop)
 
     def test_daemon_requires_log_identity_idle_and_no_client_connection(self):
         classify = self.gate.classify_process
@@ -156,6 +159,7 @@ class Contracts(unittest.TestCase):
 
     def test_gate_before_observation_and_held_through_exit(self):
         events = []
+        self.tracking.side_effect = lambda *a, **kw: events.append("track") or {"ok": True}
         class Mutex:
             abandoned = False
             def __enter__(self): events.append("acquire"); return self
@@ -176,8 +180,28 @@ class Contracts(unittest.TestCase):
             with temporary_workspace() as root:
                 (Path(root) / "gradlew.bat").touch()
                 result = self.gate.run_build(Path(root), ["test"], retire_daemons="none")
-        self.assertEqual(events, ["ticket_turn", "acquire", "subscribe", "inspect", "wait", "inspect", "execute", "unsubscribe", "release", "ticket_release"])
+        self.assertEqual(events, ["ticket_turn", "acquire", "track", "subscribe", "inspect", "wait", "inspect", "execute", "unsubscribe", "release", "ticket_release"])
         self.assertEqual(result["queue_ticket"]["number"], 7)
+        self.assertTrue(result["usage_tracking"]["ok"])
+        self.tracking.assert_called_once()
+
+    def test_catalog_failure_does_not_hide_build_exit(self):
+        self.tracking.side_effect = ValueError("secret URL must not appear")
+        with temporary_workspace() as root:
+            project = Path(root); (project / "gradlew.bat").touch()
+            mutex = unittest.mock.MagicMock(); mutex.abandoned = False
+            mutex.__enter__.return_value = mutex
+            with patch("agent_toolbelt_gradle_build_gate.queue.TicketQueue", return_value=ExecutionTicket()), \
+                 patch.object(self.gate, "NamedMutex", return_value=mutex), \
+                 patch.object(self.gate, "LifecycleObserver"), \
+                 patch.object(self.gate, "inspect_activity", return_value={"safe_to_start": True, "processes": []}), \
+                 patch.object(self.gate, "make_profile", return_value={"arguments": [], "environment": {}}), \
+                 patch.object(self.gate, "execute_wrapper", return_value={"exit_code": 7}):
+                result = self.gate.run_build(project, ["test"], retire_daemons="none")
+        self.assertEqual(result["exit_code"], 7)
+        self.assertFalse(result["usage_tracking"]["ok"])
+        self.assertEqual(result["usage_tracking"]["failure_kind"], "ValueError")
+        self.assertNotIn("secret", json.dumps(result))
 
     def test_retirement_is_held_under_gate_and_rechecked_before_build(self):
         events = []

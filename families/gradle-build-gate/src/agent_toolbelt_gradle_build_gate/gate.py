@@ -471,6 +471,7 @@ def execute_wrapper(project, profile, log_path):
 
 def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemons="incompatible", **options):
     from .queue import TicketQueue
+    from .usage import record_project
     project = Path(project).expanduser().resolve()
     if not (project / "gradlew.bat").is_file():
         raise ValueError("Project must contain gradlew.bat")
@@ -483,6 +484,13 @@ def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemo
         log_path = local / "Tools/gradle-build-gate/logs" / (uuid.uuid4().hex + ".log")
     with TicketQueue() as request, NamedMutex() as mutex:
         ticket = dict(request.ticket)
+        try:
+            usage_tracking = record_project(project, home=observation_homes(arguments, project=project)[-1])
+        except (ValueError, OSError, RuntimeError) as exc:
+            # Catalog diagnostics must not expose URLs or replace the build result.
+            usage_tracking = {"ok": False, "failure_kind": type(exc).__name__,
+                              "warning": "Usage catalog could not be updated; repair it before requesting cleanup proposals"}
+            print(json.dumps({"state": "usage_tracking_warning", **usage_tracking}), file=sys.stderr, flush=True)
         while True:
             with LifecycleObserver(homes) as observer:
                 inspection = inspect_activity(homes)
@@ -516,5 +524,6 @@ def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemo
     return {"ok": result["exit_code"] == 0, "operation": "run", "project": str(project),
             "gate_acquired": True, "mutex": MUTEX_NAME, "abandoned_mutex_rechecked": mutex.abandoned,
             "queue_ticket": ticket, "queue_ordering": "fifo_registration",
+            "usage_tracking": usage_tracking,
             "requested_profile": public_profile, "preflight_activity": inspection,
             "daemon_retirement": {"policy": retire_daemons, "target_version": version, "retired": retired}, **result}

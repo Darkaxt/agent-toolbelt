@@ -18,6 +18,25 @@ Cancellation before launch removes only the caller's ticket. Forced supervisor
 exit wakes waiters but does not authorize launch past a surviving build.
 Read-only `status.queue` may show unreclaimed dead tickets; it is not clearance.
 
+The known-project catalog is `%LOCALAPPDATA%/Tools/gradle-build-gate/usage.json`,
+independent of runtime overrides. Atomic updates use a short metadata-only
+`Global\\Darka.AndroidGradleUsageCatalog.<root-hash>` mutex, not a replacement
+for the session-local build gate. It stores project/home paths, wrapper versions,
+explicit reservations and diagnostic timestamps, never wrapper URLs or commands.
+Corrupt catalogs are not silently reset. Build-time tracking failure is additive.
+
+`inventory` and `cleanup-plan` are read-only snapshots, not locked cleanup
+transactions. They enumerate only `wrapper/dists/gradle-<version>-bin|all` and
+`caches/<version>`; no whole-drive/repository scan or shared-cache sweep.
+Reported sizes are logical metadata estimates, not guarantees of reclaimed disk
+space. Links and incomplete scans cannot be proposed. Activity or unknown
+references block proposals rather than assuming non-use.
+
+Registration of all relevant projects and branch/offline reservations is the
+agent's responsibility; the catalog is not a census of the machine. Re-read
+references and activity under the build mutex before independent transactional
+cleanup. These reports never delete or grant delete authority.
+
 Python has no third-party dependencies. Retirement additionally needs the target
 daemon's existing JDK with source-file execution and installed Gradle jars. The
 adapter reads the authenticated registry under Gradle's registry lock; tokens
