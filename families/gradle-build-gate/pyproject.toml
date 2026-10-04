@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-toolbelt-gradle-build-gate"
-version = "0.1.0"
-description = "Windows Gradle named-mutex supervision with evidence-backed activity and resource profiles."
+version = "0.3.0"
+description = "FIFO Windows Gradle execution tickets with shared-mutex activity and resource supervision."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -22,4 +22,4 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-agent_toolbelt_gradle_build_gate = ["assets/*.ps1", "assets/*.gradle"]
+agent_toolbelt_gradle_build_gate = ["assets/*.ps1", "assets/*.gradle", "assets/*.java"]
