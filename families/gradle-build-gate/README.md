@@ -33,9 +33,15 @@ Repeated `--observe-home` selects extra daemon directories. `status` is only a
 snapshot, not launch clearance. Ctrl+C retains supervision of a running command;
 force-killing a supervisor still requires survivor inspection on the next run.
 
-`run` already provides blocking one-slot execution: submit the command once and
-wait on that same running session, without status polling or relaunches. Windows
-kernel mutex waits do not require a polling loop. Strict FIFO is not promised.
+`run` registers a monotonic execution ticket and waits in FIFO registration order.
+Only the live queue head can attempt the original build mutex. Submit once and
+wait on that same running session, without status polling or relaunches. Native
+turn events and process-exit handles wake waiters. Tickets are held through full
+supervision and stale owners are reclaimed only after proven exit/PID identity
+change, never by elapsed age. Unknown owner identity and corrupt state block.
+FIFO covers updated participating helpers in this Windows session, not Studio
+or older launchers. `queue_ticket` identifies the completed request; `status.queue`
+is a read-only diagnostic snapshot. The queue stores no commands or project data.
 
 Tests use synthetic wrappers and Windows kernel/event operations, not an extra
 real Gradle build. Verify the actual project/compiler/native profile with the
@@ -53,3 +59,8 @@ is used, not immediate `--stop`: racing work can finish. The helper waits for na
 identity-checked process exit while holding the gate and fails closed on protocol
 incompatibility. No new Java dependencies are downloaded; an existing source-capable
 JDK is required. `daemon_retirement` records requested policy and verified exits.
+The adapter handles both Gradle 8.6 Action callbacks/older idle enums and newer
+Consumer callbacks. Compilation errors expose bounded sanitized symbol/signature
+diagnostics as `adapter_compilation_failure`; runtime codes identify identity,
+registry, connection, request or exit failures. Raw registry/exception data is
+never printed. Compatibility failures still block rather than force-kill.

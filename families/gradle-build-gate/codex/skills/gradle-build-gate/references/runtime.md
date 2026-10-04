@@ -7,12 +7,28 @@ that runtime, not an editable repository dependency. `GRADLE_BUILD_GATE_HOME`
 selects a runtime location; `AGENT_TOOLBELT_HOME` is an explicit development
 checkout override. No background service or scheduled task is installed.
 
+Execution tickets live under the shared local runtime's `queue/session-<id>`
+directory, independent of skill/runtime-release overrides. Metadata updates use
+`Local\Darka.AndroidGradleBuildQueue`; this is not a substitute for the build
+mutex. Native per-ticket events broadcast head transitions and waiters re-arm
+the head process-exit handle. Owner identity uses exact native FILETIME values,
+not PID alone. Monotonic numbers survive clean completion. Atomic metadata
+replacement prevents partial readers; corrupt metadata is not silently reset.
+Cancellation before launch removes only the caller's ticket. Forced supervisor
+exit wakes waiters but does not authorize launch past a surviving build.
+Read-only `status.queue` may show unreclaimed dead tickets; it is not clearance.
+
 Python has no third-party dependencies. Retirement additionally needs the target
 daemon's existing JDK with source-file execution and installed Gradle jars. The
 adapter reads the authenticated registry under Gradle's registry lock; tokens
 never appear in output or artifacts. The internal protocol is version-sensitive:
 unknown/incompatible implementations block, never fall back to process killing.
 Read-only registry probes cover installed versions, not all historical/future Gradle.
+The adapter implements both Action and Consumer callback signatures and compares
+the idle enum name, supporting the older 8.6 API without separate unsafe paths.
+Compiler diagnostics expose only allowlisted symbols/signatures; runtime errors
+expose fixed step/reason/type codes, never arbitrary exception messages or tokens.
+Inspect `retirement_diagnostics` and `failure_kind` when retirement is blocked.
 
 `run` defaults to `--retire-daemons incompatible`: different version or heap is
 retired after fresh idle evidence. `all-idle` retires all confirmed-idle Gradle

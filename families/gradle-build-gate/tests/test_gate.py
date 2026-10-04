@@ -19,6 +19,16 @@ def temporary_workspace(prefix="gradle-gate-test-"):
     return tempfile.TemporaryDirectory(prefix=prefix, dir=preferred if preferred.is_dir() else None)
 
 
+class ExecutionTicket:
+    ticket = {"number": 7, "id": "synthetic"}
+    def __init__(self, events=None): self.events = events
+    def __enter__(self):
+        if self.events is not None: self.events.append("ticket_turn")
+        return self
+    def __exit__(self, *args):
+        if self.events is not None: self.events.append("ticket_release")
+
+
 class Contracts(unittest.TestCase):
     def setUp(self):
         self.gate = importlib.import_module("agent_toolbelt_gradle_build_gate.gate")
@@ -157,15 +167,17 @@ class Contracts(unittest.TestCase):
         inspections = iter([{"safe_to_start": False, "processes": [{"state": "ambiguous"}]},
                             {"safe_to_start": True, "processes": []}])
         def inspect(*args): events.append("inspect"); return next(inspections)
-        with patch.object(self.gate, "NamedMutex", return_value=Mutex()), \
+        with patch("agent_toolbelt_gradle_build_gate.queue.TicketQueue", return_value=ExecutionTicket(events)), \
+             patch.object(self.gate, "NamedMutex", return_value=Mutex()), \
              patch.object(self.gate, "LifecycleObserver", return_value=Observer()), \
              patch.object(self.gate, "inspect_activity", side_effect=inspect), \
              patch.object(self.gate, "execute_wrapper", side_effect=lambda *args: events.append("execute") or {"exit_code": 0}), \
              patch.object(self.gate, "make_profile", return_value={"arguments": [], "environment": {}}):
             with temporary_workspace() as root:
                 (Path(root) / "gradlew.bat").touch()
-                self.gate.run_build(Path(root), ["test"], retire_daemons="none")
-        self.assertEqual(events, ["acquire", "subscribe", "inspect", "wait", "inspect", "execute", "unsubscribe", "release"])
+                result = self.gate.run_build(Path(root), ["test"], retire_daemons="none")
+        self.assertEqual(events, ["ticket_turn", "acquire", "subscribe", "inspect", "wait", "inspect", "execute", "unsubscribe", "release", "ticket_release"])
+        self.assertEqual(result["queue_ticket"]["number"], 7)
 
     def test_retirement_is_held_under_gate_and_rechecked_before_build(self):
         events = []
@@ -182,7 +194,8 @@ class Contracts(unittest.TestCase):
             def __exit__(self, *args): pass
         with temporary_workspace() as root:
             project = Path(root); (project / "gradlew.bat").touch()
-            with patch.object(self.gate, "NamedMutex", return_value=Mutex()), \
+            with patch("agent_toolbelt_gradle_build_gate.queue.TicketQueue", return_value=ExecutionTicket(events)), \
+                 patch.object(self.gate, "NamedMutex", return_value=Mutex()), \
                  patch.object(self.gate, "LifecycleObserver", return_value=Observer()), \
                  patch.object(self.gate, "wrapper_version", return_value="8.13"), \
                  patch.object(self.gate, "inspect_activity", side_effect=lambda *a: events.append("inspect") or next(snapshots)), \
@@ -190,7 +203,7 @@ class Contracts(unittest.TestCase):
                  patch.object(self.gate, "retire_daemon", side_effect=lambda p: events.append("retire") or {"process_exit_verified": True}), \
                  patch.object(self.gate, "execute_wrapper", side_effect=lambda *a: events.append("build") or {"exit_code": 0}):
                 result = self.gate.run_build(project, ["test"])
-        self.assertEqual(events, ["acquire", "inspect", "inspect", "retire", "inspect", "build", "release"])
+        self.assertEqual(events, ["ticket_turn", "acquire", "inspect", "inspect", "retire", "inspect", "build", "release", "ticket_release"])
         self.assertTrue(result["daemon_retirement"]["retired"][0]["process_exit_verified"])
 
     def test_new_activity_before_retirement_cannot_be_stopped(self):
@@ -207,7 +220,8 @@ class Contracts(unittest.TestCase):
             def wait(self): raise RuntimeError("external build still active")
         with temporary_workspace() as root:
             (Path(root) / "gradlew.bat").touch()
-            with patch.object(self.gate, "NamedMutex", return_value=Mutex()), \
+            with patch("agent_toolbelt_gradle_build_gate.queue.TicketQueue", return_value=ExecutionTicket()), \
+                 patch.object(self.gate, "NamedMutex", return_value=Mutex()), \
                  patch.object(self.gate, "LifecycleObserver", return_value=Observer()), \
                  patch.object(self.gate, "wrapper_version", return_value="8.13"), \
                  patch.object(self.gate, "make_profile", return_value={"gradle_jvmargs": "-Xmx3g"}), \

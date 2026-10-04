@@ -6,14 +6,15 @@ from pathlib import Path
 import sys
 
 from . import gate
+from .queue import queue_status
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Shared Windows Gradle mutex supervisor")
+    parser = argparse.ArgumentParser(description="FIFO Windows Gradle execution tickets and shared mutex supervisor")
     commands = parser.add_subparsers(dest="operation", required=True)
     status = commands.add_parser("status", help="Read-only activity inspection; not launch clearance")
     status.add_argument("--observe-home", action="append", default=[])
-    run = commands.add_parser("run", help="Wait, inspect, and run the project wrapper under the shared mutex")
+    run = commands.add_parser("run", help="Queue in FIFO order, wait, inspect, and run under the shared mutex")
     run.add_argument("--project", required=True, type=Path)
     run.add_argument("--observe-home", action="append", default=[])
     run.add_argument("--log", type=Path)
@@ -28,6 +29,7 @@ def main(argv=None):
     try:
         if args.operation == "status":
             result = {"ok": True, "operation": "status", "gate_acquired": False,
+                      "queue": queue_status(),
                       **gate.inspect_activity(gate.observation_homes(extra=args.observe_home))}
         else:
             arguments = args.gradle_arguments
@@ -40,8 +42,12 @@ def main(argv=None):
         print(json.dumps(result, indent=2))
         return result.get("exit_code", 0)
     except (ValueError, OSError, RuntimeError) as exc:
-        print(json.dumps({"ok": False, "operation": args.operation, "failure_kind": "gate_or_configuration_error",
-                          "error": str(exc), "safe_to_continue": False}))
+        result = {"ok": False, "operation": args.operation,
+                  "failure_kind": getattr(exc, "failure_kind", "gate_or_configuration_error"),
+                  "error": str(exc), "safe_to_continue": False}
+        if isinstance(exc, gate.RetirementFailure):
+            result["retirement_diagnostics"] = exc.diagnostics
+        print(json.dumps(result))
         return 2
     except KeyboardInterrupt:
         print(json.dumps({"ok": False, "operation": args.operation, "failure_kind": "interrupted_before_launch",

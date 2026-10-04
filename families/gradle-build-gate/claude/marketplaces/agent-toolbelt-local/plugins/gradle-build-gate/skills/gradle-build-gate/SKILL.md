@@ -3,7 +3,7 @@ name: gradle-build-gate
 description: Run Windows Gradle builds and tests through a shared session-wide mutex supervisor, inspect active versus idle daemons, and apply a conservative memory profile without interrupting other builds.
 license: MIT
 metadata:
-  version: "0.2.0"
+  version: "0.3.0"
   compatibility: Windows desktop, Python 3.11+, Windows PowerShell, project gradlew.bat, existing JDK with source-file execution; no Python dependencies.
 ---
 
@@ -28,7 +28,8 @@ The helper never decides that low CPU or old logs prove inactivity.
 ## Blocking Execution Gate
 
 `run` is the request-and-wait interface. Launch it ONCE with the intended Gradle
-command. It waits inside the Windows kernel for the shared mutex; do not poll
+command. It registers a monotonic FIFO ticket, waits on native turn/owner-exit
+events, then acquires the shared mutex; do not poll
 `status`, retry the launcher, or run Gradle directly while waiting. Once acquired,
 the gate is held through existing activity, retirement, and build completion.
 
@@ -36,8 +37,12 @@ If the agent command tool yields a still-running session, retain that session an
 wait for its completion using the tool's session-wait interface. A yielded tool
 response is not a failed, canceled, or abandoned build request. Do not impose a
 shell timeout that kills the waiting supervisor. Normal final output contains the
-actual build result. The mutex supplies mutual exclusion, not strict FIFO order
-or a persistent queue. Observer reinspection follows lifecycle events, not timers.
+actual build result and `queue_ticket`. FIFO is guaranteed in registration order
+among updated participating helpers in this Windows session. Older launchers and
+Studio do not join automatically. Tickets remain held through supervision; dead
+owners are reclaimed only from proven exit or exact PID/start identity mismatch.
+Unknown identity or corrupt queue state blocks, never expires or steals a turn.
+`status.queue` is read-only diagnostics. Observer reinspection follows events.
 
 ## Daemon Retirement
 
@@ -54,6 +59,10 @@ Never substitute `gradle --stop`, taskkill, Stop-Process, or broad Java terminat
 Unknown registry/distribution/JDK protocol blocks the build; diagnose it rather
 than bypassing the guard. Custom wrapper names require `none` until their version
 is explicitly supported. Inspect `daemon_retirement` in the final result.
+Gradle 8.6 and newer callback/idle-state variants are handled. An
+`adapter_compilation_failure` means no adapter shutdown request was sent, not
+that a build is active. Inspect sanitized `retirement_diagnostics`; never bypass
+compatibility failure with force termination or immediate shutdown.
 
 This is pre-build retirement, not zero retention after every build. Kotlin
 compiler daemons, workers, unrelated Java, and separate cleanup tasks are outside
