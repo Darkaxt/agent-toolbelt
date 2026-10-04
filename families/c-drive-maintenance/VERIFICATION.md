@@ -23,5 +23,7 @@ retirement and app/WSL lifecycle actions require fresh consumer evidence when th
 skill is invoked. Codex paginated database retirement is not implemented or
 claimed; rollout offload must not be described as full database reclamation.
 
-GitHub synchronization is checked after the final commit. No export, authentication
+Verified implementation committed as 26a3236 and synchronized to its GitHub branch.
+Default-branch synchronization is checked after merge before reporting delivery.
+No export, authentication
 state, session content or personal maintenance ledger is included in this package.
