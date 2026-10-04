@@ -21,6 +21,8 @@ def main(argv=None):
     run.add_argument("--kotlin-heap-gb", type=int, default=3)
     run.add_argument("--memory-reason")
     run.add_argument("--kotlin-strategy", choices=["daemon", "in-process", "out-of-process"])
+    run.add_argument("--retire-daemons", choices=["incompatible", "all-idle", "none"], default="incompatible",
+                     help="Gracefully retire incompatible idle daemons before building (default: version/heap mismatch)")
     run.add_argument("gradle_arguments", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     try:
@@ -33,7 +35,8 @@ def main(argv=None):
                 arguments = arguments[1:]
             result = gate.run_build(args.project, arguments, extra_homes=args.observe_home, log_path=args.log,
                                     gradle_heap=args.gradle_heap_gb, kotlin_heap=args.kotlin_heap_gb,
-                                    memory_reason=args.memory_reason, kotlin_strategy=args.kotlin_strategy)
+                                    memory_reason=args.memory_reason, kotlin_strategy=args.kotlin_strategy,
+                                    retire_daemons=args.retire_daemons)
         print(json.dumps(result, indent=2))
         return result.get("exit_code", 0)
     except (ValueError, OSError, RuntimeError) as exc:

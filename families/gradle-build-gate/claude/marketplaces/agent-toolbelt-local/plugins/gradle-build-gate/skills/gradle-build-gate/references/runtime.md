@@ -1,11 +1,28 @@
 # Runtime And Failure Boundaries
 
 Install from the family with `python scripts/install.py`; it deploys a
-content-addressed stdlib-only runtime under `%LOCALAPPDATA%/Tools/gradle-build-gate`
+content-addressed runtime under `%LOCALAPPDATA%/Tools/gradle-build-gate`
 and skills into personal Codex, agents and Claude roots. Installed wrappers share
 that runtime, not an editable repository dependency. `GRADLE_BUILD_GATE_HOME`
 selects a runtime location; `AGENT_TOOLBELT_HOME` is an explicit development
 checkout override. No background service or scheduled task is installed.
+
+Python has no third-party dependencies. Retirement additionally needs the target
+daemon's existing JDK with source-file execution and installed Gradle jars. The
+adapter reads the authenticated registry under Gradle's registry lock; tokens
+never appear in output or artifacts. The internal protocol is version-sensitive:
+unknown/incompatible implementations block, never fall back to process killing.
+Read-only registry probes cover installed versions, not all historical/future Gradle.
+
+`run` defaults to `--retire-daemons incompatible`: different version or heap is
+retired after fresh idle evidence. `all-idle` retires all confirmed-idle Gradle
+daemons; `none` preserves previous behavior. Each request uses `StopWhenIdle` and
+waits for the identity-checked target's native process-exit event. An external
+build racing the request is allowed to finish. Active/ambiguous activity is never
+forcefully stopped. Signals retain supervision during retirement too.
+The same-version/same-heap policy does not promise full Gradle JVM compatibility
+(other JVM flags or Java homes can also differ); use all-idle when needed.
+No post-build sweep, Kotlin shutdown, new cleaner, or 120-minute timer is added.
 
 The main OS thread owns the named mutex. Observer subprocesses are hidden and
 subscribe to process exit and daemon-log changes before authoritative inspection.

@@ -11,12 +11,97 @@ import subprocess
 import sys
 import threading
 import uuid
+from urllib.parse import unquote, urlparse
 
 
 MUTEX_NAME = r"Local\Darka.AndroidGradleBuildGate"
 ASSETS = Path(__file__).with_name("assets")
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _LOG_CURSORS = {}
+
+
+def wrapper_version(project):
+    url = read_properties(project / "gradle/wrapper/gradle-wrapper.properties").get("distributionUrl", "")
+    match = re.fullmatch(r"gradle-([0-9][A-Za-z0-9.+-]*)-(?:bin|all)\.zip", unquote(urlparse(url).path).split("/")[-1])
+    if not match:
+        raise ValueError("Cannot identify pinned wrapper version for daemon retirement; use --retire-daemons none for a custom distribution")
+    return match[1]
+
+
+def retirement_candidates(inspection, version, heap, policy):
+    if policy == "none":
+        return []
+    if policy not in ("incompatible", "all-idle"):
+        raise ValueError("Invalid daemon retirement policy")
+    if not inspection["safe_to_start"]:
+        raise ValueError("Active or ambiguous processes prevent daemon retirement")
+    candidates = []
+    for row in inspection["processes"]:
+        if row["state"] != "idle" or not row.get("version") or not row.get("max_heap"):
+            raise ValueError("Unknown daemon identity/version/heap prevents retirement")
+        reason = ("all_idle_requested" if policy == "all-idle" else
+                  "different_version" if row["version"] != version else
+                  "different_heap" if heap_bytes(row["max_heap"]) != heap_bytes(heap) else None)
+        if reason:
+            candidates.append({**row, "retirement_reason": reason})
+    return candidates
+
+
+def heap_bytes(value):
+    match = re.fullmatch(r"-xmx(\d+)([kmg])", value, re.I)
+    if not match:
+        raise ValueError("Unknown daemon maximum heap")
+    return int(match[1]) * {"k": 1024, "m": 1024**2, "g": 1024**3}[match[2].lower()]
+
+
+def daemon_details(row):
+    command = row.get("command") or ""
+    version = re.search(r"org\.gradle\.launcher\.daemon\.bootstrap\.GradleDaemon\s+([^\s\"]+)", command)
+    heaps = re.findall(r"(?<!\S)(-Xmx[0-9]+[kmg])(?=\s|$)", command, re.I)
+    # Distribution comes from the running daemon's classpath, not a global guess.
+    paths = re.findall(r'(?:"([^"\r\n]*\.jar)"|([^\s";]+\.jar))', command)
+    distribution = None
+    for quoted, bare in paths:
+        for item in (quoted or bare).split(";"):
+            path = Path(item)
+            if version and path.name in (f"gradle-launcher-{version[1]}.jar", f"gradle-daemon-main-{version[1]}.jar"):
+                distribution = str(path.parent.parent)
+    return {"version": version[1] if version else None, "max_heap": heaps[-1].lower() if heaps else None,
+            "distribution": distribution, "java_executable": row.get("executable")}
+
+
+def retire_daemon(candidate, *, inspect_only=False):
+    java = Path(candidate.get("java_executable") or "")
+    distribution = Path(candidate.get("distribution") or "")
+    log = Path(candidate.get("daemon_log") or "")
+    registry = log.parent / "registry.bin"
+    if not java.is_file() or not (distribution / "lib").is_dir() or not registry.is_file():
+        raise ValueError("Cannot verify candidate JDK/distribution/registry; retirement and build blocked")
+    child = subprocess.Popen([str(java), "-Xmx128m", "--class-path", str(distribution / "lib/*"),
+                           str(ASSETS / "RetireDaemon.java"), "inspect" if inspect_only else "retire",
+                           str(registry), str(candidate["pid"]), str(round(candidate["created"] * 1000))],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                          encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
+    signals = [signal.SIGINT] + ([signal.SIGBREAK] if hasattr(signal, "SIGBREAK") else [])
+    handlers = {s: signal.getsignal(s) for s in signals}
+    def retain_retirement(signum, frame):
+        print("Retirement interrupted; retaining gate until shutdown supervision completes.", file=sys.stderr, flush=True)
+    for s in signals:
+        signal.signal(s, retain_retirement)
+    try:
+        output, _ = child.communicate()
+    finally:
+        child.wait()
+        child.stdout.close(); child.stderr.close()
+        for s, handler in handlers.items():
+            signal.signal(s, handler)
+    outcome = output.strip()
+    allowed = ("registry_idle_verified", "already_exited") if inspect_only else ("process_exit_verified", "already_exited")
+    if child.returncode or outcome not in allowed:
+        raise RuntimeError(f"Daemon retirement blocked for PID {candidate['pid']}; protocol/JDK/identity verification failed (exit {child.returncode})")
+    return {"pid": candidate["pid"], "created": candidate["created"], "version": candidate["version"],
+            "reason": candidate.get("retirement_reason"), "outcome": outcome,
+            "process_exit_verified": outcome in ("process_exit_verified", "already_exited")}
 
 
 class NamedMutex:
@@ -245,9 +330,11 @@ def inspect_activity(homes=()):
                 modified, log_text, log_path = logs[0]
         connected = row["pid"] in snapshot["connected_pids"]
         state = classify_process(row, log_text, modified, connected, snapshot["connections_known"])
+        if state == "idle" and row.get("session") != snapshot.get("session"):
+            state = "ambiguous"
         if state != "unrelated":
             results.append({"pid": row["pid"], "created": row["created"], "name": row["name"],
-                            "state": state, "connected": connected, "daemon_log": log_path})
+                            "state": state, "connected": connected, "daemon_log": log_path, **daemon_details(row)})
     return {"safe_to_start": all(p["state"] == "idle" for p in results), "processes": results,
             "connections_known": snapshot["connections_known"],
             "scope": "participating_launchers_in_current_windows_session; external launches not prevented"}
@@ -349,12 +436,14 @@ def execute_wrapper(project, profile, log_path):
                 ([] if observed else ["No Gradle profile marker observed; requested profile not verified"])}
 
 
-def run_build(project, arguments, *, extra_homes=(), log_path=None, **options):
+def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemons="incompatible", **options):
     project = Path(project).expanduser().resolve()
     if not (project / "gradlew.bat").is_file():
         raise ValueError("Project must contain gradlew.bat")
     homes = observation_homes(arguments, extra_homes, project)
     profile = make_profile(project, arguments, homes, **options)
+    version = wrapper_version(project) if retire_daemons != "none" else None
+    retired = []
     if log_path is None:
         local = Path(os.environ.get("LOCALAPPDATA", str(Path.home())))
         log_path = local / "Tools/gradle-build-gate/logs" / (uuid.uuid4().hex + ".log")
@@ -372,9 +461,24 @@ def run_build(project, arguments, *, extra_homes=(), log_path=None, **options):
                     observer.wait()
                     inspection = inspect_activity(homes)
                 if inspection["safe_to_start"]:
+                    candidates = retirement_candidates(inspection, version, profile.get("gradle_jvmargs", "").split()[-1] if profile.get("gradle_jvmargs") else "", retire_daemons)
+                    if candidates:
+                        candidate = candidates[0]
+                        # Reinspect before each request; new activity goes back through
+                        # event-driven waiting. The daemon handles the final race safely.
+                        fresh = inspect_activity(homes)
+                        if not fresh["safe_to_start"]:
+                            continue
+                        current = next((p for p in retirement_candidates(fresh, version, profile["gradle_jvmargs"].split()[-1], retire_daemons)
+                                        if (p["pid"], p["created"]) == (candidate["pid"], candidate["created"])), None)
+                        if current:
+                            print(json.dumps({"state": "retiring_idle_daemon", "pid": current["pid"], "reason": current["retirement_reason"]}), file=sys.stderr, flush=True)
+                            retired.append(retire_daemon(current))
+                        continue
                     result = execute_wrapper(project, profile, log_path)
                     break
     public_profile = {key: value for key, value in profile.items() if key not in ("arguments", "environment")}
     return {"ok": result["exit_code"] == 0, "operation": "run", "project": str(project),
             "gate_acquired": True, "mutex": MUTEX_NAME, "abandoned_mutex_rechecked": mutex.abandoned,
-            "requested_profile": public_profile, "preflight_activity": inspection, **result}
+            "requested_profile": public_profile, "preflight_activity": inspection,
+            "daemon_retirement": {"policy": retire_daemons, "target_version": version, "retired": retired}, **result}

@@ -3,8 +3,8 @@ name: gradle-build-gate
 description: Run Windows Gradle builds and tests through a shared session-wide mutex supervisor, inspect active versus idle daemons, and apply a conservative memory profile without interrupting other builds.
 license: MIT
 metadata:
-  version: "0.1.0"
-  compatibility: Windows desktop, Python 3.11+, Windows PowerShell, project gradlew.bat; no Python dependencies.
+  version: "0.2.0"
+  compatibility: Windows desktop, Python 3.11+, Windows PowerShell, project gradlew.bat, existing JDK with source-file execution; no Python dependencies.
 ---
 
 # Gradle Build Gate
@@ -24,6 +24,27 @@ clients/daemons cause event-driven waiting. A tool's yielded command/session is
 still running: wait for it; do not abandon it, launch another build, kill owners,
 or replace the wait with a deadline. An abandoned mutex triggers reinspection.
 The helper never decides that low CPU or old logs prove inactivity.
+
+## Daemon Retirement
+
+The default `--retire-daemons incompatible` retires confirmed-idle Gradle daemons
+whose version or maximum heap differs from the next wrapper/profile. Matching
+daemons remain reusable. Use `--retire-daemons all-idle` before `--` to retire all
+confirmed-idle Gradle daemons before a build; `none` preserves previous retention.
+Do not add an independent timed cleaner or wait 120 minutes inside this helper.
+
+Retirement holds the same gate, reinspects activity, verifies native PID/start
+identity and authenticated registry idle state, requests `StopWhenIdle`, and waits
+for actual process exit. A racing external build can finish without cancellation.
+Never substitute `gradle --stop`, taskkill, Stop-Process, or broad Java termination.
+Unknown registry/distribution/JDK protocol blocks the build; diagnose it rather
+than bypassing the guard. Custom wrapper names require `none` until their version
+is explicitly supported. Inspect `daemon_retirement` in the final result.
+
+This is pre-build retirement, not zero retention after every build. Kotlin
+compiler daemons, workers, unrelated Java, and separate cleanup tasks are outside
+its scope. `--no-daemon` after `--` remains available when no Gradle reuse is wanted;
+Gradle's single-use daemon then exits after its build. No global settings change.
 
 ## Resource Profile
 

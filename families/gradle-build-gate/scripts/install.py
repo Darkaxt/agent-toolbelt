@@ -14,7 +14,7 @@ FAMILY = Path(__file__).resolve().parents[1]
 
 def install(runtime_root, skill_roots):
     source = FAMILY / "src/agent_toolbelt_gradle_build_gate"
-    files = sorted(p for p in source.rglob("*") if p.is_file() and p.suffix in (".py", ".ps1", ".gradle"))
+    files = sorted(p for p in source.rglob("*") if p.is_file() and p.suffix in (".py", ".ps1", ".gradle", ".java"))
     digest = hashlib.sha256()
     for path in files:
         digest.update(str(path.relative_to(source)).replace("\\", "/").encode())
@@ -30,7 +30,7 @@ def install(runtime_root, skill_roots):
             shutil.copy2(path, target)
     pointer = runtime_root / "active.json"
     pending = runtime_root / "active.pending.json"
-    pending.write_text(json.dumps({"schema": 1, "release": release, "version": "0.1.0"}) + "\n", encoding="utf-8")
+    pending.write_text(json.dumps({"schema": 1, "release": release, "version": "0.2.0"}) + "\n", encoding="utf-8")
     os.replace(pending, pointer)
     skill = FAMILY / "codex/skills/gradle-build-gate"
     for root in skill_roots:

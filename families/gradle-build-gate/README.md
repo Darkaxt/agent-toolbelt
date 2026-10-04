@@ -36,3 +36,16 @@ force-killing a supervisor still requires survivor inspection on the next run.
 Tests use synthetic wrappers and Windows kernel/event operations, not an extra
 real Gradle build. Verify the actual project/compiler/native profile with the
 next required focused build. See the skill's runtime reference for limitations.
+
+Before each build the default retirement policy removes confirmed-idle daemons
+with a different wrapper version or maximum heap. Matching daemons remain reusable.
+`--retire-daemons all-idle` removes every confirmed-idle Gradle daemon first;
+`--retire-daemons none` preserves prior behavior. This does not stop Kotlin or
+unrelated Java and does not change a separate periodic cleanup task.
+
+Retirement uses a small source-mode Java adapter with the target daemon's existing
+JDK and distribution jars. Gradle's internal authenticated `StopWhenIdle` protocol
+is used, not immediate `--stop`: racing work can finish. The helper waits for native
+identity-checked process exit while holding the gate and fails closed on protocol
+incompatibility. No new Java dependencies are downloaded; an existing source-capable
+JDK is required. `daemon_retirement` records requested policy and verified exits.

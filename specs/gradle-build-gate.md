@@ -7,6 +7,10 @@ Standing instruction Section 42 is authoritative. No existing build, daemon,
 Android Studio configuration, repository settings, or global Gradle configuration
 may be interrupted or modified. Sync the verified repository implementation.
 
+Subsequent user-authorized extension: [idle daemon retirement](gradle-daemon-retirement.md)
+permits confirmed-idle incompatible-daemon shutdown via StopWhenIdle under the
+same gate. Active-build protection and all original resource limits remain binding.
+
 ## Requirements
 
 - R1: All helper instances acquire `Local\Darka.AndroidGradleBuildGate` on the

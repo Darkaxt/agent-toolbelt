@@ -4,6 +4,7 @@ $rows = @(Get-CimInstance Win32_Process | Where-Object {
     $_.Name -in @('java.exe', 'javaw.exe', 'cmd.exe', 'gradle.exe')
 } | ForEach-Object {
     [ordered]@{ pid = [int]$_.ProcessId; name = $_.Name; command = $_.CommandLine;
+        executable = $_.ExecutablePath; session = [int]$_.SessionId;
         created = ([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds() / 1000.0 }
 })
 $known = $true
@@ -14,5 +15,6 @@ try {
     } |
         Select-Object -ExpandProperty OwningProcess -Unique)
 } catch { $known = $false }
-[ordered]@{ processes = $rows; connected_pids = $connected; connections_known = $known } |
+[ordered]@{ processes = $rows; connected_pids = $connected; connections_known = $known;
+    session = [System.Diagnostics.Process]::GetCurrentProcess().SessionId } |
     ConvertTo-Json -Depth 6 -Compress
