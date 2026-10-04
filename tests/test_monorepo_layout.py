@@ -6,6 +6,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 EXPECTED_FAMILIES = {
+    "d-temp-maintenance": {
+        "runtime": False,
+        "has_claude": False,
+    },
     "c-drive-maintenance": {
         "project_name": "agent-toolbelt-c-drive-maintenance",
         "script_name": "agent-toolbelt-c-drive-maintenance",
@@ -217,6 +221,27 @@ class MonorepoLayoutTests(unittest.TestCase):
         claude_install = (REPO_ROOT / "docs" / "claude-install.md").read_text(encoding="utf-8")
         for text in (readme, codex_install, claude_install):
             self.assertIn("families/spec-gated-implementation", text)
+
+    def test_d_temp_skill_has_resolvable_local_resources_without_another_runtime(self):
+        import re
+
+        family = REPO_ROOT / "families" / "d-temp-maintenance"
+        skill = family / "codex" / "skills" / "d-temp-maintenance"
+        self.assertTrue((skill / "agents" / "openai.yaml").is_file())
+        self.assertFalse((family / "pyproject.toml").exists())
+        self.assertFalse((skill / "scripts").exists())
+        text = (skill / "SKILL.md").read_text(encoding="utf-8")
+        links = re.findall(r"\]\((references/[^)]+)\)", text)
+        self.assertEqual(set(links), {
+            "references/actions.md", "references/ledger.md", "references/owner-sweep.md"
+        })
+        for relative in links:
+            target = (skill / relative).resolve()
+            self.assertTrue(target.is_relative_to(skill.resolve()))
+            self.assertTrue(target.is_file(), relative)
+        for relative in ("README.md", "docs/codex-install.md", "docs/claude-install.md", "docs/skills-sh.md"):
+            with self.subTest(document=relative):
+                self.assertIn("d-temp-maintenance", (REPO_ROOT / relative).read_text(encoding="utf-8"))
 
     def test_antigravity_replaces_retired_gemini_public_skill(self):
         self.assertFalse((REPO_ROOT / "families" / "gemini").exists())

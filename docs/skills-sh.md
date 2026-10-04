@@ -33,6 +33,7 @@ npx skills update
 | Skill | Compatibility | Local prerequisites | Safety notes |
 | --- | --- | --- | --- |
 | `c-drive-maintenance` | Windows on-demand maintenance | Python, transactional-cleanup for deletion, gradle-build-gate for builds | No passive monitor or automatic newest-version upgrades; lifecycle and owner evidence before cleanup. |
+| `d-temp-maintenance` | Windows on-demand agent temporary-output maintenance | Installed transactional-cleanup; Everything and existing task-owner tools where available | End-of-round owner sweeps, exact reviewed targets, retained unique source and no Gradle build-gate use for cleanup. |
 | `antigravity-cli` | Windows/local exact-model packet and public-evidence analysis | Helper-owned CLIProxyAPI runtime, explicit Antigravity OAuth login, and `yt-dlp-ffmpeg` for video preparation | Bounded public text or explicit transcript/frame manifests only; no model fallback, general proxy, persistence, or access to Claude's proxy state. |
 | `amazon-cli` | Windows/local CLI oriented | `agent-toolbelt-amazon-cli`; Amazon session setup for authenticated workflows | Authenticated retail or business sessions are user-managed. |
 | `skroutz-cli` | Windows/local CLI oriented | `agent-toolbelt-skroutz-cli`; optional managed Skroutz session for cart workflows | Cart list is read-only; add/remove require explicit confirmation; no checkout or buy workflows. |

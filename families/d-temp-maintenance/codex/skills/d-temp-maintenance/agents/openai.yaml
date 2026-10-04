@@ -1,0 +1,6 @@
+interface:
+  display_name: "D-Temp Maintenance"
+  short_description: "Clean agent leftovers without losing active work."
+  default_prompt: "Use $d-temp-maintenance to review D:/Temp leftovers, clean verified disposable targets, and record retained work and cleanup receipts."
+policy:
+  allow_implicit_invocation: true
