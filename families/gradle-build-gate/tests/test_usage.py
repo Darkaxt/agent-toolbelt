@@ -190,6 +190,13 @@ class InventoryContracts(CatalogContracts):
 
 
 class PolicyContracts(unittest.TestCase):
+    def test_cleanup_plan_does_not_reserve_build_gate(self):
+        usage = importlib.import_module("agent_toolbelt_gradle_build_gate.usage")
+        with patch.object(usage, "inventory", return_value={"artifacts": []}):
+            result = usage.cleanup_plan()
+        self.assertIn("must not acquire the Gradle build mutex", result["application_requirement"])
+        self.assertNotIn("under the shared build gate", result["application_requirement"])
+
     def test_agent_bundles_match_and_require_scoped_verified_maintenance(self):
         family = SRC.parent
         codex = family / "codex/skills/gradle-build-gate"
@@ -197,6 +204,8 @@ class PolicyContracts(unittest.TestCase):
         for relative in ("SKILL.md", "references/runtime.md", "scripts/invoke_gradle_build_gate.py"):
             self.assertEqual((codex / relative).read_bytes(), (claude / relative).read_bytes())
         text = (codex / "SKILL.md").read_text()
+        self.assertIn("Cleanup MUST NOT acquire or hold the Gradle build mutex", text)
+        self.assertNotIn("through cleanup", text)
         for requirement in ("already authorized", "highest installed/used is not proof", "AGP", "Kotlin", "JDK",
                             "Do NOT upgrade wrappers", "transactional-cleanup", "rollback/offline", "not a deletion ticket"):
             self.assertIn(requirement, text)

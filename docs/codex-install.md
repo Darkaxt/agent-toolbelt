@@ -16,6 +16,7 @@ Each runtime family ships its own Codex skill bundle. Instruction-only skills us
 - Codex Thread Recall: `families/codex-thread-recall/codex/skills/codex-thread-recall`
 - Context Transfer: `families/context-transfer/codex/skills/context-transfer`
 - Transactional Cleanup: run `python families/transactional-cleanup/scripts/install.py` for the independent runtime and Codex/Claude skill deployment.
+- C-Drive Maintenance: run `python families/c-drive-maintenance/scripts/install.py` for its helper and identical Codex, agents and Claude personal skills.
 - Skills.sh Scout: `families/skills-sh-scout/codex/skills/skills-sh-scout`
 - Skroutz CLI: `families/skroutz-cli/codex/skills/skroutz-cli`
 - AliExpress CLI: `families/aliexpress-cli/codex/skills/aliexpress-cli`

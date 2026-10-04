@@ -10,6 +10,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 FAMILY_IMPORTS = {
+    "c-drive-maintenance": (
+        REPO_ROOT / "families" / "c-drive-maintenance" / "src",
+        "agent_toolbelt_c_drive_maintenance.cli",
+    ),
     "gradle-build-gate": (
         REPO_ROOT / "families" / "gradle-build-gate" / "src",
         "agent_toolbelt_gradle_build_gate.cli",
@@ -87,6 +91,19 @@ def import_family_cli(name: str):
 
 
 class FamilyCLITests(unittest.TestCase):
+    def test_maintenance_inventory_routes_without_deletion(self):
+        cli = import_family_cli("c-drive-maintenance")
+        original = cli.maintenance.inventory
+        cli.maintenance.inventory = lambda *args: {"ok": True, "deletion_authorized": False}
+        try:
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                code = cli.main(["inventory", "--csv", "fixture.csv"])
+                result = json.loads(buffer.getvalue())
+        finally:
+            cli.maintenance.inventory = original
+        self.assertEqual(code, 0)
+        self.assertFalse(result["deletion_authorized"])
+
     def test_gradle_gate_status_does_not_claim_mutex_ownership(self):
         cli = import_family_cli("gradle-build-gate")
         original = cli.gate.inspect_activity

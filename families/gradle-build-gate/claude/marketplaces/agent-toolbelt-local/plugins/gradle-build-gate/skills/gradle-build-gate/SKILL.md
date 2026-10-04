@@ -3,7 +3,7 @@ name: gradle-build-gate
 description: Run Windows Gradle builds and tests through a shared session-wide mutex supervisor, inspect active versus idle daemons, and apply a conservative memory profile without interrupting other builds.
 license: MIT
 metadata:
-  version: "0.4.0"
+  version: "0.4.1"
   compatibility: Windows desktop, Python 3.11+, Windows PowerShell, project gradlew.bat, existing JDK with source-file execution; no Python dependencies.
 ---
 
@@ -126,9 +126,15 @@ Shared caches, JDKs, configuration and daemon registries are excluded.
 "Not referenced by known projects" is NOT proof of global non-use. Review project
 coverage, branches, rollback and offline needs first. No proposals are produced
 without known projects. A proposal is not a deletion ticket or authorization:
-use transactional-cleanup for separately reviewed exact files, recheck references
-and daemon activity while holding the shared build gate, and retain supervision
-through cleanup. If that coordination cannot be established, do not apply it.
+use transactional-cleanup for separately reviewed exact files and recheck current
+references and activity. Cleanup MUST NOT acquire or hold the Gradle build mutex,
+enter its execution queue, or wrap cleanup commands in the build launcher. Its
+own exact-target coordination and deletion tickets apply. Skip any artifact with
+an active, ambiguous or newly discovered consumer; do not block unrelated builds
+while hashing manifests or deleting captures, APKs or obsolete outputs. A one-time
+process scan is not a guarantee against a later non-cooperating build: if safe
+native lifecycle or owner coordination cannot be established for shared artifacts,
+preserve those artifacts and record the specific blocker.
 Never stop a build, delete shared caches, or change toolchains to make cleanup pass.
 
 Use `--keep-version` repeatedly to replace reservations; omission preserves them.

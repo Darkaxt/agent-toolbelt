@@ -15,6 +15,7 @@ Start by choosing the one family you actually need:
 | Codex Thread Recall | bounded self-recall from the current Codex thread's own raw rollout history before broad exploration | `families/codex-thread-recall` | `agent-toolbelt-codex-thread-recall` |
 | Context Transfer | destination-owned oversized Codex task-tree handoff, verified off-drive archive, exact retirement, and conflict-safe restore | `families/context-transfer` | `agent-toolbelt-context-transfer` |
 | Transactional Cleanup | reviewed generated-output snapshots and Windows identity-bound deletion tickets | `families/transactional-cleanup` | `agent-toolbelt-transactional-cleanup` |
+| C-Drive Maintenance | active lifecycle-specific cleanup and compatible toolchain consolidation with existing task owners | `families/c-drive-maintenance` | `agent-toolbelt-c-drive-maintenance` |
 | Everything | global filename and path lookup | `families/everything` | `agent-toolbelt-everything` |
 | LinkedIn CV | local read-only LinkedIn profile evidence capture and CV/profile gap comparisons | `families/linkedin-cv` | `agent-toolbelt-linkedin-cv` |
 | Media | transcript-first public video analysis preparation and local media operations | `families/media` | `agent-toolbelt-media` |
@@ -45,6 +46,7 @@ Public skill names:
 - `codex-thread-recall`
 - `context-transfer`
 - `transactional-cleanup`
+- `c-drive-maintenance`
 - `everything-search`
 - `antigravity-cli`
 - `linkedin-cv`

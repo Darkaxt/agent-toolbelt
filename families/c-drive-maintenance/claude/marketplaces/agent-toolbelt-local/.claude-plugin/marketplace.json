@@ -1,0 +1,5 @@
+{
+  "name": "agent-toolbelt-local",
+  "owner": {"name": "Darkaxt"},
+  "plugins": [{"name": "c-drive-maintenance", "source": "./plugins/c-drive-maintenance", "version": "0.1.0", "strict": false}]
+}

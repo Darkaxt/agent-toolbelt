@@ -1,0 +1,4 @@
+interface:
+  display_name: "C Drive Maintenance"
+  short_description: "Reclaim verified waste and coordinate compatible toolchains"
+  default_prompt: "Use $c-drive-maintenance to execute evidence-backed disk maintenance, coordinate compatible dependency upgrades with existing owners, and verify reclaimed space."

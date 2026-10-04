@@ -222,4 +222,4 @@ def cleanup_plan(**options):
     return {**result, "operation": "cleanup-plan", "proposals": proposals,
             "estimated_bytes": sum(a["bytes"] for a in proposals), "transactional_cleanup_required": True,
             "deletion_authorized": False,
-            "application_requirement": "Review exact roots; recheck references and activity under the shared build gate before separate transactional cleanup. This report is not a deletion ticket."}
+            "application_requirement": "Review exact roots; recheck references and activity before separate transactional cleanup. Cleanup must not acquire the Gradle build mutex or enter its build queue. Skip in-use or ambiguous targets; require safe native lifecycle or owner coordination for shared artifacts. This report is not a deletion ticket."}

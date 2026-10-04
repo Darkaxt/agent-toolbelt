@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-toolbelt-c-drive-maintenance"
+version = "0.1.0"
+description = "Active Windows maintenance routing and reviewed cleanup coordination."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+
+[project.scripts]
+agent-toolbelt-c-drive-maintenance = "agent_toolbelt_c_drive_maintenance.cli:entrypoint"
+
+[tool.setuptools.packages.find]
+where = ["src"]
