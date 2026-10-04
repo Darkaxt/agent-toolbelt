@@ -6,6 +6,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 EXPECTED_FAMILIES = {
+    "gradle-build-gate": {
+        "project_name": "agent-toolbelt-gradle-build-gate",
+        "script_name": "agent-toolbelt-gradle-build-gate",
+        "package_dir": "agent_toolbelt_gradle_build_gate",
+        "has_claude": True,
+    },
     "transactional-cleanup": {
         "project_name": "agent-toolbelt-transactional-cleanup",
         "script_name": "agent-toolbelt-transactional-cleanup",
@@ -119,6 +125,7 @@ class MonorepoLayoutTests(unittest.TestCase):
             [
                 "packages/core",
                 "families/adb-archive-transfer",
+                "families/gradle-build-gate",
                 "families/context-transfer",
                 "families/transactional-cleanup",
                 "families/antigravity",

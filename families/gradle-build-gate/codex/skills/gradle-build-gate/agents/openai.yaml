@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gradle Build Gate"
+  short_description: "Serialize Windows Gradle builds and bound memory"
+  default_prompt: "Use $gradle-build-gate for the next required Gradle build with shared-gate and resource-profile reporting."

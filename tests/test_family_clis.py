@@ -10,6 +10,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 FAMILY_IMPORTS = {
+    "gradle-build-gate": (
+        REPO_ROOT / "families" / "gradle-build-gate" / "src",
+        "agent_toolbelt_gradle_build_gate.cli",
+    ),
     "transactional-cleanup": (
         REPO_ROOT / "families" / "transactional-cleanup" / "src",
         "agent_toolbelt_transactional_cleanup.cli",
@@ -83,6 +87,20 @@ def import_family_cli(name: str):
 
 
 class FamilyCLITests(unittest.TestCase):
+    def test_gradle_gate_status_does_not_claim_mutex_ownership(self):
+        cli = import_family_cli("gradle-build-gate")
+        original = cli.gate.inspect_activity
+        cli.gate.inspect_activity = lambda *args: {"safe_to_start": False, "processes": []}
+        try:
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                code = cli.main(["status"])
+                result = json.loads(buffer.getvalue())
+        finally:
+            cli.gate.inspect_activity = original
+        self.assertEqual(code, 0)
+        self.assertFalse(result["gate_acquired"])
+        self.assertFalse(result["safe_to_start"])
+
     def test_adb_archive_transfer_cli_routes_devices_command(self):
         cli = import_family_cli("adb-archive-transfer")
 

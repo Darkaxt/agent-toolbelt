@@ -1,0 +1,24 @@
+import groovy.json.JsonOutput
+import java.lang.management.ManagementFactory
+
+// Initialization evidence avoids execution-time task-graph listeners, which
+// conflict with configuration-cache builds. No caching feature is disabled.
+println 'GRADLE_GATE_PROFILE_JSON:' + JsonOutput.toJson([
+    max_workers: gradle.startParameter.maxWorkerCount,
+    parallel: gradle.startParameter.parallelProjectExecutionEnabled,
+    gradle_jvmargs: ManagementFactory.runtimeMXBean.inputArguments,
+    gradle_max_heap_bytes: Runtime.runtime.maxMemory()
+])
+
+gradle.projectsEvaluated { build ->
+    build.rootProject.allprojects.each { project ->
+        project.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach { task ->
+            task.maxParallelForks = 1
+            if (!task.maxHeapSize) task.maxHeapSize = '512m'
+            println 'GRADLE_GATE_TEST_PROFILE_JSON:' + JsonOutput.toJson([
+                path: task.path, max_parallel_forks: task.maxParallelForks,
+                max_heap: task.maxHeapSize, observation_phase: 'configuration'
+            ])
+        }
+    }
+}

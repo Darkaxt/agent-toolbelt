@@ -1,0 +1,12 @@
+{
+  "name": "agent-toolbelt-local",
+  "metadata": { "description": "Local marketplace for the shared Windows Gradle gate." },
+  "owner": { "name": "Darkaxt", "email": "opensource@users.noreply.github.com" },
+  "plugins": [{
+    "name": "gradle-build-gate",
+    "source": "./plugins/gradle-build-gate",
+    "description": "Shared Windows Gradle gate and conservative resource supervision.",
+    "version": "0.1.0",
+    "strict": false
+  }]
+}
