@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-toolbelt-c-drive-maintenance"
-version = "0.1.0"
+version = "0.1.1"
 description = "Active Windows maintenance routing and reviewed cleanup coordination."
 readme = "README.md"
 requires-python = ">=3.11"

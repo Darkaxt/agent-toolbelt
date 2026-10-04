@@ -21,6 +21,13 @@ conditions pass; do not merely repeat the inventory in the final report.
 
 ## Prevent Recurrence
 
+Gradle activity is scoped to the exact version under review. An identified build
+using one version does not require waiting before reviewing another obsolete
+version. Migrate owners only when they actually reference the proposed retirement
+target. Diagnose unbound clients or incomplete identity/connection inspection;
+never invent global non-use from the helper's known-project catalog. Preserve
+referenced/live artifacts and recheck immediately before ticket application.
+
 For an authorized retention/relocation change, record the old and new settings,
 consumers, activation boundary and verification. Prefer task-owned outputs on a
 non-system drive, explicit cache-location settings and supported cache-retention

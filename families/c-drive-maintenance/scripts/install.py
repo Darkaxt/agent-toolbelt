@@ -61,7 +61,7 @@ def install(home=None, local_appdata=None):
     pointer = root / 'active.json'
     check_chain(pointer)
     pending = root / (uuid.uuid4().hex + '.pending')
-    pending.write_text(json.dumps({'version': '0.1.0', 'source': str(runtime)}), encoding='utf-8')
+    pending.write_text(json.dumps({'version': '0.1.1', 'source': str(runtime)}), encoding='utf-8')
     os.replace(pending, pointer)
     return {'ok': True, 'runtime': str(runtime), 'skills': [str(p) for p in destinations]}
 

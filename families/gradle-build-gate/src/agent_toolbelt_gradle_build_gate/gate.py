@@ -335,6 +335,59 @@ def powershell(script, *, env=None):
                             stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
 
 
+def attribute_cleanup_activity(snapshot, results):
+    """Scope cleanup only; never substitute inferred identity for build retirement."""
+    raw = {row["pid"]: row for row in snapshot["processes"]}
+    observed = {row["pid"]: row for row in results}
+    for row in results:
+        row["cleanup_versions"] = [row["version"]] if row.get("version") else []
+        row["cleanup_activity_source"] = "observed_version" if row.get("version") else "unattributed"
+    if snapshot.get("connections_known") is not True or snapshot.get("cleanup_identity_known", True) is not True:
+        return
+    endpoints = {}
+    for connection in snapshot.get("connections", []):
+        key = (connection["local_address"], connection["local_port"],
+               connection["remote_address"], connection["remote_port"])
+        endpoints.setdefault(key, set()).add(connection["pid"])
+    for row in results:
+        process = raw[row["pid"]]
+        command = (process.get("command") or "").lower()
+        if row["cleanup_versions"] or not any(token in command for token in
+                ("org.gradle.wrapper.gradlewrappermain", "org.gradle.launcher.gradlemain")):
+            continue
+        peers = set()
+        for key, owners in endpoints.items():
+            if row["pid"] in owners:
+                peers.update(endpoints.get((key[2], key[3], key[0], key[1]), set()))
+        daemons = [observed[pid] for pid in peers if pid in observed and
+                   "org.gradle.launcher.daemon.bootstrap.gradledaemon" in
+                   (raw[pid].get("command") or "").lower()]
+        if (len(daemons) == 1 and daemons[0].get("version") and
+                process.get("session") is not None and
+                process["session"] == raw[daemons[0]["pid"]].get("session")):
+            row["cleanup_versions"] = [daemons[0]["version"]]
+            row["cleanup_activity_source"] = "daemon_connection"
+    # An explicit Gradle batch launcher may wrap another launcher. Resolve only
+    # complete child bindings; a reused parent PID must not inherit a child's scope.
+    changed = True
+    while changed:
+        changed = False
+        for row in results:
+            process = raw[row["pid"]]
+            if row["cleanup_versions"] or process.get("name", "").lower() not in ("cmd.exe", "gradle.exe"):
+                continue
+            if classify_process(process) != "active":
+                continue
+            children = [child for child in results if raw[child["pid"]].get("parent_pid") == row["pid"]]
+            if children and all(child["cleanup_versions"] and
+                    process.get("session") is not None and
+                    process["session"] == raw[child["pid"]].get("session") and
+                    process["created"] <= raw[child["pid"]]["created"] for child in children):
+                row["cleanup_versions"] = sorted({v for child in children for v in child["cleanup_versions"]})
+                row["cleanup_activity_source"] = "launcher_child"
+                changed = True
+
+
 def inspect_activity(homes=()):
     if os.name != "nt":
         raise OSError("Activity inspection requires Windows")
@@ -368,8 +421,10 @@ def inspect_activity(homes=()):
         if state != "unrelated":
             results.append({"pid": row["pid"], "created": row["created"], "name": row["name"],
                             "state": state, "connected": connected, "daemon_log": log_path, **daemon_details(row)})
+    attribute_cleanup_activity(snapshot, results)
     return {"safe_to_start": all(p["state"] == "idle" for p in results), "processes": results,
             "connections_known": snapshot["connections_known"],
+            "cleanup_identity_known": snapshot.get("cleanup_identity_known", False),
             "scope": "participating_launchers_in_current_windows_session; external launches not prevented"}
 
 

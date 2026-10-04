@@ -98,6 +98,13 @@ deletion authority. Referenced/reserved/live versions, unknown project reference
 active/ambiguous processes, linked content and incomplete inventories are
 protected. Shared caches, configuration, daemon registries and JDKs are excluded.
 
+Activity protection is per version, not host-wide idle clearance. A known active
+or ambiguous daemon and its observed wrapper/batch clients protect that version;
+unrelated otherwise-eligible artifacts can still be reviewed. Each artifact carries
+`activity_evidence` (PID/start time, state, attribution source). Unattributed clients,
+unavailable connection evidence or changed snapshot identities remain conservative.
+No guessed mapping, force-stop, build mutex or automatic deletion is used.
+
 "Not referenced by known projects" is not proof of global non-use. Review project
 coverage, branches and reservations before separate transactional cleanup; recheck
 references/activity and skip in-use or ambiguous targets. Cleanup must not acquire

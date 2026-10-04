@@ -1,5 +1,9 @@
 # C-Drive Maintenance
 
+Gradle cleanup is evaluated per version: an identified active version does not
+block review of unrelated obsolete artifacts. Unknown consumers remain protected;
+review/ticket checks never acquire the Gradle build mutex or queue.
+
 On-demand, active Windows maintenance for Codex and Claude. The agent executes
 verified cleanup, sends bounded compatible toolchain requests to existing owners,
 and verifies retirement and recurrence prevention. No scheduled monitor.

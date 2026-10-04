@@ -3,7 +3,7 @@ name: c-drive-maintenance
 description: Use for active Windows disk maintenance, reclaiming C drive space, repeated cache or emulator snapshot growth, and consolidating Gradle, Android SDK/NDK or other toolchain versions across projects and existing tasks. Execute verified cleanup and dependency-owner coordination, not just a passive size report.
 license: MIT
 metadata:
-  version: "0.1.0"
+  version: "0.1.1"
   compatibility: Windows, Python 3.11+, installed transactional-cleanup; gradle-build-gate for Gradle operations. Existing task APIs are needed for cross-task requests.
 ---
 
@@ -82,6 +82,14 @@ Cleanup MUST NOT acquire the Gradle build mutex or join its build queue. This
 includes manifest hashing and mixed batches of captures, APKs and old build
 outputs. Use cleanup's own exact-target coordination. Skip active/ambiguous
 consumers; do not make unrelated builds wait for cleanup.
+
+For Gradle, assess each exact version artifact using gradle-build-gate's
+`activity_evidence` and `protected_reasons`. Do not abandon all cache cleanup just
+because another version is building. Protect the identified live version and
+review unrelated obsolete versions against current references, reservations,
+owner/offline needs and complete inventory evidence. Unattributed processes or
+incomplete activity inspection require diagnosis, not guessed clearance. A proposal
+only permits review: recheck the target before its separate cleanup ticket.
 
 ## Dependency Owner Coordination
 

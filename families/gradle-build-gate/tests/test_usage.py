@@ -144,7 +144,51 @@ class InventoryContracts(CatalogContracts):
             self.activity.return_value = {"safe_to_start": False, "processes": [{"state": state, "version": "9.0"}]}
             result = self.usage.cleanup_plan(root=self.state)
             self.assertEqual(result["proposals"], [])
-            self.assertIn("build_activity_not_clear", result["artifacts"][0]["protected_reasons"])
+            self.assertIn("activity_inspection_incomplete", result["artifacts"][0]["protected_reasons"])
+
+    def test_identified_active_or_ambiguous_version_does_not_block_other_versions(self):
+        self.usage.record_project(self.project("app", "9.8.0"), root=self.state)
+        for version in ("8.13", "9.8.0"):
+            self.artifact(f"caches/{version}/keep")
+            self.artifact(f"wrapper/dists/gradle-{version}-bin/hash/lib/a.jar")
+        for state in ("active", "ambiguous", "idle"):
+            with self.subTest(state=state):
+                self.activity.return_value = {"safe_to_start": state == "idle", "connections_known": True,
+                    "processes": [{"pid": 12, "created": 100, "state": state, "version": "9.8.0"}]}
+                with patch.object(self.usage, "NamedMutex", side_effect=AssertionError("No cleanup build gate")):
+                    result = self.usage.cleanup_plan(root=self.state)
+                self.assertEqual({p["version"] for p in result["proposals"]}, {"8.13"})
+                live = [p for p in result["artifacts"] if p["version"] == "9.8.0"]
+                self.assertTrue(all(p["activity_evidence"][0]["pid"] == 12 for p in live))
+                self.assertTrue(all("live_daemon_version" in p["protected_reasons"] for p in live))
+
+    def test_attributed_clients_protect_only_their_versions_but_unknown_clients_block(self):
+        self.usage.record_project(self.project("app", "9.8.0"), root=self.state)
+        self.artifact("caches/8.13/keep")
+        rows = [{"pid": 12, "created": 100, "state": "active", "version": "9.8.0"},
+                {"pid": 13, "created": 101, "state": "active", "version": None,
+                 "cleanup_versions": ["9.8.0"], "cleanup_activity_source": "daemon_connection"}]
+        self.activity.return_value = {"safe_to_start": False, "connections_known": True, "processes": rows}
+        self.assertEqual(len(self.usage.cleanup_plan(root=self.state)["proposals"]), 1)
+        rows.append({"pid": 14, "created": 102, "state": "ambiguous", "version": None})
+        result = self.usage.cleanup_plan(root=self.state)
+        self.assertEqual(result["proposals"], [])
+        self.assertIn("unattributed_gradle_activity", result["artifacts"][0]["protected_reasons"])
+        self.assertEqual(result["artifacts"][0]["activity_evidence"][0]["pid"], 14)
+
+    def test_inconsistent_or_invalid_activity_is_not_clearance(self):
+        self.usage.record_project(self.project("app", "9.8.0"), root=self.state)
+        self.artifact("caches/8.13/keep")
+        for activity in (
+            {"safe_to_start": False, "connections_known": True, "processes": []},
+            {"safe_to_start": True, "connections_known": False, "processes": []},
+            {"safe_to_start": True, "connections_known": True, "cleanup_identity_known": False, "processes": []},
+            {"safe_to_start": False, "connections_known": True,
+             "processes": [{"state": "active", "version": "invalid"}]},
+        ):
+            with self.subTest(activity=activity):
+                self.activity.return_value = activity
+                self.assertEqual(self.usage.cleanup_plan(root=self.state)["proposals"], [])
 
     def test_no_registered_projects_or_unknown_wrapper_cannot_propose_cleanup(self):
         self.artifact("caches/8.13/keep")
@@ -190,6 +234,53 @@ class InventoryContracts(CatalogContracts):
 
 
 class PolicyContracts(unittest.TestCase):
+    def test_isolated_installed_wrappers_use_scoped_runtime_without_repo_bootstrap(self):
+        family = SRC.parent
+        with tempfile.TemporaryDirectory(prefix="gradle-install-check-", dir="D:/Temp" if Path("D:/Temp").is_dir() else None) as directory:
+            root = Path(directory)
+            runtime = root / "runtime"
+            roots = [root / agent / "skills" for agent in (".codex", ".agents", ".claude")]
+            command = [sys.executable, "-B", str(family / "scripts/install.py"), "--runtime-root", str(runtime)]
+            for skill_root in roots:
+                command.extend(["--skills-root", str(skill_root)])
+            subprocess.run(command, capture_output=True, text=True, check=True)
+            self.assertEqual(json.loads((runtime / "active.json").read_text())["version"], "0.4.2")
+            project = root / "project"
+            props = project / "gradle/wrapper/gradle-wrapper.properties"
+            props.parent.mkdir(parents=True)
+            (project / "gradlew.bat").touch()
+            props.write_text("distributionUrl=https://example.invalid/gradle-9.8.0-bin.zip\n")
+            artifact = root / "home/caches/8.13/keep"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_bytes(b"fixture")
+            environment = {**os.environ, "GRADLE_BUILD_GATE_HOME": str(runtime)}
+            environment.pop("AGENT_TOOLBELT_HOME", None)
+            environment.pop("PYTHONPATH", None)
+            code = '''import json, runpy, sys
+from pathlib import Path
+from unittest.mock import patch
+runpy.run_path(sys.argv[1])["bootstrap"]()
+from agent_toolbelt_gradle_build_gate import usage
+root = Path(sys.argv[2])
+activity = {"safe_to_start": False, "connections_known": True, "processes":
+            [{"pid": 12, "created": 100, "state": "active", "version": "9.8.0"}]}
+with patch.object(usage, "observation_homes", return_value=[root / "home"]), \\
+     patch.object(usage, "inspect_activity", return_value=activity), \\
+     patch.object(usage, "NamedMutex", side_effect=AssertionError("Cleanup must not take the build gate")):
+    print(json.dumps(usage.cleanup_plan(root=root / "catalog", projects=[root / "project"])))
+'''
+            for skill_root in roots:
+                wrapper = skill_root / "gradle-build-gate/scripts/invoke_gradle_build_gate.py"
+                result = subprocess.run([sys.executable, "-B", str(wrapper), "--help"], cwd=root,
+                                        env=environment, capture_output=True, text=True, check=True)
+                self.assertIn("cleanup-plan", result.stdout)
+                result = subprocess.run([sys.executable, "-B", "-c", code, str(wrapper), str(root)], cwd=root,
+                                        env=environment, capture_output=True, text=True, check=True)
+                report = json.loads(result.stdout)
+                self.assertEqual({p["version"] for p in report["proposals"]}, {"8.13"})
+                self.assertFalse(report["deletion_authorized"])
+                self.assertTrue(artifact.exists())
+
     def test_cleanup_plan_does_not_reserve_build_gate(self):
         usage = importlib.import_module("agent_toolbelt_gradle_build_gate.usage")
         with patch.object(usage, "inventory", return_value={"artifacts": []}):
@@ -206,6 +297,8 @@ class PolicyContracts(unittest.TestCase):
         text = (codex / "SKILL.md").read_text()
         self.assertIn("Cleanup MUST NOT acquire or hold the Gradle build mutex", text)
         self.assertNotIn("through cleanup", text)
+        self.assertIn("Evaluate activity per artifact/version", text)
+        self.assertIn("unattributed_gradle_activity", text)
         for requirement in ("already authorized", "highest installed/used is not proof", "AGP", "Kotlin", "JDK",
                             "Do NOT upgrade wrappers", "transactional-cleanup", "rollback/offline", "not a deletion ticket"):
             self.assertIn(requirement, text)
