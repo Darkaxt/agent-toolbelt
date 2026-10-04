@@ -38,7 +38,7 @@ as required by the standing task history. This is not a live bulk cleanup reques
 | --- | --- | --- | --- |
 | 1: Canonical operating contract | R1-R6 | Skill and references express executable bounded cleanup routes, retention decisions and failure handling; scenario reconciliation and frontmatter validation pass | COMPLETE |
 | 2: Repository integration | R7 | Instruction-only layout, discovery and documentation checks pass without adding a runtime package | COMPLETE |
-| 3: Deployment and verification | R3-R7 | Installed copies match canonical bytes; an isolated disposable-output trial deletes only reviewed members and preserves non-target source; source committed and synced | ACTIVE |
+| 3: Deployment and verification | R3-R7 | Installed copies match canonical bytes; an isolated disposable-output trial deletes only reviewed members and preserves non-target source; source committed and synced | COMPLETE |
 
 No blockers or tracked deferrals at initialization. Existing D:/Temp contents are
 not test fixtures. The verification trial creates only task-owned disposable data.
@@ -84,4 +84,7 @@ These checks prove the installed instructions' cleanup route and bounded helper
 integration, not universal agent reasoning or complete host consumer coverage.
 Owner sweep decisions were reconciled through the Stage 1 scenarios; no requests
 were dispatched to DualDex/DualSouls during this skill-creation task. Source commit
-and synchronization remain the final Stage 3 delivery requirements.
+65ca1a1 was pushed and independently matched the remote feature-branch head. The
+completed bundle is installed and source-synchronized; protected-main integration
+follows the repository pull-request requirement. Final reconciliation: R1-R7
+satisfied at the stated evidence level, zero blockers and zero tracked deferrals.
