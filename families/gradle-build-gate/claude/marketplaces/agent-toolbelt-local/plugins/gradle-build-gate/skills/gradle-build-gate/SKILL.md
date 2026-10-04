@@ -3,7 +3,7 @@ name: gradle-build-gate
 description: Run Windows Gradle builds and tests through a shared session-wide mutex supervisor, inspect active versus idle daemons, and apply a conservative memory profile without interrupting other builds.
 license: MIT
 metadata:
-  version: "0.3.0"
+  version: "0.4.0"
   compatibility: Windows desktop, Python 3.11+, Windows PowerShell, project gradlew.bat, existing JDK with source-file execution; no Python dependencies.
 ---
 
@@ -86,6 +86,57 @@ Those environment hints are not proof that Android plugin/Ninja/custom tasks
 honor them. Inspect the next required build's native commands and task-specific
 Kotlin/test overrides; apply narrowly scoped project-specific controls when
 needed. Do not invent a total-host memory guarantee or disable verification.
+
+## Build-Tool Maintenance And Version Reuse
+
+When Android build-tool maintenance is already authorized or required by the
+active specification, inspect `inventory` and prefer an existing newer compatible
+baseline over retaining another obsolete Gradle version. Compare known project
+references and installed distributions; highest installed/used is not proof of
+compatibility. Check the actual AGP, Kotlin, plugins and JDK requirements, preserve
+required wrapper URL/checksum/security settings, verify the narrowly scoped change
+with the required focused build/test through this gate, and commit it. Record an
+incompatibility when verified; do not force a migration to reclaim disk space.
+
+Do NOT upgrade wrappers simply to run a normal build, change another project's
+toolchain, broaden maintenance scope, or skip verification. No helper command
+rewrites wrappers. Existing project requirements and authorized scope win.
+
+## Usage Catalog And Reviewed Cleanup
+
+`run` automatically records wrapper version and selected Gradle home in shared
+local metadata; inspect `usage_tracking`. A catalog warning does not replace the
+actual build result, but the catalog must be repaired before trusting cleanup.
+Register relevant projects not yet observed by this helper and deliberate
+rollback/offline reservations. Do not rely on last-use age as proof of inactivity.
+
+```powershell
+python scripts/invoke_gradle_build_gate.py register-project --project D:/path/android-project --keep-version 8.6
+python scripts/invoke_gradle_build_gate.py inventory
+python scripts/invoke_gradle_build_gate.py cleanup-plan
+```
+
+These commands do not build, upgrade, retire or delete. Inventory re-reads known
+wrappers and reports installed stable baseline candidates as compatibility
+UNVERIFIED. Cleanup proposals cover only exact distribution/version-cache roots.
+Referenced/reserved/live-daemon versions, uncertain activity, unknown or missing
+project references, links/reparse content and incomplete scans are protected.
+Shared caches, JDKs, configuration and daemon registries are excluded.
+
+"Not referenced by known projects" is NOT proof of global non-use. Review project
+coverage, branches, rollback and offline needs first. No proposals are produced
+without known projects. A proposal is not a deletion ticket or authorization:
+use transactional-cleanup for separately reviewed exact files, recheck references
+and daemon activity while holding the shared build gate, and retain supervision
+through cleanup. If that coordination cannot be established, do not apply it.
+Never stop a build, delete shared caches, or change toolchains to make cleanup pass.
+
+Use `--keep-version` repeatedly to replace reservations; omission preserves them.
+`register-project --clear-reservations` explicitly clears them after review.
+`unregister-project --project <path>` removes only metadata: use it only when
+retirement of that project reference is intentional, never to manufacture an
+unused version. `inventory`/`cleanup-plan --project <path>` adds a read-only
+reference for that report; `--observe-home <path>` includes a custom Gradle home.
 
 ## Evidence And Coordination
 

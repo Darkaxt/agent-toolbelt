@@ -6,7 +6,7 @@
     "name": "gradle-build-gate",
     "source": "./plugins/gradle-build-gate",
     "description": "Shared Windows Gradle gate and conservative resource supervision.",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "strict": false
   }]
 }

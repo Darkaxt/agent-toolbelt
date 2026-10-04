@@ -30,7 +30,7 @@ def install(runtime_root, skill_roots):
             shutil.copy2(path, target)
     pointer = runtime_root / "active.json"
     pending = runtime_root / "active.pending.json"
-    pending.write_text(json.dumps({"schema": 1, "release": release, "version": "0.3.0"}) + "\n", encoding="utf-8")
+    pending.write_text(json.dumps({"schema": 1, "release": release, "version": "0.4.0"}) + "\n", encoding="utf-8")
     os.replace(pending, pointer)
     skill = FAMILY / "codex/skills/gradle-build-gate"
     for root in skill_roots:

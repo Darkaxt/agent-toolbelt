@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 
-from . import gate
+from . import gate, usage
 from .queue import queue_status
 
 
@@ -14,6 +14,17 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="operation", required=True)
     status = commands.add_parser("status", help="Read-only activity inspection; not launch clearance")
     status.add_argument("--observe-home", action="append", default=[])
+    register = commands.add_parser("register-project", help="Register a wrapper and optional rollback/offline reservations; no build or upgrade")
+    register.add_argument("--project", type=Path, required=True)
+    register.add_argument("--keep-version", action="append", default=None)
+    register.add_argument("--clear-reservations", action="store_true")
+    register.add_argument("--gradle-home", type=Path)
+    unregister = commands.add_parser("unregister-project", help="Remove catalog reference only, not project files")
+    unregister.add_argument("--project", type=Path, required=True)
+    for name in ("inventory", "cleanup-plan"):
+        command = commands.add_parser(name, help="Read-only known-project/version inventory" if name == "inventory" else "Reviewed cleanup candidates only; never deletes")
+        command.add_argument("--project", type=Path, action="append", default=[])
+        command.add_argument("--observe-home", type=Path, action="append", default=[])
     run = commands.add_parser("run", help="Queue in FIFO order, wait, inspect, and run under the shared mutex")
     run.add_argument("--project", required=True, type=Path)
     run.add_argument("--observe-home", action="append", default=[])
@@ -31,6 +42,16 @@ def main(argv=None):
             result = {"ok": True, "operation": "status", "gate_acquired": False,
                       "queue": queue_status(),
                       **gate.inspect_activity(gate.observation_homes(extra=args.observe_home))}
+        elif args.operation == "register-project":
+            if args.clear_reservations and args.keep_version:
+                raise ValueError("Choose --keep-version or --clear-reservations, not both")
+            result = {"operation": args.operation, **usage.record_project(args.project,
+                      keep_versions=[] if args.clear_reservations else args.keep_version, home=args.gradle_home)}
+        elif args.operation == "unregister-project":
+            result = {"operation": args.operation, **usage.unregister_project(args.project)}
+        elif args.operation in ("inventory", "cleanup-plan"):
+            function = usage.inventory if args.operation == "inventory" else usage.cleanup_plan
+            result = function(projects=args.project, extra_homes=args.observe_home)
         else:
             arguments = args.gradle_arguments
             if arguments[:1] == ["--"]:
