@@ -3,7 +3,7 @@ name: gradle-build-gate
 description: Run Windows Gradle builds and tests through a shared session-wide mutex supervisor, inspect active versus idle daemons, and apply a conservative memory profile without interrupting other builds.
 license: MIT
 metadata:
-  version: "0.4.1"
+  version: "0.4.2"
   compatibility: Windows desktop, Python 3.11+, Windows PowerShell, project gradlew.bat, existing JDK with source-file execution; no Python dependencies.
 ---
 
@@ -122,6 +122,16 @@ UNVERIFIED. Cleanup proposals cover only exact distribution/version-cache roots.
 Referenced/reserved/live-daemon versions, uncertain activity, unknown or missing
 project references, links/reparse content and incomplete scans are protected.
 Shared caches, JDKs, configuration and daemon registries are excluded.
+
+Evaluate activity per artifact/version, not by waiting for a wholly idle host.
+An identified active, ambiguous or idle daemon protects its own version; it does
+not block independently reviewed obsolete versions. `activity_evidence` records
+the observed PID/start identity and attribution source. Wrapper clients may be
+bound by reciprocal daemon connections and explicit batch launchers by live child
+identity. Unknown clients, unavailable connections or changing snapshot identities
+produce `unattributed_gradle_activity` / `activity_inspection_incomplete`, not
+clearance. Existing references, reservations and scan/link protections still apply.
+`eligible_for_review` is not proof of global non-use or deletion authorization.
 
 "Not referenced by known projects" is NOT proof of global non-use. Review project
 coverage, branches, rollback and offline needs first. No proposals are produced

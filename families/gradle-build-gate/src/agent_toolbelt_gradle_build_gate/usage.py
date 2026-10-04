@@ -156,9 +156,25 @@ def inventory(*, root=None, projects=(), extra_homes=()):
                            "reference_status": "readable" if version else "unknown_or_unavailable"})
     homes = observation_homes(extra=[*extra_homes, *(e["gradle_home"] for e in entries.values() if e.get("gradle_home"))])
     activity = inspect_activity(homes)
-    activity_clear = activity.get("safe_to_start") is True and activity.get("connections_known") is True
-    live_versions = {p["version"] for p in activity.get("processes", []) if p.get("version")}
-    activity_clear &= all(p.get("state") == "idle" and p.get("version") for p in activity.get("processes", []))
+    processes = activity.get("processes", [])
+    activity_incomplete = (activity.get("connections_known") is not True or
+                           activity.get("cleanup_identity_known", True) is not True or
+                           (not processes and activity.get("safe_to_start") is not True))
+    scoped_activity, unknown_activity = {}, []
+    for process in processes:
+        versions = process.get("cleanup_versions") or ([process["version"]] if process.get("version") else [])
+        try:
+            versions = [valid_version(version) for version in versions]
+        except (ValueError, TypeError):
+            versions = []
+        evidence = {key: process.get(key) for key in ("pid", "created", "state")}
+        evidence["source"] = process.get("cleanup_activity_source", "observed_version")
+        if not versions:
+            evidence["source"] = "unattributed"
+            unknown_activity.append(evidence)
+        else:
+            for version in set(versions):
+                scoped_activity.setdefault(version, []).append(evidence)
     artifacts, incomplete = [], False
     for home in homes:
         for relative, kind in (("wrapper/dists", "distribution"), ("caches", "version_cache")):
@@ -188,9 +204,11 @@ def inventory(*, root=None, projects=(), extra_homes=()):
                         reasons.append("project_reference_or_reservation")
                     if uncertain:
                         reasons.append("incomplete_known_project_references")
-                    if not activity_clear:
-                        reasons.append("build_activity_not_clear")
-                    if version in live_versions:
+                    if activity_incomplete:
+                        reasons.append("activity_inspection_incomplete")
+                    if unknown_activity:
+                        reasons.append("unattributed_gradle_activity")
+                    if version in scoped_activity:
                         reasons.append("live_daemon_version")
                     if metrics["linked_content"]:
                         reasons.append("linked_or_reparse_content")
@@ -199,6 +217,7 @@ def inventory(*, root=None, projects=(), extra_homes=()):
                         incomplete = True
                     artifacts.append({"path": str(path), "kind": kind, "version": version,
                                       **metrics, "protected_reasons": reasons, "eligible_for_review": not reasons})
+                    artifacts[-1]["activity_evidence"] = unknown_activity + scoped_activity.get(version, [])
             except OSError:
                 incomplete = True
     if incomplete:

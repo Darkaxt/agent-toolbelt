@@ -69,6 +69,46 @@ class Contracts(unittest.TestCase):
         self.assertEqual(self.gate.classify_process({"name": "java.exe", "command": None}), "ambiguous")
         self.assertEqual(self.gate.classify_process({"name": "java.exe", "command": "com.example.Other"}), "unrelated")
 
+    def test_cleanup_client_attribution_uses_reciprocal_connection_and_live_parent(self):
+        rows = [
+            {"pid": 1, "parent_pid": 0, "created": 100, "session": 1,
+             "name": "cmd.exe", "command": "cmd /c gradlew.bat test"},
+            {"pid": 2, "parent_pid": 1, "created": 101, "session": 1,
+             "name": "java.exe", "command": "org.gradle.wrapper.GradleWrapperMain test"},
+            {"pid": 3, "parent_pid": 0, "created": 99, "session": 1,
+             "name": "java.exe", "command": "org.gradle.launcher.daemon.bootstrap.GradleDaemon 9.8.0"},
+        ]
+        connections = [
+            {"pid": 2, "local_address": "127.0.0.1", "local_port": 40000,
+             "remote_address": "127.0.0.1", "remote_port": 50000},
+            {"pid": 3, "local_address": "127.0.0.1", "local_port": 50000,
+             "remote_address": "127.0.0.1", "remote_port": 40000},
+        ]
+        result = [{"pid": row["pid"], "created": row["created"], "state": "active",
+                   "version": "9.8.0" if row["pid"] == 3 else None} for row in rows]
+        snapshot = {"processes": rows, "connections_known": True, "connections": connections}
+        self.gate.attribute_cleanup_activity(snapshot, result)
+        self.assertEqual([r["cleanup_versions"] for r in result], [["9.8.0"]] * 3)
+        self.assertEqual(result[0]["cleanup_activity_source"], "launcher_child")
+        self.assertEqual(result[1]["cleanup_activity_source"], "daemon_connection")
+        self.assertIsNone(result[1]["version"])  # Do not alter build/retirement identity.
+        for mutation in ("one_way", "unknown_connections", "identity_changed", "parent_reused", "hidden_command", "other_session"):
+            with self.subTest(mutation=mutation):
+                changed = json.loads(json.dumps(snapshot))
+                if mutation == "one_way": changed["connections"].pop()
+                if mutation == "unknown_connections": changed["connections_known"] = False
+                if mutation == "identity_changed": changed["cleanup_identity_known"] = False
+                if mutation == "parent_reused": changed["processes"][0]["created"] = 102
+                if mutation == "hidden_command": changed["processes"][1]["command"] = None
+                if mutation == "other_session": changed["processes"][2]["session"] = 2
+                fresh = [{k: v for k, v in row.items() if not k.startswith("cleanup_")} for row in result]
+                self.gate.attribute_cleanup_activity(changed, fresh)
+                if mutation == "parent_reused":
+                    self.assertEqual(fresh[1]["cleanup_versions"], ["9.8.0"])
+                else:
+                    self.assertEqual(fresh[1]["cleanup_versions"], [])
+                self.assertEqual(fresh[0]["cleanup_versions"], [])
+
     def test_profile_preserves_other_arguments_and_removes_duplicate_heap(self):
         self.assertEqual(self.gate.heap_args('-Xms256m -Xmx8g -Dfile.encoding=UTF-8 --add-opens=java.base/java.lang=ALL-UNNAMED', 3),
                          '-Xms256m -Dfile.encoding=UTF-8 --add-opens=java.base/java.lang=ALL-UNNAMED -Xmx3g')

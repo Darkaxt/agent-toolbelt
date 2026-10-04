@@ -46,6 +46,8 @@ class MaintenanceTests(unittest.TestCase):
         text = (codex / 'SKILL.md').read_text()
         self.assertIn('Cleanup MUST NOT acquire the Gradle build mutex', text)
         self.assertIn('sent: false', text)
+        self.assertIn('Do not abandon all cache cleanup', text)
+        self.assertIn('activity_evidence', text)
         self.assertIn('does NOT remove paginated SQLite history', (codex / 'references/actions.md').read_text())
 
     def test_isolated_install_works_without_repo_bootstrap(self):
