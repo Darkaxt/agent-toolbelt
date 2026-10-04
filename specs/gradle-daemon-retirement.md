@@ -57,6 +57,11 @@ the integrated live retirement. Do not silently fallback to forceful shutdown.
 
 ## Reconciliation
 
+Additional user clarification: request-and-wait execution is already provided by
+`run` and the native blocking mutex. Skills now explicitly forbid status polling,
+relaunches, and abandoning yielded sessions. The cross-process mutex regression
+verifies that acquisition waits for release. No strict FIFO guarantee is implied.
+
 D1-D6 satisfied for helper delivery; no unresolved blockers or tracked deferrals.
 The separate periodic cleaner and 3 GB heap defaults are unchanged. No real build
 or real Gradle daemon was interrupted for verification. Synthetic fixtures and

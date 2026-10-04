@@ -33,6 +33,10 @@ Repeated `--observe-home` selects extra daemon directories. `status` is only a
 snapshot, not launch clearance. Ctrl+C retains supervision of a running command;
 force-killing a supervisor still requires survivor inspection on the next run.
 
+`run` already provides blocking one-slot execution: submit the command once and
+wait on that same running session, without status polling or relaunches. Windows
+kernel mutex waits do not require a polling loop. Strict FIFO is not promised.
+
 Tests use synthetic wrappers and Windows kernel/event operations, not an extra
 real Gradle build. Verify the actual project/compiler/native profile with the
 next required focused build. See the skill's runtime reference for limitations.

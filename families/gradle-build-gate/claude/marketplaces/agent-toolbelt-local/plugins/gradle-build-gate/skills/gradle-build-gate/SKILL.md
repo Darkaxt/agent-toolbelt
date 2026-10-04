@@ -25,6 +25,20 @@ still running: wait for it; do not abandon it, launch another build, kill owners
 or replace the wait with a deadline. An abandoned mutex triggers reinspection.
 The helper never decides that low CPU or old logs prove inactivity.
 
+## Blocking Execution Gate
+
+`run` is the request-and-wait interface. Launch it ONCE with the intended Gradle
+command. It waits inside the Windows kernel for the shared mutex; do not poll
+`status`, retry the launcher, or run Gradle directly while waiting. Once acquired,
+the gate is held through existing activity, retirement, and build completion.
+
+If the agent command tool yields a still-running session, retain that session and
+wait for its completion using the tool's session-wait interface. A yielded tool
+response is not a failed, canceled, or abandoned build request. Do not impose a
+shell timeout that kills the waiting supervisor. Normal final output contains the
+actual build result. The mutex supplies mutual exclusion, not strict FIFO order
+or a persistent queue. Observer reinspection follows lifecycle events, not timers.
+
 ## Daemon Retirement
 
 The default `--retire-daemons incompatible` retires confirmed-idle Gradle daemons
