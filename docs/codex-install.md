@@ -21,6 +21,7 @@ Each runtime family ships its own Codex skill bundle. Instruction-only skills us
 - Skroutz CLI: `families/skroutz-cli/codex/skills/skroutz-cli`
 - AliExpress CLI: `families/aliexpress-cli/codex/skills/aliexpress-cli`
 - Specification-Gated Implementation: `families/spec-gated-implementation/codex/skills/spec-gated-implementation`
+- D-Temp Maintenance: `families/d-temp-maintenance/codex/skills/d-temp-maintenance`; copy the same canonical folder to Codex, agents or Claude personal roots. Uses installed transactional-cleanup, not a new runtime.
 
 ## Install flow
 
