@@ -30,7 +30,7 @@ new skill discovery, automatic deletion, toolchain migration or a Gradle build.
 | --- | --- | --- |
 | 1: Reproduction | Tests demonstrate unrelated-version overprotection and missing client attribution; existing safety contracts recorded | COMPLETE |
 | 2: Correction | R1-R5 implemented with regression evidence and matching guidance | COMPLETE |
-| 3: Delivery | Focused/root checks, isolated installed smoke, deployed parity, commit and GitHub sync satisfy R6 | ACTIVE |
+| 3: Delivery | Focused/root checks, isolated installed smoke, deployed parity, commit and GitHub sync satisfy R6 | COMPLETE |
 
 No live cache deletion or build is required to validate this change. Use synthetic
 process, catalog and filesystem fixtures; a live read-only report may supplement
@@ -59,4 +59,12 @@ and scoped launcher/client/daemon evidence for 9.8.0 with stable process identit
 Active previous runtimes are retained; disposable test directories were removed by
 their test lifecycle. Retirement adapter code is unchanged and its separate live
 retirement tests were not rerun. No live cache deletion or migration is claimed.
-Commit and remote synchronization are the remaining delivery postconditions.
+Verified implementation commit 56de204 was pushed to
+codex/gradle-per-artifact-maintenance; its remote hash matched with zero ahead/behind.
+The protected main branch requires PR integration rather than a direct push;
+default-branch synchronization is checked after that required merge.
+
+Final specification reconciliation: R1-R6 satisfied by the inspected regression,
+installed/runtime, parity and remote-source evidence above. No required blockers
+or tracked deferrals in implementation. The helper remains a review planner, not
+deletion authority or a guarantee against later non-cooperating process launches.
