@@ -135,6 +135,8 @@ class Engine:
                 );
                 CREATE INDEX IF NOT EXISTS manifest_candidates
                     ON manifest(transaction_id, decision, result, directory, path);
+                CREATE INDEX IF NOT EXISTS manifest_apply_order
+                    ON manifest(transaction_id, decision, directory, -LENGTH(path), path);
                 CREATE TABLE IF NOT EXISTS tickets (
                     ticket_id TEXT PRIMARY KEY,
                     transaction_id TEXT NOT NULL UNIQUE REFERENCES transactions(transaction_id) ON DELETE CASCADE,
@@ -746,6 +748,31 @@ class Engine:
             checksum.update(actual.encode() + b'\n')
         return checksum.hexdigest()
 
+    def _apply_rows(self, connection, transaction):
+        """Exhaust each bounded SELECT before yielding: no WAL snapshot across commits."""
+        position = None
+        while True:
+            condition = '' if position is None else ' AND (directory,-LENGTH(path),path) > (?,?,?)'
+            parameters = (transaction, BATCH_SIZE) if position is None else (transaction, *position, BATCH_SIZE)
+            cursor = connection.execute('''SELECT ordinal,item_json,result,deleted_bytes,
+                directory,-LENGTH(path) AS length_key,path,row_sha256,row_mac FROM manifest
+                WHERE transaction_id=? AND decision='candidate' ''' + condition +
+                ' ORDER BY directory,-LENGTH(path),path LIMIT ?', parameters)
+            try:
+                rows = cursor.fetchall()
+            finally:
+                cursor.close()
+            if not rows:
+                return
+            last = rows[-1]
+            position = (last['directory'], last['length_key'], last['path'])
+            for row in rows:
+                actual = hashlib.sha256(row['item_json'].encode()).hexdigest()
+                mac = hmac.new(self.key, encoded([transaction, row['ordinal'], actual]), 'sha256').hexdigest()
+                if actual != row['row_sha256'] or not hmac.compare_digest(mac, row['row_mac']):
+                    raise CleanupError('review_mismatch', 'Reviewed manifest row failed integrity validation')
+                yield row
+
     def review(self, transaction):
         connection = self.connect()
         try:
@@ -931,9 +958,7 @@ class Engine:
             self.repo_cache.clear()
             diagnostics, result_counts, batch = [], Counter(), []
             processed, processed_bytes = 0, ticket['deleted_bytes']
-            rows = connection.execute('''SELECT ordinal,item_json,result,deleted_bytes FROM manifest
-                WHERE transaction_id=? AND decision='candidate' ORDER BY directory ASC,LENGTH(path) DESC,path''',
-                                      (ticket['transaction_id'],))
+            rows = self._apply_rows(connection, ticket['transaction_id'])
             for row in rows:
                 prior = row['result']
                 if not dry_run and prior and prior not in RETRY:
@@ -961,6 +986,7 @@ class Engine:
                         self._flush_results(connection, ticket, batch, processed, processed_bytes)
             if not dry_run:
                 self._flush_results(connection, ticket, batch, processed, processed_bytes)
+                self._verify_ticket_membership(connection, ticket, transaction_row)
                 unresolved = connection.execute("""SELECT COUNT(*) FROM manifest WHERE transaction_id=?
                     AND decision='candidate' AND (result IS NULL OR result IN ('locked','failed','not_empty'))""",
                                                 (ticket['transaction_id'],)).fetchone()[0]
@@ -970,6 +996,7 @@ class Engine:
                                    (ticket_state, ticket['transaction_id']))
                 self._clear_progress(connection, ticket['transaction_id']); connection.commit()
             else:
+                self._verify_ticket_membership(connection, ticket, transaction_row)
                 ticket_state = ticket['state']
             result_counts = self._result_counts(connection, ticket['transaction_id']) if not dry_run else dict(result_counts)
             payload = self._payload(self._row(connection, ticket['transaction_id']))

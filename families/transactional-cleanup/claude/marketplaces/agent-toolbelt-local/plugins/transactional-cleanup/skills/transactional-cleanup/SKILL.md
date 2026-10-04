@@ -3,7 +3,7 @@ name: transactional-cleanup
 description: Clean generated build, deployment, browser, media and temporary artifacts through reviewed snapshots and exact-file deletion tickets. Use when a task leaves local output to reclaim, including output outside its workspace.
 license: MIT
 metadata:
-  version: "0.4.1"
+  version: "0.4.2"
   compatibility: Windows 10/11, Python 3.11+, NTFS/ReFS identity. Codex and Claude; installed local helper required.
 ---
 
@@ -52,6 +52,15 @@ runtime that still owns the legacy global lock. Do not infer a hang solely from
 elapsed time. Broad inventories still require filesystem traversal, but
 state is streamed in bounded batches. Once a
 review has completed, inspect its existing manifest instead of running it again.
+
+SQLite failures are distinct from target ownership: `state_database_busy` reports
+`sqlite_error_code` and `sqlite_error_name`, including `SQLITE_BUSY_SNAPSHOT`.
+That code can mean a stale read snapshot, not an ongoing filesystem lock. Inspect
+saved status and diagnose the database failure before retrying a still-valid
+ticket. Do not blindly retry, kill an assumed owner, auto-revoke, or bypass the
+helper. Apply may have removed exact members before its last result checkpoint;
+committed `deleted_bytes` may undercount those removals. Revoked tickets remain
+unusable: any residual cleanup needs a fresh reviewed snapshot and ticket.
 
 ## Existing Build Leftovers
 

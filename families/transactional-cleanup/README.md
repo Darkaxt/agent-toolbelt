@@ -86,6 +86,17 @@ can turn an already deleted item into `already_missing` on retry, but can never 
 authority. There is no ticket expiry or command cancellation timeout. Terminal state
 retains at most 100 compact summaries and removes detailed rows.
 
+Version 0.4.2 exhausts indexed, bounded read pages before filesystem deletion or
+result commits. This prevents a disjoint writer from invalidating a retained WAL
+read snapshot between apply batches. It rechecks signed rows as they are paged and
+checks full ticket membership before reporting success. Disjoint operations remain
+concurrent; no whole-operation database lock, timeout increase or retry loop is used.
+SQLite errors return `state_database_busy` or `state_database_error` with extended
+error code/name rather than a traceback. Inspect status and diagnose before retrying
+a still-valid ticket; do not assume a current lock owner or revoke automatically.
+Already removed members may be undercounted if their result batch was not committed.
+Revoked tickets cannot resume; residual work requires a fresh review and ticket.
+
 Reports cap item diagnostics at 100. Use paginated `inspect` for detailed review.
 `deleted_bytes` counts observed logical file sizes, not filesystem allocation savings;
 after a crash between disposition and journal write a missing file is not credited
