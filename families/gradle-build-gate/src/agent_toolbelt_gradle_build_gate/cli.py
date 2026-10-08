@@ -29,6 +29,8 @@ def main(argv=None):
     run.add_argument("--project", required=True, type=Path)
     run.add_argument("--observe-home", action="append", default=[])
     run.add_argument("--log", type=Path)
+    run.add_argument("--collect-all-failures", action="store_true",
+                     help="Run the complete test suite instead of native fail-fast; failures still fail the build")
     run.add_argument("--gradle-heap-gb", type=int, default=3)
     run.add_argument("--kotlin-heap-gb", type=int, default=3)
     run.add_argument("--memory-reason")
@@ -59,7 +61,7 @@ def main(argv=None):
             result = gate.run_build(args.project, arguments, extra_homes=args.observe_home, log_path=args.log,
                                     gradle_heap=args.gradle_heap_gb, kotlin_heap=args.kotlin_heap_gb,
                                     memory_reason=args.memory_reason, kotlin_strategy=args.kotlin_strategy,
-                                    retire_daemons=args.retire_daemons)
+                                    retire_daemons=args.retire_daemons, collect_all_failures=args.collect_all_failures)
         print(json.dumps(result, indent=2))
         return result.get("exit_code", 0)
     except (ValueError, OSError, RuntimeError) as exc:

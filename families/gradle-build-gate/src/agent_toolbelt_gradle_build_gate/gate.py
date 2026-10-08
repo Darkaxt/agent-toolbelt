@@ -274,12 +274,19 @@ def observation_homes(arguments=(), extra=(), project=None):
     return list(dict.fromkeys((p if p.is_absolute() else base / p).resolve() for p in homes))
 
 
-def make_profile(project, arguments, homes, *, gradle_heap=3, kotlin_heap=3, memory_reason=None, kotlin_strategy=None):
+def make_profile(project, arguments, homes, *, gradle_heap=3, kotlin_heap=3, memory_reason=None, kotlin_strategy=None,
+                 collect_all_failures=False):
     if any(not 1 <= n <= 64 for n in (gradle_heap, kotlin_heap)):
         raise ValueError("Heap budgets must be between 1 and 64 GB")
     if max(gradle_heap, kotlin_heap) > 3 and not memory_reason:
         raise ValueError("Larger heaps require --memory-reason with diagnosed evidence")
     validate_arguments(arguments)
+    for arg in arguments:
+        option = arg.split("=", 1)[0]
+        if option in ("--fail-fast", "--no-fail-fast"):
+            raise ValueError("Test failure policy is owned by the helper; use --collect-all-failures before --")
+        if option == "--continue" and not collect_all_failures:
+            raise ValueError("--continue requires --collect-all-failures before --")
     properties = read_properties(project / "gradle.properties")
     # Gradle user-home properties override project properties. Extra observation
     # homes do not participate in configuration precedence.
@@ -319,11 +326,13 @@ def make_profile(project, arguments, homes, *, gradle_heap=3, kotlin_heap=3, mem
         if re.search(r"[&|<>^%!\r\n]", arg):
             raise ValueError("JVM/path settings contain unsafe batch-shell metacharacters")
     env = dict(os.environ)
+    env["GRADLE_GATE_COLLECT_ALL_FAILURES"] = str(collect_all_failures).lower()
     env["CMAKE_BUILD_PARALLEL_LEVEL"] = "2"
     env["MAKEFLAGS"] = re.sub(r"(?:^|\s)(?:-j\s*\d*|--jobs(?:=\d+)?)", "", env.get("MAKEFLAGS", "")).strip() + " -j2"
     return {"arguments": full, "environment": env, "gradle_jvmargs": gradle_args,
             "kotlin_daemon_jvmargs": kotlin_args, "kotlin_strategy": kotlin_strategy or "project_default",
             "max_workers": 2, "parallel": False, "test_max_parallel_forks": 1,
+            "test_fail_fast": not collect_all_failures, "test_ignore_failures": False,
             "native_environment_budget": 2, "native_effective_verified": False,
             "memory_reason": memory_reason}
 
@@ -467,7 +476,7 @@ def execute_wrapper(project, profile, log_path):
         raise ValueError("Log path already exists; refusing to overwrite it")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     command = subprocess.list2cmdline([str(wrapper), *profile["arguments"]])
-    observed, test_profiles, memory_evidence = [], [], []
+    observed, test_profiles, memory_evidence, failure_evidence = [], [], [], []
     with log_path.open("x", encoding="utf-8") as log:
         shell_command = subprocess.list2cmdline([os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c"]) + ' "' + command + '"'
         child = subprocess.Popen(shell_command,
@@ -502,6 +511,10 @@ def execute_wrapper(project, profile, log_path):
                         pass
                 if re.search(r"OutOfMemoryError|Java heap space|GC overhead limit exceeded|unable to create native thread", line, re.I):
                     memory_evidence.append(line.strip()[:500])
+                # Diagnostic output only: native Test.failFast, not this matcher,
+                # controls execution. Expected exception text must not kill builds.
+                if len(failure_evidence) < 20 and re.fullmatch(r".+ > .+ FAILED|> Task .+ FAILED", line.strip()):
+                    failure_evidence.append(line.strip()[:500])
         finally:
             # Output/logging failures must not release ownership over a live build.
             while child.stdout.read(64 * 1024):
@@ -519,9 +532,14 @@ def execute_wrapper(project, profile, log_path):
     return {"exit_code": exit_code, "log_path": str(log_path), "observed_profile": observed,
             "test_profile_evidence": test_profiles,
             "memory_failure_evidence": memory_evidence[-10:], "supervisor_interrupted": interrupted,
+            "failure_output_evidence": failure_evidence,
+            "test_failure_policy_verified": bool(test_profiles) and all(
+                p.get("fail_fast") is profile.get("test_fail_fast") and p.get("ignore_failures") is False
+                for p in test_profiles),
             "gradle_profile_verified": worker_verified and heap_verified,
             "verification_gaps": ["Native/task-specific Kotlin/test overrides require project-specific verification; test markers are configuration-time evidence"] +
-                ([] if observed else ["No Gradle profile marker observed; requested profile not verified"])}
+                ([] if observed else ["No Gradle profile marker observed; requested profile not verified"]) +
+                ([] if test_profiles else ["No test profile marker observed; test failure policy not verified"])}
 
 
 def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemons="incompatible", **options):
