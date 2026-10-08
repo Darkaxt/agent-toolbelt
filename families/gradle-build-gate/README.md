@@ -66,6 +66,41 @@ diagnostics as `adapter_compilation_failure`; runtime codes identify identity,
 registry, connection, request or exit failures. Raw registry/exception data is
 never printed. Compatibility failures still block rather than force-kill.
 
+## Owner Support And Cancellation
+
+Each new supervised build has a ticket-bound support record. After a configurable
+diagnostic quiet interval (default 300 seconds), the helper emits
+`owner_support_requested` in its captured tool session. It also notifies the exact
+Codex owner through the installed app-tools MCP when available. The live bridge
+has been tested; a successful send remains unacknowledged until an owner responds.
+Claude must read the request in its existing tool session: its agent messaging
+tool is not a standalone helper API. No duplicate agent or model is launched.
+
+```powershell
+python codex/skills/gradle-build-gate/scripts/invoke_gradle_build_gate.py support --ticket <id>
+python codex/skills/gradle-build-gate/scripts/invoke_gradle_build_gate.py respond --ticket <id> --request <request-id> --decision continue --reason "Diagnostic evidence"
+python codex/skills/gradle-build-gate/scripts/invoke_gradle_build_gate.py cancel --ticket <id> --request <request-id> --reason "Diagnosed owned hang"
+```
+
+Only task/test lifecycle observations reset progress. The interval schedules
+diagnostics, never a build deadline, failure classification or automatic kill.
+Continue replies schedule a fresh review rather than permanently muting a hang.
+Diagnostics capture native identities, reciprocal client-daemon bindings and
+best-effort owned JVM thread dumps; detached/unbound JVMs are not guessed.
+Transport and diagnostic-attach limits apply only to those diagnostic subprocesses.
+
+The wrapper runs in its own hidden console. Cancellation verifies its exact
+native PID/start identity and requests Ctrl+C in that console, never force-kills,
+stops unrelated Java or sends daemon-wide shutdown. Cancellation is best-effort.
+The original supervisor keeps the mutex and FIFO ticket until wrapper exit and
+fresh activity inspection proves safe completion. Reject stale, answered and
+completed requests. Read `owner_support`, not a submitted reply alone, to assess
+the outcome. Support metadata uses short per-ticket locks, not the build mutex.
+
+Native integration is opt-in: set `GRADLE_GATE_SUPPORT_SMOKE=1` and run
+`python -B -m unittest discover -s tests -p test_owner_support.py` from this family.
+It uses the production FIFO/mutex and cached offline Gradle/JUnit dependencies.
+
 ## Failure Policy
 
 Test tasks use native fail-fast by default, without scanning arbitrary exception

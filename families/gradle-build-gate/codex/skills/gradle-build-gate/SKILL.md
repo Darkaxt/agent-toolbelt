@@ -3,7 +3,7 @@ name: gradle-build-gate
 description: Run Windows Gradle builds and tests through a shared session-wide mutex supervisor, inspect active versus idle daemons, and apply a conservative memory profile without interrupting other builds.
 license: MIT
 metadata:
-  version: "0.4.3"
+  version: "0.5.0"
   compatibility: Windows desktop, Python 3.11+, Windows PowerShell, project gradlew.bat, existing JDK with source-file execution; no Python dependencies.
 ---
 
@@ -65,6 +65,47 @@ configuration-cache reuse can omit them. Output evidence is diagnostic only.
 Native fail-fast may finish tests already dispatched and cannot resolve a test
 that hangs before reporting failure. Such a hang requires diagnosis and owner
 cancellation, not lock stealing, a deadline or broad Java termination.
+
+## Stalled Build Owner Support
+
+Subsequent `run` invocations publish `build_support_ready` with the exact ticket
+and local record. A five-minute diagnostic quiet interval (configurable with
+`--diagnostic-quiet-seconds` BEFORE `--`) requests review, NOT cancellation or
+proof of deadlock. Task/test lifecycle output, not arbitrary log noise, refreshes
+progress. Unknown identity stays unknown. No automatic age-based kill.
+
+Keep reading/yielding the original command session. On `owner_support_requested`,
+inspect the record and owned JVM diagnostics, then reply to the CURRENT request.
+Do not ignore it or start another build. Codex additionally receives a message
+through its installed app-tools MCP when available; acceptance is not acknowledgement.
+Claude uses the structured request through its owned tool session. Do not invent
+a standalone Claude sender, use stale inbox pipes, resume a duplicate agent, or
+change models/settings to deliver a notification.
+
+For long Claude tool calls, retain the managed background task and read its
+output between tool calls so the agent can handle support events. Do not detach
+the Gradle supervisor, abandon its task, or treat a background task ID as build
+completion. The response command runs separately while the original run remains
+supervised.
+
+```powershell
+python scripts/invoke_gradle_build_gate.py support --ticket <ticket-id>
+python scripts/invoke_gradle_build_gate.py respond --ticket <ticket-id> --request <request-id> --decision continue --reason "Evidence and explanation"
+python scripts/invoke_gradle_build_gate.py cancel --ticket <ticket-id> --request <request-id> --reason "Diagnosed stalled owned test"
+```
+
+`continue` records the reason and schedules another diagnostic review, not fake
+progress or a permanent exemption. `cancel` requests Ctrl+C only in this build's
+private hidden console after exact PID/start verification. This is best-effort:
+inspect cancellation state and original run completion. The supervisor retains
+the mutex/FIFO ticket through wrapper exit and fresh active/idle inspection.
+Never kill the supervisor to free the gate, use taskkill, kill Java broadly or
+replace cancellation with `gradle --stop`. Stale/answered/completed requests fail
+closed. A cancellation response is not a successful build or verified completion.
+
+Diagnostic transport/JVM-attach waits are bounded independently of execution;
+their failure never cancels the build or releases its gate. Read notification
+states (`accepted_unacknowledged`, `delivery_unknown`, `unavailable`) honestly.
 
 ## Daemon Retirement
 

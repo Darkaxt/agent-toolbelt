@@ -468,6 +468,7 @@ class LifecycleObserver:
 
 
 def execute_wrapper(project, profile, log_path):
+    from .support import BuildSupport
     wrapper = project / "gradlew.bat"
     if re.search(r'[&|<>^%!\r\n"]', str(wrapper)):
         raise ValueError("Unsafe wrapper path")
@@ -477,12 +478,20 @@ def execute_wrapper(project, profile, log_path):
     log_path.parent.mkdir(parents=True, exist_ok=True)
     command = subprocess.list2cmdline([str(wrapper), *profile["arguments"]])
     observed, test_profiles, memory_evidence, failure_evidence = [], [], [], []
+    support = None
+    support_result = None
     with log_path.open("x", encoding="utf-8") as log:
         shell_command = subprocess.list2cmdline([os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c"]) + ' "' + command + '"'
+        controlled = "_support_ticket" in profile
+        startup = subprocess.STARTUPINFO() if controlled else None
+        if startup:
+            startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startup.wShowWindow = 0
         child = subprocess.Popen(shell_command,
                                  cwd=project, env=profile["environment"], stdout=subprocess.PIPE,
                                  stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
-                                 creationflags=NO_WINDOW)
+                                 stdin=subprocess.DEVNULL, startupinfo=startup,
+                                 creationflags=subprocess.CREATE_NEW_CONSOLE if controlled else NO_WINDOW)
         interrupted = False
         def retain_supervision(signum, frame):
             nonlocal interrupted
@@ -493,12 +502,25 @@ def execute_wrapper(project, profile, log_path):
         for s in signals:
             signal.signal(s, retain_supervision)
         try:
+            if controlled:
+                try:
+                    support = BuildSupport(profile["_support_ticket"], project, log_path,
+                                           quiet_seconds=profile["_diagnostic_quiet_seconds"])
+                    support.start(child)
+                except (OSError, ValueError, RuntimeError):
+                    print(json.dumps({"state": "support_setup_unavailable", "build_still_supervised": True}),
+                          file=sys.stderr, flush=True)
             while True:
                 line = child.stdout.readline()
                 if not line:
                     break
                 log.write(line); log.flush()
                 print(line, end="", file=sys.stderr, flush=True)
+                if support is not None:
+                    try:
+                        support.progress(line)
+                    except (OSError, ValueError, RuntimeError):
+                        print("Support progress unavailable; build remains supervised.", file=sys.stderr, flush=True)
                 if line.startswith("GRADLE_GATE_PROFILE_JSON:"):
                     try:
                         observed.append(json.loads(line.split(":", 1)[1]))
@@ -521,6 +543,8 @@ def execute_wrapper(project, profile, log_path):
                 pass
             exit_code = child.wait()
             child.stdout.close()
+            if support is not None:
+                support_result = support.finish(exit_code)
             for s, handler in previous_handlers.items():
                 signal.signal(s, handler)
     worker_verified = bool(observed) and all(p.get("max_workers") == 2 and p.get("parallel") is False for p in observed)
@@ -530,6 +554,7 @@ def execute_wrapper(project, profile, log_path):
         [arg.lower() for arg in p.get("gradle_jvmargs", []) if arg.lower().startswith("-xmx")][-1:] == [expected_heap]
         and 0 < p.get("gradle_max_heap_bytes", 0) <= expected_bytes for p in observed)
     return {"exit_code": exit_code, "log_path": str(log_path), "observed_profile": observed,
+            "owner_support": support_result,
             "test_profile_evidence": test_profiles,
             "memory_failure_evidence": memory_evidence[-10:], "supervisor_interrupted": interrupted,
             "failure_output_evidence": failure_evidence,
@@ -542,7 +567,8 @@ def execute_wrapper(project, profile, log_path):
                 ([] if test_profiles else ["No test profile marker observed; test failure policy not verified"])}
 
 
-def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemons="incompatible", **options):
+def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemons="incompatible",
+              diagnostic_quiet_seconds=300, **options):
     from .queue import TicketQueue
     from .usage import record_project
     project = Path(project).expanduser().resolve()
@@ -550,6 +576,8 @@ def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemo
         raise ValueError("Project must contain gradlew.bat")
     homes = observation_homes(arguments, extra_homes, project)
     profile = make_profile(project, arguments, homes, **options)
+    if diagnostic_quiet_seconds <= 0:
+        raise ValueError("Diagnostic quiet interval must be positive")
     version = wrapper_version(project) if retire_daemons != "none" else None
     retired = []
     if log_path is None:
@@ -591,9 +619,32 @@ def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemo
                             print(json.dumps({"state": "retiring_idle_daemon", "pid": current["pid"], "reason": current["retirement_reason"]}), file=sys.stderr, flush=True)
                             retired.append(retire_daemon(current))
                         continue
+                    profile["_support_ticket"] = ticket
+                    profile["_diagnostic_quiet_seconds"] = diagnostic_quiet_seconds
                     result = execute_wrapper(project, profile, log_path)
+                    support_result = result.get("owner_support") or {}
+                    if support_result.get("record") or (support_result.get("cancellation") or {}).get("state") == "ctrl_c_requested":
+                        # Ctrl+C acceptance is not build completion. A surviving
+                        # daemon/client must finish or become confirmed idle.
+                        while True:
+                            with LifecycleObserver(homes) as cancellation_observer:
+                                inspection = inspect_activity(homes)
+                                if inspection["safe_to_start"]:
+                                    break
+                                pids = getattr(cancellation_observer, "pids", None)
+                                if pids is not None and any(p["pid"] not in pids for p in inspection["processes"]):
+                                    continue
+                                print(json.dumps({"state": "waiting_for_cancellation_completion",
+                                                  "activity": inspection}), file=sys.stderr, flush=True)
+                                cancellation_observer.wait()
+                        support_result["completion_verified"] = True
+                    if support_result.get("record"):
+                        from .support import complete
+                        complete(ticket["id"])
+                        support_result["completion_verified"] = True
                     break
-    public_profile = {key: value for key, value in profile.items() if key not in ("arguments", "environment")}
+    public_profile = {key: value for key, value in profile.items()
+                      if key not in ("arguments", "environment") and not key.startswith("_")}
     return {"ok": result["exit_code"] == 0, "operation": "run", "project": str(project),
             "gate_acquired": True, "mutex": MUTEX_NAME, "abandoned_mutex_rechecked": mutex.abandoned,
             "queue_ticket": ticket, "queue_ordering": "fifo_registration",
