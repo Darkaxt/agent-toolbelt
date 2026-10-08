@@ -43,14 +43,12 @@ shutdown, forced termination, scheduler, cleanup or lock stealing.
    Native console fixture verifies exact PID/start binding, refusal of changed
    identity and preservation of an unrelated process. State/event fixtures cover
    responses, diagnostic rearming and gate retention until daemon idle.
-3. ACTIVE: integrated verification, documentation, deployment and sync (R7).
-   Required: real Gradle hanging-test cancellation, final focused checks and
-   deployed source parity. Native cancellation and owned-JVM diagnostic probes
-   passed. Runtime/skill installation and byte parity are verified; source sync
-   remains.
+3. COMPLETE: integrated verification, documentation, deployment and sync (R7).
+   Real Gradle hanging-test cancellation, owned-JVM diagnostic capture, focused
+   checks, installed source parity and reviewed-source publication passed.
 
 Tracked deferral to Stage 3: real Gradle integration is resolved by the native
-probes below. Installation is verified; source sync remains ordinary Stage 3 work.
+probes below. No required blocker or tracked deferral remains.
 
 ## Evidence / Constraints
 
@@ -97,6 +95,12 @@ match source bytes; Codex, agents and Claude skill bundles match canonical bytes
 All three installed validators and cancel help surfaces passed. Installed support
 read confirms the final native fixture record is completed with exit 130 and
 completion_verified true. No disposable native fixture directories remain.
+
+Reviewed implementation commit 307d067 was pushed to origin/codex/gradle-owner-support.
+Final reconciliation: R1-R6 are satisfied by the native/component evidence above;
+R7 is satisfied by installed byte parity, validators and published source. No
+live third-party builds were stopped, and no diagnostic account/session data was
+added to Git. Protected-main integration follows the repository PR route.
 
 Public preflight's customer-escalation candidate does not implement native Gradle
 supervision. Keep this behavior in the existing helper. No third-party install.
