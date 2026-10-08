@@ -244,7 +244,7 @@ class PolicyContracts(unittest.TestCase):
             for skill_root in roots:
                 command.extend(["--skills-root", str(skill_root)])
             subprocess.run(command, capture_output=True, text=True, check=True)
-            self.assertEqual(json.loads((runtime / "active.json").read_text())["version"], "0.4.2")
+            self.assertEqual(json.loads((runtime / "active.json").read_text())["version"], "0.4.3")
             project = root / "project"
             props = project / "gradle/wrapper/gradle-wrapper.properties"
             props.parent.mkdir(parents=True)

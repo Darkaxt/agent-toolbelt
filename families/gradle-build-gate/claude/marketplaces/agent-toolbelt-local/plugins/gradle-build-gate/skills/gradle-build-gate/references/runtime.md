@@ -68,6 +68,16 @@ Daemon logs are streamed incrementally, not judged from a fixed tail. Supply
 additional observation homes for daemons using custom directories. Unknown
 markers remain ambiguous; inspect the evidence instead of overriding the gate.
 
+Failure policy is invocation-local: the helper explicitly supplies
+`GRADLE_GATE_COLLECT_ALL_FAILURES` to the Gradle client environment; the init
+script configures native Test.failFast and never suppresses test failure status.
+An inherited environment value cannot silently opt out. Use the explicit helper
+flag before `--` for a complete failure census. This is early stopping, not forced
+process cancellation. Already-dispatched tests can finish; hangs with no reported
+failure are not detected. Missing configuration-time test markers (including
+configuration-cache reuse) leave policy verification false. Bounded console
+failure evidence is not an authoritative event channel or a cancellation trigger.
+
 Each run retains its diagnostic log until it is no longer needed. Use
 transactional cleanup for task-owned expendable logs after verification. Never
 include these logs, credentials or Gradle caches in repository commits.

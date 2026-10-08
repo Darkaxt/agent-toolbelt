@@ -43,9 +43,10 @@ FIFO covers updated participating helpers in this Windows session, not Studio
 or older launchers. `queue_ticket` identifies the completed request; `status.queue`
 is a read-only diagnostic snapshot. The queue stores no commands or project data.
 
-Tests use synthetic wrappers and Windows kernel/event operations, not an extra
-real Gradle build. Verify the actual project/compiler/native profile with the
-next required focused build. See the skill's runtime reference for limitations.
+Default tests use synthetic wrappers and Windows kernel/event operations. The
+opt-in native failure-policy fixture below runs real Gradle through the gate.
+Verify each actual project/compiler/native profile with its next required
+focused build. See the skill's runtime reference for limitations.
 
 Before each build the default retirement policy removes confirmed-idle daemons
 with a different wrapper version or maximum heap. Matching daemons remain reusable.
@@ -64,6 +65,33 @@ Consumer callbacks. Compilation errors expose bounded sanitized symbol/signature
 diagnostics as `adapter_compilation_failure`; runtime codes identify identity,
 registry, connection, request or exit failures. Raw registry/exception data is
 never printed. Compatibility failures still block rather than force-kill.
+
+## Failure Policy
+
+Test tasks use native fail-fast by default, without scanning arbitrary exception
+or ERROR text to terminate builds. The mutex remains held until wrapper exit.
+Only for an intentional complete failure census:
+
+```powershell
+python codex/skills/gradle-build-gate/scripts/invoke_gradle_build_gate.py run --project D:/path/android --collect-all-failures -- :app:testDebugUnitTest
+```
+
+The opt-out disables early stopping, never the failed result. It is required for
+Gradle `--continue`; raw `--fail-fast` / `--no-fail-fast` are rejected. Inspect
+`requested_profile.test_fail_fast`, `test_profile_evidence`,
+`test_failure_policy_verified` (configuration evidence) and
+`failure_output_evidence` (up to 20 diagnostic lines of 500 characters).
+No test markers means unverified policy, not success. Already-dispatched tests
+may finish; a hang before any failure is reported still requires diagnosis.
+This policy does not cancel existing builds or introduce timeouts or force kills.
+
+Native offline integration verification is opt-in and uses the production FIFO
+and mutex, installed Gradle 9.8.0 and cached JUnit 4.13.2/hamcrest 1.3:
+
+```powershell
+$env:GRADLE_GATE_NATIVE_SMOKE='1'
+python -B -m unittest discover -s families/gradle-build-gate/tests -p test_failure_policy.py -k native_gradle
+```
 
 ## Version Reuse And Disk Review
 

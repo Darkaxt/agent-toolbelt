@@ -11,13 +11,17 @@ println 'GRADLE_GATE_PROFILE_JSON:' + JsonOutput.toJson([
 ])
 
 gradle.projectsEvaluated { build ->
+    def collectAllFailures = System.getenv('GRADLE_GATE_COLLECT_ALL_FAILURES') == 'true'
     build.rootProject.allprojects.each { project ->
         project.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach { task ->
             task.maxParallelForks = 1
+            task.failFast = !collectAllFailures
+            task.ignoreFailures = false
             if (!task.maxHeapSize) task.maxHeapSize = '512m'
             println 'GRADLE_GATE_TEST_PROFILE_JSON:' + JsonOutput.toJson([
                 path: task.path, max_parallel_forks: task.maxParallelForks,
-                max_heap: task.maxHeapSize, observation_phase: 'configuration'
+                max_heap: task.maxHeapSize, fail_fast: task.failFast,
+                ignore_failures: task.ignoreFailures, observation_phase: 'configuration'
             ])
         }
     }

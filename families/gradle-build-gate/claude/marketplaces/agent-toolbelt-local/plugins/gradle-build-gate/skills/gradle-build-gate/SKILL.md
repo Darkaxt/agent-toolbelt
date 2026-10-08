@@ -3,7 +3,7 @@ name: gradle-build-gate
 description: Run Windows Gradle builds and tests through a shared session-wide mutex supervisor, inspect active versus idle daemons, and apply a conservative memory profile without interrupting other builds.
 license: MIT
 metadata:
-  version: "0.4.2"
+  version: "0.4.3"
   compatibility: Windows desktop, Python 3.11+, Windows PowerShell, project gradlew.bat, existing JDK with source-file execution; no Python dependencies.
 ---
 
@@ -43,6 +43,28 @@ Studio do not join automatically. Tickets remain held through supervision; dead
 owners are reclaimed only from proven exit or exact PID/start identity mismatch.
 Unknown identity or corrupt queue state blocks, never expires or steals a turn.
 `status.queue` is read-only diagnostics. Observer reinspection follows events.
+
+## Fail-Fast By Default
+
+Subsequent runs enable native Gradle `Test.failFast = true` and
+`ignoreFailures = false`. A reported test failure requests early stopping;
+compilation/task failures retain Gradle's ordinary failed exit. Do not scan for
+arbitrary ERROR or exception text and kill processes: passing negative tests
+can print those messages. The supervisor retains the gate through wrapper exit.
+
+Only when the current diagnostic task explicitly needs a complete failure census,
+use `--collect-all-failures` BEFORE `--`. This disables test fail-fast, NOT failed
+exit reporting. `--continue` requires that opt-out; raw `--fail-fast` and
+`--no-fail-fast` options are rejected so the helper owns the policy. Do not select
+the opt-out merely to avoid resolving an observed failure.
+
+Inspect `requested_profile.test_fail_fast`, `test_profile_evidence`,
+`test_failure_policy_verified` and bounded `failure_output_evidence`.
+Verification markers describe configuration, not guaranteed immediate stopping;
+configuration-cache reuse can omit them. Output evidence is diagnostic only.
+Native fail-fast may finish tests already dispatched and cannot resolve a test
+that hangs before reporting failure. Such a hang requires diagnosis and owner
+cancellation, not lock stealing, a deadline or broad Java termination.
 
 ## Daemon Retirement
 
