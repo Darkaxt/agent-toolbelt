@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 
-from . import gate, usage
+from . import gate, usage, support
 from .queue import queue_status
 
 
@@ -14,6 +14,17 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="operation", required=True)
     status = commands.add_parser("status", help="Read-only activity inspection; not launch clearance")
     status.add_argument("--observe-home", action="append", default=[])
+    inspect_support = commands.add_parser("support", help="Read one build's owner-support record")
+    inspect_support.add_argument("--ticket", required=True)
+    response = commands.add_parser("respond", help="Acknowledge a current support request; never releases the gate")
+    response.add_argument("--ticket", required=True)
+    response.add_argument("--request", required=True)
+    response.add_argument("--decision", choices=["continue", "cancel"], required=True)
+    response.add_argument("--reason", required=True)
+    cancel = commands.add_parser("cancel", help="Request Ctrl+C for one current owned build, never force-kill")
+    cancel.add_argument("--ticket", required=True)
+    cancel.add_argument("--request", required=True)
+    cancel.add_argument("--reason", required=True)
     register = commands.add_parser("register-project", help="Register a wrapper and optional rollback/offline reservations; no build or upgrade")
     register.add_argument("--project", type=Path, required=True)
     register.add_argument("--keep-version", action="append", default=None)
@@ -29,6 +40,8 @@ def main(argv=None):
     run.add_argument("--project", required=True, type=Path)
     run.add_argument("--observe-home", action="append", default=[])
     run.add_argument("--log", type=Path)
+    run.add_argument("--diagnostic-quiet-seconds", type=int, default=300,
+                     help="Quiet interval for diagnostics/support only; never a build deadline")
     run.add_argument("--collect-all-failures", action="store_true",
                      help="Run the complete test suite instead of native fail-fast; failures still fail the build")
     run.add_argument("--gradle-heap-gb", type=int, default=3)
@@ -44,6 +57,12 @@ def main(argv=None):
             result = {"ok": True, "operation": "status", "gate_acquired": False,
                       "queue": queue_status(),
                       **gate.inspect_activity(gate.observation_homes(extra=args.observe_home))}
+        elif args.operation == "support":
+            result = {"ok": True, "operation": "support", "record": support.read(args.ticket)}
+        elif args.operation == "respond":
+            result = support.respond(args.ticket, args.request, args.decision, args.reason)
+        elif args.operation == "cancel":
+            result = support.respond(args.ticket, args.request, "cancel", args.reason)
         elif args.operation == "register-project":
             if args.clear_reservations and args.keep_version:
                 raise ValueError("Choose --keep-version or --clear-reservations, not both")
@@ -61,6 +80,7 @@ def main(argv=None):
             result = gate.run_build(args.project, arguments, extra_homes=args.observe_home, log_path=args.log,
                                     gradle_heap=args.gradle_heap_gb, kotlin_heap=args.kotlin_heap_gb,
                                     memory_reason=args.memory_reason, kotlin_strategy=args.kotlin_strategy,
+                                    diagnostic_quiet_seconds=args.diagnostic_quiet_seconds,
                                     retire_daemons=args.retire_daemons, collect_all_failures=args.collect_all_failures)
         print(json.dumps(result, indent=2))
         return result.get("exit_code", 0)

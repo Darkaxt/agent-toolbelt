@@ -17,6 +17,14 @@ gradle.projectsEvaluated { build ->
             task.maxParallelForks = 1
             task.failFast = !collectAllFailures
             task.ignoreFailures = false
+            // Real test lifecycle output supports owner diagnostics, including
+            // configuration-cache reuse. It never decides cancellation.
+            task.testLogging.events = task.testLogging.events + [
+                org.gradle.api.tasks.testing.logging.TestLogEvent.STARTED,
+                org.gradle.api.tasks.testing.logging.TestLogEvent.PASSED,
+                org.gradle.api.tasks.testing.logging.TestLogEvent.SKIPPED,
+                org.gradle.api.tasks.testing.logging.TestLogEvent.FAILED
+            ]
             if (!task.maxHeapSize) task.maxHeapSize = '512m'
             println 'GRADLE_GATE_TEST_PROFILE_JSON:' + JsonOutput.toJson([
                 path: task.path, max_parallel_forks: task.maxParallelForks,

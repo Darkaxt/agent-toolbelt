@@ -78,6 +78,39 @@ failure are not detected. Missing configuration-time test markers (including
 configuration-cache reuse) leave policy verification false. Bounded console
 failure evidence is not an authoritative event channel or a cancellation trigger.
 
+Owner support records live beside the session FIFO metadata under `support/` and
+include the exact supervisor/wrapper identities, log, observed task/test, current
+request, notification receipt state and independent owner response. They contain
+local diagnostic evidence, not source deliverables. Task/test progress is observed
+from native console lifecycle output (test logging includes typed TestLogEvent
+values and remains configuration-cache compatible); unknown fields stay null.
+
+The finite diagnostic quiet wait (default 300 seconds) only schedules support.
+The control loop uses a native response event and keeps handling responses while
+notification/JVM diagnostics run separately. A continue reply rearms diagnostics
+without incrementing progress. There is no age-based cancellation or ticket expiry.
+CLI `support`, `respond` and `cancel` do not acquire the build mutex or enter FIFO.
+Responses require the current request and reason; stale/replied/completed records
+are refused. Cancellation is rechecked against progress before being handled.
+
+Codex notification calls the installed bundled MCP with executor task metadata,
+omitting model overrides. Acceptance is not acknowledgement; transport failure or
+unknown delivery does not free the build gate. Every client must continue reading
+the owned tool-session stream. Claude's ListAgents/SendMessage are agent tools,
+not a verified standalone helper sending API; no impersonated/stale inbox is used.
+
+A private hidden console contains the owned wrapper. A disposable signal process
+verifies native PID/start identity and attaches only to that console to request
+Ctrl+C. It never detaches the supervising agent's console. Wrapper termination is
+not sufficient cancellation evidence: fresh daemon/client inspection must pass
+before ownership is released. No deadline, daemon stop, force-kill or lock stealing
+is used. A build that cannot cooperate remains supervised, not falsely completed.
+
+JVM thread dumps and messaging have separate diagnostic boundaries. Expiration
+stops only the owned diagnostic process, not Gradle. Read their state/errors; lack
+of a dump is not proof of absence of a deadlock. Binding requires exact process
+identities and reciprocal client-daemon connections; do not infer unrelated JVMs.
+
 Each run retains its diagnostic log until it is no longer needed. Use
 transactional cleanup for task-owned expendable logs after verification. Never
 include these logs, credentials or Gradle caches in repository commits.

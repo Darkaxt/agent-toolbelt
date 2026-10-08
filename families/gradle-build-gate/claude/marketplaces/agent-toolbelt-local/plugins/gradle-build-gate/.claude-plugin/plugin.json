@@ -1,6 +1,6 @@
 {
   "name": "gradle-build-gate",
-  "version": "0.4.3",
+  "version": "0.5.0",
   "author": { "name": "Darkaxt", "email": "opensource@users.noreply.github.com" },
   "description": "Serialize Windows Gradle builds through a shared named mutex with evidence-backed activity and resource profiles."
 }
