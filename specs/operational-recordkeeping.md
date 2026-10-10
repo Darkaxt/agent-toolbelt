@@ -4,7 +4,7 @@
 
 Provide an agent-neutral skill and self-contained Python helper that make durable
 record reconciliation part of completing bills, payments, correspondence,
-decisions, observations and purchases. Reuse existing records; no second ledger,
+decisions, observations and purchases. Reuse existing records; no duplicate company ledger,
 mail sender, payment tool, accounting authority or background monitor.
 
 Requirements:
@@ -61,3 +61,32 @@ skills-sh-scout inspected davidlee/doctrine/reconcile, a software governance
 workflow with revision surfaces, not local financial/correspondence reconciliation.
 Exact operational-recordkeeping and local-invoice/correspondence searches returned
 no candidates. Keep the local-first existing-record design.
+
+## v0.1.1: Separate Apartment Operations Register
+
+The user authorized a separate apartment register on 11 October 2026. An absent
+operations binding must be resolved by reusing a real current register or creating
+and binding a minimal separate one, not left indefinitely as intentional setup.
+The company financial workbook remains authoritative for company accounting.
+
+Acceptance: require creation/binding in the skill; provide a reusable template;
+create and bind the private register without inventing business events; distinguish
+file creation from reconciliation of current task context with an explicit helper
+readiness gate checked during inspection, preparation and closure; verify a simulated
+apartment event through the existing helper; deploy both bundles and sync source.
+
+1. Register contract, template and profile: COMPLETE. The separate private register
+   exists and is bound. Inspection distinguishes readable from initialized; an
+   isolated purchase scenario proves preparation and closure reject an
+   uninitialized register and accept a verified entry after initialization.
+2. Verification and installation: COMPLETE. Canonical and both installed helpers
+   passed the focused behavioral suite; both bundles passed structural validation
+   and hash comparison. Root layout/isolation/CLI/portability checks passed. Live
+   read-only profile inspection confirms company readiness and apartment
+   initialization pending, not an unbound register or falsely completed review.
+
+Final delivery requires committing and synchronizing this verified update to
+GitHub; do not report synchronization before confirming remote integration.
+
+No tracked deferrals. Populating real current items remains the owning task's
+explicit initialization duty, not something an empty file can claim satisfied.

@@ -3,7 +3,7 @@ name: operational-recordkeeping
 description: Reconcile bills, payments, correspondence, decisions and purchases with existing durable records before reporting completion. Use for company management and apartment setup operations, especially after received invoices, sent emails, payment confirmations or changed decisions; not unrelated chat or a new accounting system.
 license: MIT
 metadata:
-  version: "0.1.0"
+  version: "0.1.1"
   compatibility: Codex and Claude; Python 3.11+ standard library. Private local project profiles and existing text, JSON or XLSX records.
 ---
 
@@ -19,8 +19,12 @@ purchase, contact third parties or approve accounting treatment is granted.
 1. Load the project profile with the bundled helper's `inspect` command. Identify
    the authoritative ledger, current obligations/decisions, correspondence state
    and evidence locations. For the local Cyprus pilot use `company` or `apartment`.
-   A missing binding is work to resolve with the owning task, not permission to
-   silently ignore that record. Do not create a second financial ledger.
+   A missing operations binding MUST be resolved before operational work: reuse
+   the current domain register or create and bind a separate minimal one if none
+   exists. Do not leave it unbound as "intentional setup". Apartment operations
+   belong in their own register, not the company financial ledger. Do not duplicate
+   company accounting or treat file creation alone as reconciled business context.
+   Follow the initialization gate in [references/profiles.md](references/profiles.md).
 2. Identify the event using an invoice, order or mail identifier. State exactly
    what changed, the evidence, relevant amount/currency, dates and next action.
    Distinguish invoice issue date, service period, due date and payment date.

@@ -6,6 +6,13 @@ requested new path; `check --output` optionally creates a new result file.
 Outputs cannot overwrite an existing file. Relative evidence paths resolve
 against the event JSON; record paths against the profile JSON.
 
+A text record may define `ready_when` in its profile binding, e.g.
+`{"section": "## Initialization", "contains": "State: current_context_reconciled"}`.
+`inspect` reports `readable` and `ready` separately; only ready records contribute
+to `ready_routes`. `prepare` rejects an unmet guard, and `check` verifies it again.
+Use this for the apartment register's required initial context reconciliation.
+Do not flip the marker solely to bypass a failed gate.
+
 ```powershell
 python scripts/invoke_operational_recordkeeping.py inspect --profile company
 python scripts/invoke_operational_recordkeeping.py prepare --profile company --event event.json --output packet.json
