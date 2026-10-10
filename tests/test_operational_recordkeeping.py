@@ -165,6 +165,40 @@ class RecordkeepingTests(unittest.TestCase):
         self.put("operations.md", template + "\n### ORDER-42\nState: ordered\n")
         self.assertFalse(helper.check_packet(packet)["ok"])
 
+    def test_inspection_preserves_readability_when_readiness_validation_fails(self):
+        self.profile["records"]["tracker"]["ready_when"] = {
+            "section": "## Initialization", "contains": "State: current_context_reconciled"}
+        self.put("profile.json", self.profile)
+        for text in ("## Other\nNo initialization\n",
+                     "## Initialization\nState: current_context_reconciled\n"
+                     "## Initialization\nState: current_context_reconciled\n"):
+            with self.subTest(text=text):
+                self.put("tracker.md", text)
+                before = (self.root / "tracker.md").read_bytes()
+                with redirect_stdout(io.StringIO()) as output:
+                    code = helper.main(["inspect", "--profile", str(self.root / "profile.json")])
+                self.assertEqual(code, 1)
+                result = json.loads(output.getvalue())
+                record = next(r for r in result["records"] if r["id"] == "tracker")
+                self.assertTrue(record["readable"])
+                self.assertFalse(record["ready"])
+                self.assertEqual(record["readiness_note"], "validation_error")
+                self.assertIn("Expected one section: ## Initialization", record["error"])
+                self.assertIn("path", record)
+                self.assertEqual(result["ready_routes"], [])
+                self.assertEqual((self.root / "tracker.md").read_bytes(), before)
+                with self.assertRaisesRegex(ValueError, "Expected one section"):
+                    self.packet()
+
+    def test_inspection_reports_missing_file_as_unreadable(self):
+        (self.root / "tracker.md").unlink()
+        result = helper.inspect_profile(self.root / "profile.json")
+        record = next(r for r in result["records"] if r["id"] == "tracker")
+        self.assertFalse(record["readable"])
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["ready_routes"], [])
+        self.assertIn("error", record)
+
     def test_structured_values_are_typed(self):
         self.assertFalse(helper.equal(True, 1))
         self.assertFalse(helper.equal("95", 95))

@@ -10,6 +10,9 @@ A text record may define `ready_when` in its profile binding, e.g.
 `{"section": "## Initialization", "contains": "State: current_context_reconciled"}`.
 `inspect` reports `readable` and `ready` separately; only ready records contribute
 to `ready_routes`. `prepare` rejects an unmet guard, and `check` verifies it again.
+Missing/duplicate initialization headings report `readable: true, ready: false`,
+`readiness_note: validation_error` and the validation error. File-access failures
+remain `readable: false`; malformed content is not an access failure.
 Use this for the apartment register's required initial context reconciliation.
 Do not flip the marker solely to bypass a failed gate.
 

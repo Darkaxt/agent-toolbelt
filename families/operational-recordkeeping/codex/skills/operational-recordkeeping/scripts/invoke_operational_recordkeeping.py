@@ -310,12 +310,17 @@ def inspect_profile(path):
         try:
             target = resolve_path(binding.get("path"), path.parent)
             with target.open("rb") as stream:
-                data = stream.read() if binding.get("ready_when") else stream.read(1)
-            ready = record_ready(binding, data, format_of(binding, target))
-            records.append({"id": name, "path": str(target), "readable": True, "ready": ready,
-                            "readiness_note": "ready" if ready else "initialization_required"})
+                data = stream.read() if binding.get("ready_when") is not None else stream.read(1)
         except (OSError, ValueError) as error:
-            records.append({"id": name, "readable": False, "error": str(error)})
+            records.append({"id": name, "readable": False, "ready": False, "error": str(error)})
+            continue
+        result = {"id": name, "path": str(target), "readable": True, "ready": False}
+        try:
+            ready = record_ready(binding, data, format_of(binding, target))
+            result.update(ready=ready, readiness_note="ready" if ready else "initialization_required")
+        except (ValueError, KeyError, TypeError, IndexError) as error:
+            result.update(readiness_note="validation_error", error=str(error))
+        records.append(result)
     readiness = {r["id"]: r.get("ready", False) for r in records}
     return {"ok": all(readiness.values()), "operation": "inspect",
             "profile_id": profile["profile_id"], "instructions": profile.get("instructions", ""),
