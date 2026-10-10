@@ -26,6 +26,7 @@ Start by choosing the one family you actually need:
 | WhatsApp wacli | experimental local WhatsApp access through a curated `wacli` adapter | `families/whatsapp-wacli` | `agent-toolbelt-whatsapp-wacli` |
 | Skills.sh Scout | public skill alternative discovery before creating or expanding skills | `families/skills-sh-scout` | `agent-toolbelt-skills-sh-scout` |
 | Specification-Gated Implementation | staged implementation with repeated specification reconciliation and zero unresolved deferrals at completion | `families/spec-gated-implementation` | - |
+| Operational Recordkeeping | event-scoped reconciliation of existing bills, correspondence, decisions and purchases | `families/operational-recordkeeping` | bundled Python helper |
 
 ## Install skills
 
@@ -59,6 +60,7 @@ Public skill names:
 - `whatsapp-wacli`
 - `skills-sh-scout`
 - `spec-gated-implementation`
+- `operational-recordkeeping`
 
 Read [Publishing and installing from skills.sh](docs/skills-sh.md) before installing account-backed or local-machine skills. Several skills require Windows desktop apps, local CLIs, or explicit user confirmation before visible actions.
 

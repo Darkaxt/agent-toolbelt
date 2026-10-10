@@ -6,6 +6,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 EXPECTED_FAMILIES = {
+    "operational-recordkeeping": {
+        "runtime": False,
+        "has_claude": False,
+    },
     "d-temp-maintenance": {
         "runtime": False,
         "has_claude": False,

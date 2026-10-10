@@ -26,6 +26,11 @@ Each runtime family ships its own self-contained local marketplace with one plug
 
 ## Install flow
 
+Operational Recordkeeping: copy the same agent-neutral
+`families/operational-recordkeeping/codex/skills/operational-recordkeeping` folder
+to the personal Claude skills directory. It includes its own standard-library
+helper and needs no plugin, repository bootstrap or account credentials.
+
 1. Open the family README you want.
 2. Validate that family marketplace path with `claude plugins validate`.
 3. Add that marketplace path with `claude plugins marketplace add ... --scope user`.

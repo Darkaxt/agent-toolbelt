@@ -32,6 +32,7 @@ npx skills update
 
 | Skill | Compatibility | Local prerequisites | Safety notes |
 | --- | --- | --- | --- |
+| `operational-recordkeeping` | Codex and Claude | Python 3.11+, private local profile, existing text/JSON/XLSX records | Read-only verification; no mail, payment or purchase actions. Declared facts only, not an accounting audit. |
 | `c-drive-maintenance` | Windows on-demand maintenance | Python, transactional-cleanup for deletion, gradle-build-gate for builds | No passive monitor or automatic newest-version upgrades; lifecycle and owner evidence before cleanup. |
 | `d-temp-maintenance` | Windows on-demand agent temporary-output maintenance | Installed transactional-cleanup; Everything and existing task-owner tools where available | End-of-round owner sweeps, exact reviewed targets, retained unique source and no Gradle build-gate use for cleanup. |
 | `antigravity-cli` | Windows/local exact-model packet and public-evidence analysis | Helper-owned CLIProxyAPI runtime, explicit Antigravity OAuth login, and `yt-dlp-ffmpeg` for video preparation | Bounded public text or explicit transcript/frame manifests only; no model fallback, general proxy, persistence, or access to Claude's proxy state. |
