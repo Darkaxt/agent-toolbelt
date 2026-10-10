@@ -132,6 +132,39 @@ class RecordkeepingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.packet()
 
+    def test_separate_apartment_register_accepts_new_item_only_after_readback(self):
+        template = (SKILL / "assets/apartment-operations.md").read_text(encoding="utf-8")
+        self.put("operations.md", template)
+        profile = {"profile_id": "apartment", "records": {
+            "operations": {"path": "operations.md", "format": "text", "ready_when": {
+                "section": "## Initialization", "contains": "State: current_context_reconciled"}}},
+            "routes": {"purchase.ordered": {"records": ["operations"]}}}
+        event = {"event_id": "ORDER-42-created", "kind": "purchase.ordered", "summary": "Fictional order",
+                 "facts": {"record_key": "ORDER-42", "state": "ordered"},
+                 "evidence": [{"path": "order.json", "checks": [
+                     {"fact": "record_key", "at": ["id"]}, {"fact": "state", "at": ["status"]}]}],
+                 "checks": {"operations": [
+                     {"fact": "record_key", "section": "### ORDER-42"},
+                     {"fact": "state", "section": "### ORDER-42"}]}}
+        self.put("profile.json", profile)
+        self.put("event.json", event)
+        self.put("order.json", {"id": "ORDER-42", "status": "ordered"})
+        company_before = (self.root / "ledger.json").read_bytes()
+        self.assertFalse(helper.inspect_profile(self.root / "profile.json")["ok"])
+        with self.assertRaisesRegex(ValueError, "initialization required"):
+            self.packet()
+        initialized = template.replace("State: awaiting_current_context_reconciliation",
+                                       "State: current_context_reconciled")
+        self.put("operations.md", initialized)
+        self.assertTrue(helper.inspect_profile(self.root / "profile.json")["ok"])
+        packet = self.packet()
+        self.assertFalse(helper.check_packet(packet)["ok"])
+        self.put("operations.md", initialized + "\n### ORDER-42\nState: ordered\n")
+        self.assertTrue(helper.check_packet(packet)["ok"])
+        self.assertEqual((self.root / "ledger.json").read_bytes(), company_before)
+        self.put("operations.md", template + "\n### ORDER-42\nState: ordered\n")
+        self.assertFalse(helper.check_packet(packet)["ok"])
+
     def test_structured_values_are_typed(self):
         self.assertFalse(helper.equal(True, 1))
         self.assertFalse(helper.equal("95", 95))

@@ -194,6 +194,15 @@ def validate_checks(checks, facts, required):
     require(set(required) <= positive, f"Missing positive fact coverage: {sorted(set(required) - positive)}")
 
 
+def record_ready(binding, data, fmt):
+    gate = binding.get("ready_when")
+    if gate is None:
+        return True
+    require(fmt == "text" and isinstance(gate, dict), "ready_when requires a text record")
+    return evaluate(data, "text", [{"fact": "readiness", "section": gate["section"]}],
+                    {"readiness": gate["contains"]})[0]["ok"]
+
+
 def profile_path(value):
     if value.endswith(".json") or "/" in value or "\\" in value:
         return Path(value).expanduser().resolve()
@@ -246,9 +255,11 @@ def prepare(profile_file, event_file):
         validate_checks(checks, facts, required_facts)
         data, digest = snapshot(path)
         fmt = format_of(binding, path)
+        require(record_ready(binding, data, fmt), f"Record initialization required: {record_id}")
         # A new row or section is allowed to be absent before the action.
         packet["records"].append({"id": record_id, "path": str(path), "format": fmt,
-                                  "checks": checks, "before_sha256": digest})
+                                  "checks": checks, "before_sha256": digest,
+                                  "ready_when": binding.get("ready_when")})
     paths = [os.path.normcase(r["path"]) for r in packet["records"]]
     require(len(set(paths)) == len(paths), "Two record IDs alias the same file")
     return packet
@@ -274,6 +285,7 @@ def check_packet(packet):
         path = Path(binding["path"])
         data, digest = snapshot(path)
         try:
+            require(record_ready(binding, data, binding["format"]), "Record initialization required")
             proofs = evaluate(data, binding["format"], binding["checks"], facts)
             passed = all(p["ok"] for p in proofs)
             result = {"id": binding["id"], "ok": passed, "proofs": proofs}
@@ -298,16 +310,18 @@ def inspect_profile(path):
         try:
             target = resolve_path(binding.get("path"), path.parent)
             with target.open("rb") as stream:
-                stream.read(1)
-            records.append({"id": name, "path": str(target), "readable": True})
+                data = stream.read() if binding.get("ready_when") else stream.read(1)
+            ready = record_ready(binding, data, format_of(binding, target))
+            records.append({"id": name, "path": str(target), "readable": True, "ready": ready,
+                            "readiness_note": "ready" if ready else "initialization_required"})
         except (OSError, ValueError) as error:
             records.append({"id": name, "readable": False, "error": str(error)})
-    readable = {r["id"]: r["readable"] for r in records}
-    return {"ok": all(readable.values()), "operation": "inspect",
+    readiness = {r["id"]: r.get("ready", False) for r in records}
+    return {"ok": all(readiness.values()), "operation": "inspect",
             "profile_id": profile["profile_id"], "instructions": profile.get("instructions", ""),
             "historical_reference": profile.get("historical_reference"), "records": records,
             "routes": profile["routes"], "ready_routes": [kind for kind, route in profile["routes"].items()
-                                                           if all(readable.get(name, False) for name in route["records"])]}
+                                                           if all(readiness.get(name, False) for name in route["records"])]}
 
 
 def write_new(path, value):
