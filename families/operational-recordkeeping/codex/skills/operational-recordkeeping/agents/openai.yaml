@@ -1,0 +1,6 @@
+interface:
+  display_name: "Operational Recordkeeping"
+  short_description: "Close actions with verified, consistent records"
+  default_prompt: "Use $operational-recordkeeping to reconcile this event with its existing ledger, correspondence and current obligations."
+policy:
+  allow_implicit_invocation: true

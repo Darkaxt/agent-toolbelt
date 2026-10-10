@@ -25,6 +25,11 @@ Each runtime family ships its own Codex skill bundle. Instruction-only skills us
 
 ## Install flow
 
+Operational Recordkeeping: copy
+`families/operational-recordkeeping/codex/skills/operational-recordkeeping` to the
+personal skills directory. Its bundled helper needs no checkout bootstrap. Keep
+private profiles outside the bundle as described in the family README.
+
 1. Open the family README you want.
 2. Copy that family skill folder into your Codex home skills directory.
 3. Keep the clone intact so the wrapper scripts can bootstrap the matching family package plus `packages/core`.
