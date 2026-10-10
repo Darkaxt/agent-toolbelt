@@ -3,7 +3,7 @@ name: operational-recordkeeping
 description: Reconcile bills, payments, correspondence, decisions and purchases with existing durable records before reporting completion. Use for company management and apartment setup operations, especially after received invoices, sent emails, payment confirmations or changed decisions; not unrelated chat or a new accounting system.
 license: MIT
 metadata:
-  version: "0.1.1"
+  version: "0.1.2"
   compatibility: Codex and Claude; Python 3.11+ standard library. Private local project profiles and existing text, JSON or XLSX records.
 ---
 

@@ -90,3 +90,20 @@ GitHub; do not report synchronization before confirming remote integration.
 
 No tracked deferrals. Populating real current items remains the owning task's
 explicit initialization duty, not something an empty file can claim satisfied.
+
+## v0.1.2: Accurate Readability Diagnostics
+
+Fix the pilot finding that initialization validation failures were misreported
+as file-read failures. Acceptance: readable records with missing or duplicate
+initialization headings retain their path and report readable=true, ready=false
+with the validation error; missing files remain unreadable. Routes, preparation
+and closure must continue to fail closed. Tests must not modify business records.
+Deploy matching Codex/Claude bundles and synchronize the verified source update.
+
+This is a narrow diagnostic correction; no new business-context reconciliation,
+record mutation, routing change or broader workflow is authorized by this patch.
+
+Verification: the regression failed for both missing and duplicate headings
+before the correction and passes afterward. Canonical and both installed helpers
+pass focused behavioral checks; root wiring checks and installed structural/hash
+validation pass. No business records or private profile bindings were changed.
