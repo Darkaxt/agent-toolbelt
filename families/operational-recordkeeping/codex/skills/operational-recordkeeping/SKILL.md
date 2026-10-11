@@ -1,9 +1,9 @@
 ---
 name: operational-recordkeeping
-description: Reconcile bills, payments, correspondence, decisions and purchases with existing durable records before reporting completion. Use for company management and apartment setup operations, especially after received invoices, sent emails, payment confirmations or changed decisions; not unrelated chat or a new accounting system.
+description: Check existing records before drafting financial correspondence and reconcile bills, payments, correspondence, decisions and purchases before reporting completion. Use for accountant replies, company management and apartment setup operations; not unrelated chat or a new accounting system.
 license: MIT
 metadata:
-  version: "0.1.2"
+  version: "0.1.3"
   compatibility: Codex and Claude; Python 3.11+ standard library. Private local project profiles and existing text, JSON or XLSX records.
 ---
 
@@ -13,6 +13,26 @@ An operational action includes reconciling its affected records, not just produc
 an email or answering the immediate question. Do not claim completion while a
 required update or verification remains undone. No new authority to send, pay,
 purchase, contact third parties or approve accounting treatment is granted.
+
+## Before Financial Correspondence
+
+Before drafting or editing an accountant, rent, invoice or payment response, or
+claiming "I have everything", read the actual request and inspect the relevant
+current records and supporting evidence. Profile `inspect` locates records; it
+does not read their business facts or certify readiness to answer.
+
+Use [correspondence preflight](references/correspondence-preflight.md) to map
+material claims and requested documents to inspected sources and explicit gaps.
+Check existing records before asking the user for information already held.
+Do not confuse a known payer account or lease terms with verified payment,
+allocation or the requested receipts. Do not silently downgrade a requested
+document to "optional supporting evidence".
+
+Read back the saved body and actual attachments against that map before calling
+the response ready. Saved, ready for the stated purpose, sent and reconciled are
+different outcomes. An intentional clarification/partial response is allowed;
+unresolved internal questions or missing required evidence must not silently
+become a supposedly complete response. Helper success is not content validation.
 
 ## Apply To The Current Event
 
@@ -33,7 +53,8 @@ purchase, contact third parties or approve accounting treatment is granted.
    reimbursement proposal affects correspondence, current obligations AND ledger.
    Establish shared facts and scoped read-back proofs. Do not infer a successful
    outcome merely because the action was planned.
-4. Perform the authorized domain action if it has not already occurred, then
+4. After any applicable correspondence preflight, perform the authorized domain
+   action if it has not already occurred, then
    inspect its actual evidence. Run `prepare` before changing durable records,
    not before the evidence-producing action: a sent-mail check needs actual sent
    evidence. For a recovered omission, prepare a repair event now; do not pretend
