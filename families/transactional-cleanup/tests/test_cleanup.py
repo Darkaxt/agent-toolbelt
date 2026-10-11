@@ -392,6 +392,41 @@ class CleanupTests(unittest.TestCase):
             with self.subTest(path=path), self.assertRaises(CleanupError):
                 self.engine.register(self.transaction, path, 'temporary', 'not sufficient', regenerated=True)
 
+    @unittest.skipUnless(os.name == 'nt', 'Windows exact-file application')
+    def test_preexisting_tracked_template_does_not_block_generated_output_cleanup(self):
+        subprocess.run(['git', 'init', str(self.work)], check=True, capture_output=True)
+        output = self.work / 'build'
+        output.mkdir()
+        template = output / 'reference-wrapper.properties'
+        template.write_text('distributionUrl=retained-template\n', encoding='utf-8')
+        subprocess.run(['git', '-C', str(self.work), 'add', '.'], check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(self.work), '-c', 'user.name=Cleanup Tests',
+                        '-c', 'user.email=cleanup@example.invalid', 'commit', '-m', 'fixture'],
+                       check=True, capture_output=True)
+        template.write_text('distributionUrl=local-edit-must-survive\n', encoding='utf-8')
+        artifact = output / 'generated.bin'
+        artifact.write_bytes(b'disposable-build-output')
+        transaction = self.engine.begin(self.work, [output])['transaction_id']
+        self.engine.register(transaction, output, 'explicit-generated-output',
+                             'verified pre-existing build output mixed with tracked template',
+                             regenerated=True)
+        review = self.engine.review(transaction)
+        members = self.engine.inspect(transaction, limit=100)['page_items']
+        excluded = next(item for item in members if item['path'] == str(template))
+        self.assertEqual(excluded['reason'], 'git_tracked')
+        self.assertEqual(excluded['decision'], 'excluded')
+        self.assertEqual(review['candidate_bytes'], len(b'disposable-build-output'))
+        ticket = self.engine.ticket(transaction, review['manifest_sha256'])['ticket_id']
+        result = self.engine.apply(ticket)
+        self.assertEqual(result['deleted_bytes'], len(b'disposable-build-output'))
+        self.assertFalse(artifact.exists())
+        self.assertEqual(template.read_text(encoding='utf-8'),
+                         'distributionUrl=local-edit-must-survive\n')
+        self.assertTrue((self.work / '.git').is_dir())
+        self.assertIn('reference-wrapper.properties', subprocess.run(
+            ['git', '-C', str(self.work), 'diff', '--name-only'],
+            check=True, capture_output=True, text=True).stdout)
+
     def test_git_tracked_and_newly_staged_files_survive(self):
         subprocess.run(['git', 'init', str(self.work)], check=True, capture_output=True)
         out = self.output()
