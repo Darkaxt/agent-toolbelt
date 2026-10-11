@@ -7,6 +7,19 @@ that runtime, not an editable repository dependency. `GRADLE_BUILD_GATE_HOME`
 selects a runtime location; `AGENT_TOOLBELT_HOME` is an explicit development
 checkout override. No background service or scheduled task is installed.
 
+The installer registers `Darka.GradleBuildGate` using a per-user `Gradle Build
+Gate.lnk` in the Start-menu Programs folder and its own HKCU AppUserModelId
+DisplayName/IconUri metadata. An existing shortcut with another identity is not
+overwritten. No COM activation handler or execution action is added to the toast;
+the shortcut target is a hidden immediate-exit system PowerShell invocation.
+Silent toast submission/removal uses a hidden Windows PowerShell/WinRT transport
+with JSON on stdin, never interpolated task text as code. Its diagnostic transport
+limit applies only to that optional subprocess. Notification work runs separately,
+and teardown joins only after mutex/ticket release, including exceptional exits.
+It never takes the build mutex, cancels Gradle or changes owner-support requests.
+Use `desktop_notification` for submitted/disabled/unavailable/removal evidence;
+no notification API receipt proves a banner was actually seen.
+
 Execution tickets live under the shared local runtime's `queue/session-<id>`
 directory, independent of skill/runtime-release overrides. Metadata updates use
 `Local\Darka.AndroidGradleBuildQueue`; this is not a substitute for the build

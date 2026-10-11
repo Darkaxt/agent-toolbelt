@@ -219,7 +219,7 @@ class Contracts(unittest.TestCase):
              patch.object(self.gate, "make_profile", return_value={"arguments": [], "environment": {}}):
             with temporary_workspace() as root:
                 (Path(root) / "gradlew.bat").touch()
-                result = self.gate.run_build(Path(root), ["test"], retire_daemons="none")
+                result = self.gate.run_build(Path(root), ["test"], retire_daemons="none", notify=False)
         self.assertEqual(events, ["ticket_turn", "acquire", "track", "subscribe", "inspect", "wait", "inspect", "execute", "unsubscribe", "release", "ticket_release"])
         self.assertEqual(result["queue_ticket"]["number"], 7)
         self.assertTrue(result["usage_tracking"]["ok"])
@@ -237,7 +237,7 @@ class Contracts(unittest.TestCase):
                  patch.object(self.gate, "inspect_activity", return_value={"safe_to_start": True, "processes": []}), \
                  patch.object(self.gate, "make_profile", return_value={"arguments": [], "environment": {}}), \
                  patch.object(self.gate, "execute_wrapper", return_value={"exit_code": 7}):
-                result = self.gate.run_build(project, ["test"], retire_daemons="none")
+                result = self.gate.run_build(project, ["test"], retire_daemons="none", notify=False)
         self.assertEqual(result["exit_code"], 7)
         self.assertFalse(result["usage_tracking"]["ok"])
         self.assertEqual(result["usage_tracking"]["failure_kind"], "ValueError")
@@ -266,7 +266,7 @@ class Contracts(unittest.TestCase):
                  patch.object(self.gate, "make_profile", return_value={"gradle_jvmargs": "-Xmx3g"}), \
                  patch.object(self.gate, "retire_daemon", side_effect=lambda p: events.append("retire") or {"process_exit_verified": True}), \
                  patch.object(self.gate, "execute_wrapper", side_effect=lambda *a: events.append("build") or {"exit_code": 0}):
-                result = self.gate.run_build(project, ["test"])
+                result = self.gate.run_build(project, ["test"], notify=False)
         self.assertEqual(events, ["ticket_turn", "acquire", "inspect", "inspect", "retire", "inspect", "build", "release", "ticket_release"])
         self.assertTrue(result["daemon_retirement"]["retired"][0]["process_exit_verified"])
 
@@ -292,7 +292,7 @@ class Contracts(unittest.TestCase):
                  patch.object(self.gate, "inspect_activity", side_effect=[idle, busy, busy]), \
                  patch.object(self.gate, "retire_daemon") as retire, patch.object(self.gate, "execute_wrapper") as build:
                 with self.assertRaisesRegex(RuntimeError, "still active"):
-                    self.gate.run_build(Path(root), ["test"])
+                    self.gate.run_build(Path(root), ["test"], notify=False)
                 retire.assert_not_called(); build.assert_not_called()
 
     def test_daemon_metadata_handles_quoted_distribution_path(self):

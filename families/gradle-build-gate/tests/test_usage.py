@@ -240,11 +240,12 @@ class PolicyContracts(unittest.TestCase):
             root = Path(directory)
             runtime = root / "runtime"
             roots = [root / agent / "skills" for agent in (".codex", ".agents", ".claude")]
-            command = [sys.executable, "-B", str(family / "scripts/install.py"), "--runtime-root", str(runtime)]
+            command = [sys.executable, "-B", str(family / "scripts/install.py"), "--runtime-root", str(runtime),
+                       "--skip-notification-registration"]
             for skill_root in roots:
                 command.extend(["--skills-root", str(skill_root)])
             subprocess.run(command, capture_output=True, text=True, check=True)
-            self.assertEqual(json.loads((runtime / "active.json").read_text())["version"], "0.5.0")
+            self.assertEqual(json.loads((runtime / "active.json").read_text())["version"], "0.6.0")
             project = root / "project"
             props = project / "gradle/wrapper/gradle-wrapper.properties"
             props.parent.mkdir(parents=True)
