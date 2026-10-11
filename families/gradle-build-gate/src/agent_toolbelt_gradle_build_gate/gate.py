@@ -568,7 +568,7 @@ def execute_wrapper(project, profile, log_path):
 
 
 def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemons="incompatible",
-              diagnostic_quiet_seconds=300, owner_task=None, notify=True, tray=True, **options):
+              diagnostic_quiet_seconds=300, owner_task=None, thread_name=None, notify=True, tray=True, **options):
     from contextlib import ExitStack
     from .notifications import BuildNotification
     from .queue import TicketQueue
@@ -587,8 +587,8 @@ def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemo
         local = Path(os.environ.get("LOCALAPPDATA", str(Path.home())))
         log_path = local / "Tools/gradle-build-gate/logs" / (uuid.uuid4().hex + ".log")
     with ExitStack() as lifetime:
-        telemetry = lifetime.enter_context(BuildTelemetry(project, owner_task, enabled=tray))
-        desktop = lifetime.enter_context(BuildNotification(project, owner_task, enabled=notify))
+        telemetry = lifetime.enter_context(BuildTelemetry(project, owner_task, thread_name=thread_name, enabled=tray))
+        desktop = lifetime.enter_context(BuildNotification(project, owner_task, thread_name=thread_name, enabled=notify))
         request = lifetime.enter_context(TicketQueue(on_registered=telemetry.registered))
         lifetime.callback(telemetry.released)
         mutex = lifetime.enter_context(NamedMutex())

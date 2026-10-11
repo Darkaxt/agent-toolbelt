@@ -40,7 +40,8 @@ def main(argv=None):
         command.add_argument("--observe-home", type=Path, action="append", default=[])
     run = commands.add_parser("run", help="Queue in FIFO order, wait, inspect, and run under the shared mutex")
     run.add_argument("--project", required=True, type=Path)
-    run.add_argument("--owner-task", help="Human-readable current task title for the silent desktop notification")
+    run.add_argument("--owner-task", help="Current operation label for tray and desktop notification")
+    run.add_argument("--thread-name", help="Actual Codex/Claude conversation title; omitted names display Unknown")
     run.add_argument("--no-notify", action="store_true", help="Disable optional desktop owner notification")
     run.add_argument("--no-tray", action="store_true", help="Disable optional tray telemetry and auto-start for this request")
     run.add_argument("--observe-home", action="append", default=[])
@@ -88,7 +89,7 @@ def main(argv=None):
                                     gradle_heap=args.gradle_heap_gb, kotlin_heap=args.kotlin_heap_gb,
                                     memory_reason=args.memory_reason, kotlin_strategy=args.kotlin_strategy,
                                     diagnostic_quiet_seconds=args.diagnostic_quiet_seconds,
-                                    owner_task=args.owner_task, notify=not args.no_notify,
+                                    owner_task=args.owner_task, thread_name=args.thread_name, notify=not args.no_notify,
                                     tray=not args.no_tray,
                                     retire_daemons=args.retire_daemons, collect_all_failures=args.collect_all_failures)
         print(json.dumps(result, indent=2))

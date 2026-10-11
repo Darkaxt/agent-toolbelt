@@ -3,7 +3,7 @@ name: gradle-build-gate
 description: Run Windows Gradle builds and tests through a shared session-wide mutex supervisor, inspect active versus idle daemons, and apply a conservative memory profile without interrupting other builds.
 license: MIT
 metadata:
-  version: "0.7.0"
+  version: "0.7.1"
   compatibility: Windows desktop, Python 3.11+, Windows PowerShell, project gradlew.bat, existing JDK with source-file execution; no Python dependencies.
 ---
 
@@ -15,13 +15,16 @@ The shared name is `Local\Darka.AndroidGradleBuildGate` for all agent installs.
 
 ```powershell
 python scripts/invoke_gradle_build_gate.py status
-python scripts/invoke_gradle_build_gate.py run --project D:/path/android-project -- :app:testDebugUnitTest
+python scripts/invoke_gradle_build_gate.py run --project D:/path/android-project --owner-task "Verify unit tests" --thread-name "Actual conversation title" -- :app:testDebugUnitTest
 ```
 
-For each run, pass `--owner-task "Current task title"` BEFORE `--` so the silent
-Windows notification identifies the actual task and project. Without a label,
-the helper uses `CODEX_THREAD_ID` or a supplied `CLAUDE_SESSION_ID`; otherwise it
-explicitly reports an unknown task and supervisor PID. Do not invent a title.
+For each run, pass `--owner-task "Current operation"` and
+`--thread-name "Actual conversation title"` BEFORE `--`. The silent notification
+and tray show Task and Thread Name, not the project directory. Supply the real
+Codex/Claude conversation title when known; do not invent one or substitute the
+project folder. Omitted/blank thread names and legacy records display Unknown.
+Without a task label, the helper uses `CODEX_THREAD_ID` or a supplied
+`CLAUDE_SESSION_ID`; otherwise it reports an unknown task and supervisor PID.
 The notification appears only after acquiring the mutex, never merely joining
 the queue. It identifies the gate owner, which may still be checking/waiting for
 existing activity, not proof that its requested build is already executing.
@@ -35,7 +38,7 @@ or reminder notifications. Notification cleanup waits only after gate release.
 ## Desktop Tray Status
 
 New requests auto-start one silent Gradle-elephant tray observer per Windows
-login session. Hover shows current task/project, phase, gate/build elapsed time,
+login session. Hover shows Task and Thread Name, phase, gate/build elapsed time,
 waiting queue and observed usage. Click for full details; Exit tray stops only
 the UI, never Gradle. Windows may place it in notification-area overflow.
 
@@ -45,7 +48,8 @@ python scripts/invoke_gradle_build_gate.py tray status
 python scripts/invoke_gradle_build_gate.py tray stop
 ```
 
-Use `--owner-task` for the actual task title. `--no-tray` before `--` disables
+Use `--owner-task` for the current operation and `--thread-name` for its conversation.
+`--no-tray` before `--` disables
 optional telemetry/auto-start for that request, independently of `--no-notify`.
 Do not manually poll or relaunch builds based on tray state. Its one-second UI
 refresh never drives execution, ticket expiry, cancellation or inactivity checks.

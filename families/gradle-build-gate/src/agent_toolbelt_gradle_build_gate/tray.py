@@ -11,7 +11,7 @@ import threading
 import time
 
 from .gate import NamedMutex, NO_WINDOW
-from .notifications import owner_label
+from .notifications import owner_label, thread_label
 from .queue import NativeWait, default_root
 from .support import save
 
@@ -165,9 +165,10 @@ def status(root=None):
 
 
 class BuildTelemetry:
-    def __init__(self, project, owner_task=None, *, enabled=True, store=None, autostart=True):
+    def __init__(self, project, owner_task=None, *, thread_name=None, enabled=True, store=None, autostart=True):
         self.enabled, self.autostart, self.store = enabled, autostart, store
-        self.row = {'owner_task': owner_label(owner_task), 'project': str(project), 'queued_at': time.time()}
+        self.row = {'owner_task': owner_label(owner_task), 'thread_name': thread_label(thread_name),
+                    'project': str(project), 'queued_at': time.time()}
         self.queued = time.monotonic()
         self.acquired = self.build_started = self.build_finished = None
         self.finished_at = None

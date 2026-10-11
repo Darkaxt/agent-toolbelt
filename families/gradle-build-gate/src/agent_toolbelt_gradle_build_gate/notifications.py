@@ -23,8 +23,12 @@ def owner_label(explicit):
     return f'Task unknown (supervisor PID {os.getpid()})'
 
 
-def payload(project, ticket_id, owner):
-    lines = ['Gradle gate in use', f'Task: {owner}', f'Project: {clean_text(project, 500)}',
+def thread_label(explicit):
+    return clean_text(explicit or '', 200) or 'Unknown'
+
+
+def payload(project, ticket_id, owner, *, thread_name=None):
+    lines = ['Gradle gate in use', f'Task: {owner}', f'Thread Name: {thread_label(thread_name)}',
              'Gate owner; preflight may still be waiting for an existing build.',
              'Admitted: ' + datetime.now(timezone.utc).isoformat(timespec='seconds')]
     xml = ('<toast><visual><binding template="ToastGeneric">' +
@@ -60,14 +64,15 @@ def transport(action, message):
 
 
 class BuildNotification:
-    def __init__(self, project, owner_task=None, *, enabled=True):
+    def __init__(self, project, owner_task=None, *, thread_name=None, enabled=True):
         self.project = project
         self.owner = owner_label(owner_task)
+        self.thread_name = thread_label(thread_name)
         self.enabled = enabled
         self.closed = threading.Event()
         self.worker = None
         self.result = {'state': 'not_started' if enabled else 'disabled', 'silent': True,
-                       'owner_task': self.owner, 'project': str(project),
+                       'owner_task': self.owner, 'thread_name': self.thread_name, 'project': str(project),
                        'visibility_verified': False, 'identity': 'Gradle Build Gate'}
 
     def __enter__(self):
@@ -77,7 +82,7 @@ class BuildNotification:
         if not self.enabled or self.worker is not None:
             return
         try:
-            message = payload(self.project, ticket['id'], self.owner)
+            message = payload(self.project, ticket['id'], self.owner, thread_name=self.thread_name)
             self.worker = threading.Thread(target=self._run, args=(message,), name='gradle-desktop-notification')
             self.worker.start()
         except Exception as error:
