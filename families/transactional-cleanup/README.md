@@ -26,6 +26,16 @@ removed output, preserved source and actual residual blockers separately.
 Verified disposable validation clones use the explicit contract below, including
 their tracked members; this does not authorize removal of maintained repositories.
 
+## Scratch Placement
+
+Create agent-owned disposable clones, staging, logs and captures beneath exact task
+folders in D:/Temp or E:/Temp. Configure child TEMP/TMP and tool scratch directories
+where supported, without changing global settings. Record unavoidable external
+outputs explicitly. Maintained checkouts, deliverables, installations and durable
+ticket state keep their intentional locations. The helper does not intercept agent
+writes; placement is an execution rule, not a claim of host-wide enforcement.
+Existing attributable output outside Temp remains eligible for scoped cleanup.
+
 ## Install
 
 From this family run `python scripts/install.py`. It deploys a shared dependency-free
@@ -47,6 +57,8 @@ agent-toolbelt-transactional-cleanup apply --ticket <id> --dry-run
 agent-toolbelt-transactional-cleanup apply --ticket <id>
 agent-toolbelt-transactional-cleanup status [--transaction <id>]
 agent-toolbelt-transactional-cleanup revoke --ticket <id>
+agent-toolbelt-transactional-cleanup state-inventory
+agent-toolbelt-transactional-cleanup discard --transaction <unissued-id> --reason <abandonment-reason>
 ```
 
 `--state-root` is a global option for isolated test state. `begin --workspace`
@@ -88,6 +100,23 @@ whose root identity changes after review remain protected. Review includes the
 tracked files and `.git` metadata as exact ticket members. New files created after
 review survive; no recursive repository deletion is used.
 
+## Explicit Obsolete Checkout Retirement
+
+An explicitly authorized whole obsolete checkout may be outside Temp. Use
+`--kind retired-repository --regenerated --retirement-evidence <external-json>
+--confirm-retire-repository <exact-root>` with an exact scan root and a separate
+workspace. See [the evidence contract](codex/skills/transactional-cleanup/references/retirement.md).
+
+The helper verifies a clean standalone checkout, no additional worktrees/submodules,
+independent existing bare recovery with original refs and anchored reflog history,
+object integrity, stable identities and visible process references. Owner evidence
+must record explicit authorization and actual ownership/service/scheduler/dependency
+checks. No automatic backup, blanket tracked-file override, recursive delete or
+Gradle execution gate is introduced. Ordinary maintained source remains protected.
+Retired regular files are content-hashed: edits, replacements and new files survive.
+First apply revalidates Git state; a partial retry tolerates removed Git metadata.
+This feature must not be used to evade a tool's actual deletion-policy rejection.
+
 ## State And Limits
 
 Normalized SQLite/WAL metadata and manifest rows are HMAC-bound to a local helper
@@ -100,6 +129,17 @@ items rather than synchronizing once per object. A crash before the next batch c
 can turn an already deleted item into `already_missing` on retry, but can never add
 authority. There is no ticket expiry or command cancellation timeout. Terminal state
 retains at most 100 compact summaries and removes detailed rows.
+
+Unissued open/reviewed snapshots otherwise remain durable; they are not pruned by
+age. `state-inventory` reports their rows, file sizes and live root claims without
+scanning cleanup targets. Explicit `discard --transaction --reason` abandons an
+unissued inventory, not target files, and reclaims its database pages. Live target
+operations and issued tickets block discard; use completion or explicit revocation
+for tickets. Legacy open v1 snapshots are authenticated with bounded reads and
+replaced by compact signed summaries only when no overlapping operation is active;
+already running disjoint operations remain independent.
+Close/discard unused snapshots after cancellation or a strategy change. Never delete
+the state key/database or put durable authorization state in routinely purged Temp.
 
 Version 0.4.2 exhausts indexed, bounded read pages before filesystem deletion or
 result commits. This prevents a disjoint writer from invalidating a retained WAL

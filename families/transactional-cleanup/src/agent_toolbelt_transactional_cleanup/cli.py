@@ -28,6 +28,8 @@ def parser():
                           help='Allow deletion of exact ticketed leaf symlinks/junctions without traversing targets')
     register.add_argument('--allow-disposable-repository', action='store_true',
                           help='Allow an exact reviewed standalone repository beneath a Temp root')
+    register.add_argument('--retirement-evidence', help='External JSON ownership and independent recovery evidence')
+    register.add_argument('--confirm-retire-repository', help='Explicitly confirm the exact obsolete checkout root')
     for name in ('review', 'ticket'):
         command = commands.add_parser(name)
         command.add_argument('--transaction', required=True)
@@ -45,6 +47,10 @@ def parser():
     apply.add_argument('--dry-run', action='store_true')
     revoke = commands.add_parser('revoke')
     revoke.add_argument('--ticket', required=True)
+    discard = commands.add_parser('discard', help='Compact an explicitly abandoned unissued snapshot; delete no target files')
+    discard.add_argument('--transaction', required=True)
+    discard.add_argument('--reason', required=True)
+    commands.add_parser('state-inventory', help='Report retained state and live root claims without scanning targets')
     return result
 
 
@@ -54,6 +60,10 @@ def main(argv=None):
         engine = Engine(args.state_root)
         if args.command == 'status':
             result = engine.status(args.transaction)
+        elif args.command == 'state-inventory':
+            result = engine.state_inventory()
+        elif args.command == 'discard' and engine.legacy_path(args.transaction).is_file():
+            result = engine.discard_legacy(args.transaction, args.reason)
         else:
             transaction = getattr(args, 'transaction', None)
             if args.command == 'begin':
@@ -70,7 +80,8 @@ def main(argv=None):
                 elif args.command == 'register':
                     result = engine.register(args.transaction, args.path, args.kind, args.evidence,
                                              args.regenerated, args.allow_hardlinks, args.allow_leaf_reparse,
-                                             args.allow_disposable_repository)
+                                             args.allow_disposable_repository, args.retirement_evidence,
+                                             args.confirm_retire_repository)
                 elif args.command == 'review':
                     result = engine.review(args.transaction)
                 elif args.command == 'ticket':
@@ -79,6 +90,8 @@ def main(argv=None):
                     result = engine.apply(args.ticket, args.dry_run)
                 elif args.command == 'revoke':
                     result = engine.revoke(args.ticket)
+                elif args.command == 'discard':
+                    result = engine.discard(args.transaction, args.reason)
                 elif args.command == 'inspect':
                     result = engine.inspect(args.transaction, args.offset, args.limit, args.decision)
     except sqlite3.Error as exc:

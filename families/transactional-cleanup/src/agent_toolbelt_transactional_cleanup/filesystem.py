@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager, ExitStack
 import ctypes
+import hashlib
 from ctypes import wintypes
 from functools import lru_cache
 import os
@@ -70,6 +71,9 @@ if os.name == 'nt':
     kernel.SetFileInformationByHandle.restype = wintypes.BOOL
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel.CloseHandle.restype = wintypes.BOOL
+    kernel.ReadFile.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
+                               ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]
+    kernel.ReadFile.restype = wintypes.BOOL
 
 
 @contextmanager
@@ -131,6 +135,26 @@ def filesystem_type(anchor):
     return buffer.value
 
 
+def hash_handle(opened):
+    checksum = hashlib.sha256()
+    buffer = ctypes.create_string_buffer(1024 * 1024)
+    count = wintypes.DWORD()
+    while True:
+        if not kernel.ReadFile(opened, buffer, len(buffer), ctypes.byref(count), None):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if not count.value:
+            return checksum.hexdigest()
+        checksum.update(buffer.raw[:count.value])
+
+
+def content_snapshot(entry):
+    with handle(canonical(entry['path']), delete=True) as opened:
+        current = from_handle(opened)
+        if current['identity'] != entry['identity'] or current['reparse']:
+            raise ValueError('Retired file changed during review')
+        return hash_handle(opened)
+
+
 def delete_exact(entry: dict, *, dry_run: bool = False) -> tuple[str, int]:
     """Keep ancestors immovable and dispose the checked object through its open handle."""
     path = canonical(entry['path'])
@@ -140,8 +164,12 @@ def delete_exact(entry: dict, *, dry_run: bool = False) -> tuple[str, int]:
         with ExitStack() as stack:
             for parent in reversed(path.parents):
                 opened = stack.enter_context(handle(parent, ancestor=True))
-                if from_handle(opened)['reparse']:
+                parent_info = from_handle(opened)
+                if parent_info['reparse']:
                     return 'protected', 0
+                if str(parent) == entry.get('retired_repository_root') and (
+                        parent_info['identity'] != entry['retired_repository_identity']):
+                    return 'replaced_after_scan', 0
             opened = stack.enter_context(handle(path, delete=True))
             current = from_handle(opened)
             if current['reparse'] and not entry.get('allow_leaf_reparse'):
@@ -150,6 +178,8 @@ def delete_exact(entry: dict, *, dry_run: bool = False) -> tuple[str, int]:
                 return 'protected', 0
             if current['identity'] != entry['identity'] or current['directory'] != entry['directory']:
                 return 'replaced_after_scan', 0
+            if entry.get('content_sha256') and hash_handle(opened) != entry['content_sha256']:
+                return 'modified_after_review', 0
             # A permitted leaf reparse point is the link object itself. Never
             # enumerate it, because that would traverse its target.
             if current['directory'] and not current['reparse'] and any(path.iterdir()):

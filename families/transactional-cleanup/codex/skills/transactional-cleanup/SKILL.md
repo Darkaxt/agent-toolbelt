@@ -3,7 +3,7 @@ name: transactional-cleanup
 description: Clean generated build, deployment, browser, media and temporary artifacts through reviewed snapshots and exact-file deletion tickets. Use when a task leaves local output to reclaim, including output outside its workspace.
 license: MIT
 metadata:
-  version: "0.4.4"
+  version: "0.5.0"
   compatibility: Windows 10/11, Python 3.11+, NTFS/ReFS identity. Codex and Claude; installed local helper required.
 ---
 
@@ -12,6 +12,22 @@ metadata:
 Use `scripts/invoke_transactional_cleanup.py` for attributed generated artifacts.
 Read the JSON results and inspect the review before issuing a ticket. An issued
 ticket is a procedural review gate, not a request for another user approval.
+
+## Prevent Litter Before Creation
+
+Create task-owned scratch beneath an exact task folder in `D:/Temp` or `E:/Temp`:
+disposable clones/worktrees, captures, downloaded verification copies, logs,
+packaging intermediates and evidence staging. Set child-process `TEMP`/`TMP` or
+tool-specific scratch options when supported; do not change global environment
+settings or pretend every tool honors them. Record unavoidable outside-Temp output
+and register its exact generated path for cleanup. Do not scatter scratch beside
+maintained checkouts or in Documents, Downloads, C: user Temp or helper installations.
+
+Maintained source, requested deliverables, installed runtimes and durable ticket
+state are NOT temporary scratch. Keep their intentional paths; do not move an
+existing checkout into Temp merely to obtain deletion authority. Clean attributable
+existing leftovers outside Temp using their proper contract below. The helper
+does not intercept arbitrary filesystem writes; agents must enforce placement.
 
 Cleanup MUST NOT acquire the Gradle build mutex, join its execution queue, or be
 wrapped in the Gradle build launcher. Use this helper's own exact-target locks.
@@ -32,6 +48,8 @@ a blanket refusal to remove anything inside a repository. Classify each target:
   A repository ancestor does not make untracked build output untouchable.
 - Disposable validation clone: use Disposable Validation Repositories only when
   that exact clone satisfies its contract; tracked members can then be ticketed.
+- Entire obsolete checkout, including outside Temp: use Explicit Repository
+  Retirement below, not the disposable-validation shortcut.
 - Obsolete tracked source or templates: removal is a normal source change, not a
   cleanup ticket. If removal is within the user's authorized scope, inspect
   references, build/package consumers and local changes, make the narrow reviewed
@@ -75,6 +93,10 @@ deleting the template does not reclaim those dependencies.
    Retry the same ticket after
    locks release. Do not report completion while `partially_applied` remains.
    `revoke --ticket <id>` explicitly abandons unresolved cleanup without deleting it.
+   If no ticket was issued, use `discard --transaction <id> --reason "<why the
+   snapshot is no longer needed>"`. This abandons the inventory, not the target
+   files; future cleanup requires a fresh snapshot. Close snapshots after task
+   completion, failure or a change of strategy; do not leave abandoned inventories.
 
 All commands accept `--state-root <directory>` before the command for test isolation.
 Keep normal installed commands on their default helper state.
@@ -142,8 +164,8 @@ deleting them outside the helper.
 - A replacement at the same path is skipped as `replaced_after_scan`.
 - Locked files are retryable; other eligible files are processed independently.
 - Junctions, symlinks, hard links, tracked files and critical roots are protected.
-  The only tracked-file exception is an exact ticketed member of an explicitly
-  authorized disposable validation repository as defined above.
+  Tracked-file exceptions require an exact authorized disposable validation
+  repository or the separately evidenced obsolete-checkout retirement contract.
 - Exact hard-link names or leaf symlink/junction objects may be enabled only on an
   explicit registration with `--allow-hardlinks` or `--allow-leaf-reparse`. These
   options never authorize another link name or traversal/deletion of a link target.
@@ -153,6 +175,44 @@ deleting them outside the helper.
 - Terminal transactions retain a compact summary; detailed inventories are removed.
 - This helper remains subject to command policy. If its invocation is rejected,
   report the rejection; do not switch shells or methods to bypass it.
+
+## Explicit Repository Retirement
+
+Whole maintained or legacy checkouts are not ordinary generated trash. When the
+user explicitly authorizes retirement, use an exact scan root, a separate workspace,
+and an external evidence document matching [the retirement contract](references/retirement.md).
+Register with `--kind retired-repository --regenerated --retirement-evidence <json>
+--confirm-retire-repository <exact-checkout-root> --evidence "<retirement purpose>"`.
+
+The helper verifies a clean standalone checkout, absence of additional worktrees
+and submodules, all local/ref/reflog history in an independent existing bare
+recovery repository, object integrity, stable identities and visible process
+references. Record ownership, scheduler/service and dependency checks; command
+lines do not prove universal inactivity. Preserve dirty work or recover missing
+history before retrying. Never manufacture attestations or create an unnecessary
+backup automatically. Existing remote-tracking refs alone do not prove recovery.
+
+Review, inspect and ticket normally. Retired regular files additionally receive
+content hashes: new, replaced or edited members survive; retry tolerates already
+removed Git metadata. No recursive delete or Gradle gate is used. An unsupported
+helper mode is not a tool rejection. A rejected direct shell command does not
+establish that the helper was attempted or rejected, but must not be evaded.
+
+## Keep Helper State Small
+
+Run `state-inventory` to see retained files, unfinished transactions and live
+root claims without scanning the targets. Distinguish large active manifests from
+abandoned unissued inventories; age, low CPU or a recorded PID is not ownership
+proof. Explicit `discard` checks the target locks, rejects issued tickets, removes
+SQLite detail and reclaims database pages while retaining a compact reasoned
+summary. It also authenticates and compacts unissued v1 open snapshots using
+bounded reads. Legacy compaction rejects overlapping live operations and leaves
+already running disjoint operations alone.
+Issued/partial tickets require completion or an explicit `revoke`, never discard.
+
+Do not delete the state directory/key/database, prune pending tickets by age, or
+move durable state into routinely purged Temp. Do not call VACUUM a cure for live
+inventory rows. Report remaining valid state separately from reclaimed metadata.
 
 ## Installation
 
