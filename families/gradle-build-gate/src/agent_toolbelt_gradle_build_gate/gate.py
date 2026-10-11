@@ -568,7 +568,9 @@ def execute_wrapper(project, profile, log_path):
 
 
 def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemons="incompatible",
-              diagnostic_quiet_seconds=300, **options):
+              diagnostic_quiet_seconds=300, owner_task=None, notify=True, **options):
+    from contextlib import ExitStack
+    from .notifications import BuildNotification
     from .queue import TicketQueue
     from .usage import record_project
     project = Path(project).expanduser().resolve()
@@ -583,8 +585,12 @@ def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemo
     if log_path is None:
         local = Path(os.environ.get("LOCALAPPDATA", str(Path.home())))
         log_path = local / "Tools/gradle-build-gate/logs" / (uuid.uuid4().hex + ".log")
-    with TicketQueue() as request, NamedMutex() as mutex:
+    with ExitStack() as lifetime:
+        desktop = lifetime.enter_context(BuildNotification(project, owner_task, enabled=notify))
+        request = lifetime.enter_context(TicketQueue())
+        mutex = lifetime.enter_context(NamedMutex())
         ticket = dict(request.ticket)
+        desktop.start(ticket)
         try:
             usage_tracking = record_project(project, home=observation_homes(arguments, project=project)[-1])
         except (ValueError, OSError, RuntimeError) as exc:
@@ -648,6 +654,7 @@ def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemo
     return {"ok": result["exit_code"] == 0, "operation": "run", "project": str(project),
             "gate_acquired": True, "mutex": MUTEX_NAME, "abandoned_mutex_rechecked": mutex.abandoned,
             "queue_ticket": ticket, "queue_ordering": "fifo_registration",
+            "desktop_notification": desktop.result,
             "usage_tracking": usage_tracking,
             "requested_profile": public_profile, "preflight_activity": inspection,
             "daemon_retirement": {"policy": retire_daemons, "target_version": version, "retired": retired}, **result}

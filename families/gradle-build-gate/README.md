@@ -16,6 +16,24 @@ Codex, agents and Claude skills. Installed wrappers do not need the repository.
 Runtime override: `GRADLE_BUILD_GATE_HOME`; explicit development checkout:
 `AGENT_TOOLBELT_HOME`. No tasks, services or visible helper windows are created.
 
+## Silent Desktop Owner Notification
+
+`run` sends one silent Windows app notification after actual mutex acquisition,
+showing the task and project holding the gate (including preflight/waiting).
+Pass `--owner-task "Current task title"` before `--`; absent a label, the current
+Codex task ID or supplied Claude session ID is used, otherwise owner is unknown.
+`--no-notify` opts out. Notification errors never change the build result or queue.
+
+The installer registers only this helper's per-user Start-menu shortcut and
+AppUserModelID metadata. No service, dependency, global preference change or
+click action is installed. Windows may suppress banners under its own settings;
+`desktop_notification.state=submitted` means API acceptance, not visual delivery.
+Completion removes only this ticket's history entry, after releasing the build
+gate. A force-killed supervisor cannot guarantee removal; the admission timestamp
+and notification are informational, never lock clearance. Notification transport
+limits do not limit Gradle execution or queue waits. Isolated test installations
+can use `--skip-notification-registration` to avoid changing the user's identity.
+
 The supervisor acquires the mutex, subscribes to process-exit and daemon-log
 events, checks active/idle/ambiguous identities and connections, waits for real
 transitions, and retains ownership through wrapper exit. Log markers are read

@@ -3,7 +3,7 @@ name: gradle-build-gate
 description: Run Windows Gradle builds and tests through a shared session-wide mutex supervisor, inspect active versus idle daemons, and apply a conservative memory profile without interrupting other builds.
 license: MIT
 metadata:
-  version: "0.5.0"
+  version: "0.6.0"
   compatibility: Windows desktop, Python 3.11+, Windows PowerShell, project gradlew.bat, existing JDK with source-file execution; no Python dependencies.
 ---
 
@@ -17,6 +17,20 @@ The shared name is `Local\Darka.AndroidGradleBuildGate` for all agent installs.
 python scripts/invoke_gradle_build_gate.py status
 python scripts/invoke_gradle_build_gate.py run --project D:/path/android-project -- :app:testDebugUnitTest
 ```
+
+For each run, pass `--owner-task "Current task title"` BEFORE `--` so the silent
+Windows notification identifies the actual task and project. Without a label,
+the helper uses `CODEX_THREAD_ID` or a supplied `CLAUDE_SESSION_ID`; otherwise it
+explicitly reports an unknown task and supervisor PID. Do not invent a title.
+The notification appears only after acquiring the mutex, never merely joining
+the queue. It identifies the gate owner, which may still be checking/waiting for
+existing activity, not proof that its requested build is already executing.
+
+Notifications use silent audio and are removed by ticket on completion. Windows
+Do Not Disturb or notification settings may suppress the banner; `submitted` is
+not verified visibility. `desktop_notification` reports submission/removal without
+changing the build result. `--no-notify` before `--` explicitly opts out. No polling
+or reminder notifications. Notification cleanup waits only after gate release.
 
 `status` is read-only and never launch clearance. `run` acquires the mutex before
 inspection and holds it through command exit. Active or ambiguous existing
