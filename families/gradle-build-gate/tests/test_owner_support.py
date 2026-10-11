@@ -241,7 +241,7 @@ class OwnerContracts(unittest.TestCase):
                     patch("agent_toolbelt_gradle_build_gate.usage.record_project", return_value={"ok": True}), \
                     patch.object(gate, "execute_wrapper", side_effect=lambda *a: events.append("wrapper_exit") or {
                         "exit_code": 1, "owner_support": {"cancellation": {"state": "ctrl_c_requested"}}}):
-                result = gate.run_build(project, ["test"], retire_daemons="none", notify=False)
+                result = gate.run_build(project, ["test"], retire_daemons="none", notify=False, tray=False)
         self.assertEqual(events, ["ticket_turn", "acquire", "wrapper_exit", "daemon_exit_wait", "release", "ticket_release"])
         self.assertTrue(result["owner_support"]["completion_verified"])
 

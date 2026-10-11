@@ -3,7 +3,7 @@ name: gradle-build-gate
 description: Run Windows Gradle builds and tests through a shared session-wide mutex supervisor, inspect active versus idle daemons, and apply a conservative memory profile without interrupting other builds.
 license: MIT
 metadata:
-  version: "0.6.0"
+  version: "0.7.0"
   compatibility: Windows desktop, Python 3.11+, Windows PowerShell, project gradlew.bat, existing JDK with source-file execution; no Python dependencies.
 ---
 
@@ -31,6 +31,31 @@ Do Not Disturb or notification settings may suppress the banner; `submitted` is
 not verified visibility. `desktop_notification` reports submission/removal without
 changing the build result. `--no-notify` before `--` explicitly opts out. No polling
 or reminder notifications. Notification cleanup waits only after gate release.
+
+## Desktop Tray Status
+
+New requests auto-start one silent Gradle-elephant tray observer per Windows
+login session. Hover shows current task/project, phase, gate/build elapsed time,
+waiting queue and observed usage. Click for full details; Exit tray stops only
+the UI, never Gradle. Windows may place it in notification-area overflow.
+
+```powershell
+python scripts/invoke_gradle_build_gate.py tray start
+python scripts/invoke_gradle_build_gate.py tray status
+python scripts/invoke_gradle_build_gate.py tray stop
+```
+
+Use `--owner-task` for the actual task title. `--no-tray` before `--` disables
+optional telemetry/auto-start for that request, independently of `--no-notify`.
+Do not manually poll or relaunch builds based on tray state. Its one-second UI
+refresh never drives execution, ticket expiry, cancellation or inactivity checks.
+It never acquires the build mutex or modifies the FIFO queue. Statistics cover
+updated-helper observations only, not all Java/Studio use: completed/failed builds,
+aborted/abandoned requests, total gate/build time and average queue/build time.
+History is bounded to 100 results with cumulative counters. PID/start identity is
+checked; older helpers or inaccessible records show unknown, not invented owners.
+No observed owner is NOT launch clearance. Observer/telemetry errors leave the
+build result and gate release unchanged; inspect `tray_tracking` for coverage gaps.
 
 `status` is read-only and never launch clearance. `run` acquires the mutex before
 inspection and holds it through command exit. Active or ambiguous existing

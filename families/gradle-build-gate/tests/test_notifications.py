@@ -121,7 +121,7 @@ class NotificationContracts(unittest.TestCase):
                  patch.object(gate, 'make_profile', return_value={}), \
                  patch.object(gate, 'execute_wrapper', return_value={'exit_code': 7}), \
                  patch.object(notifications, 'transport', side_effect=OSError('private transport detail')):
-                result = gate.run_build(project, ['test'], retire_daemons='none')
+                result = gate.run_build(project, ['test'], retire_daemons='none', tray=False)
         self.assertEqual(result['exit_code'], 7)
         self.assertTrue(result['gate_acquired'])
         self.assertEqual(result['desktop_notification']['state'], 'unavailable')
@@ -138,7 +138,7 @@ class NotificationContracts(unittest.TestCase):
                  patch.object(gate, 'make_profile', return_value={}), \
                  patch.object(notifications, 'transport') as transport:
                 with self.assertRaisesRegex(RuntimeError, 'not acquired'):
-                    gate.run_build(project, ['test'], retire_daemons='none')
+                    gate.run_build(project, ['test'], retire_daemons='none', tray=False)
         transport.assert_not_called()
 
     @unittest.skipUnless(os.name == 'nt' and os.getenv('GRADLE_GATE_NOTIFICATION_SMOKE') == '1',
@@ -200,7 +200,7 @@ ConvertTo-Json -InputObject @($items | Where-Object { $_.Tag -eq 'gate-native-te
                  patch.object(gate, 'make_profile', return_value={}), \
                  patch.object(gate, 'execute_wrapper', side_effect=lambda *a: events.append('build') or {'exit_code': 7}), \
                  patch.object(notifications, 'BuildNotification', return_value=notice):
-                result = gate.run_build(project, ['test'], retire_daemons='none', owner_task='Our task')
+                result = gate.run_build(project, ['test'], retire_daemons='none', owner_task='Our task', tray=False)
         self.assertEqual(events, ['ticket_turn', 'acquire', 'notify', 'inspect', 'wait', 'inspect',
                                   'build', 'release', 'ticket_release', 'notification_finish'])
         self.assertEqual(result['exit_code'], 7)

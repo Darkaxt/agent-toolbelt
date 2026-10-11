@@ -145,6 +145,32 @@ project-specific verification; the helper explicitly reports this gap. A helper
 test is not a real project memory-profile acceptance test: use the next already
 required focused project build, not an unrelated extra build.
 
+## Tray Observer
+
+The independent hidden PowerShell/WinForms observer draws a local elephant icon
+and owns only its own session-scoped singleton mutex. It reads queue.json and
+telemetry.json with delete-sharing so its reads do not block atomic replacement.
+It never opens the execution mutex or queue metadata mutex. No startup task or
+service is registered. Explicit `tray stop` requests only observer exit; the next
+new request may auto-start it again. --no-tray disables telemetry for that request.
+
+Telemetry lives beside session queue metadata, with a separate metadata mutex,
+atomic JSON updates and at most 100 recent results plus cumulative counters.
+It contains labels, project paths, identities, phases and timing, not commands or
+environment. Final durations use monotonic timestamps; live elapsed display uses
+wall time and is diagnostic only. Build time stops at wrapper exit; gate time
+includes preflight/completion checks but excludes post-release toast cleanup.
+No historical usage is fabricated for older installed versions. Missing or
+inaccessible identity/state remains unknown. Stale exited supervisors are not
+reported as successful builds. An observer is not Gradle activity inspection.
+
+Publication is asynchronous and best effort; tray_tracking reports failures.
+Optional readiness/snapshot/telemetry-collection bounds apply only to diagnostics,
+never build execution or queue waiting. Collection occurs after release. Lost
+telemetry is a coverage gap, not grounds for cancellation or lock manipulation.
+Exit tray or stop the observer before removing obsolete runtime files it uses;
+never interrupt supervising builds to update the tray.
+
 References: [Gradle daemon](https://docs.gradle.org/current/userguide/gradle_daemon.html),
 [Kotlin compiler strategies](https://kotlinlang.org/docs/compiler-execution-strategy.html),
 [Windows mutex](https://learn.microsoft.com/en-us/dotnet/api/system.threading.mutex).
