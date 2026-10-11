@@ -759,6 +759,17 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("without `--confirm` as a preview", skill_text)
         self.assertIn("explicit user approval", skill_text)
 
+    def test_both_skills_route_financial_drafts_to_records_first_review(self):
+        family = Path(__file__).resolve().parents[1]
+        for relative in ("codex/skills/outlook-classic-mail/SKILL.md",
+                         "claude/marketplaces/agent-toolbelt-local/plugins/outlook-classic-mail/skills/outlook-classic-mail/SKILL.md"):
+            with self.subTest(skill=relative):
+                text = (family / relative).read_text(encoding="utf-8")
+                self.assertIn("operational-recordkeeping", text)
+                self.assertIn("before drafting or editing", text)
+                self.assertIn("not business-fact verification", text)
+                self.assertIn("saved is not ready", text)
+
     def test_codex_skill_documents_draft_thread_and_sender_diagnostics(self):
         skill_path = (
             REPO_ROOT

@@ -24,6 +24,9 @@ python scripts/invoke_operational_recordkeeping.py check --packet packet.json --
 
 Run `prepare` after the domain action has produced real evidence, but before
 updating durable bookkeeping. It is not a pre-send or pre-payment permission gate.
+It is also not a correspondence-readiness check. Before financial drafting, use
+[correspondence preflight](correspondence-preflight.md); `inspect` checks record
+bindings/readiness markers, not the business facts or sufficiency of a reply.
 `inspect` reports binding/readability issues. `prepare` requires evidence whose
 checks already pass, but allows record checks to be unmet before an update.
 `check` rereads required records and evidence. Exit 0 means checks passed, 1 means

@@ -282,6 +282,20 @@ class RecordkeepingTests(unittest.TestCase):
             self.assertEqual(helper.main(["prepare", "--profile", str(self.root / "profile.json"),
                                          "--event", str(self.root / "event.json"), "--output", str(self.root / "out.json")]), 2)
 
+    def test_correspondence_guidance_routes_before_domain_action(self):
+        # Documentation coverage, not automated semantic validation of emails.
+        entry = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+        reference = (SKILL / "references/correspondence-preflight.md").read_text(encoding="utf-8")
+        self.assertLess(entry.index("## Before Financial Correspondence"),
+                        entry.index("## Apply To The Current Event"))
+        self.assertIn("references/correspondence-preflight.md", entry)
+        for requirement in ("account identity", "contractual obligation", "actual payment",
+                            "payment allocation", "requested receipts", "not a semantic audit",
+                            "saved draft", "clarification", "not inspected"):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, reference)
+        self.assertIn("not a correspondence-readiness check", (SKILL / "references/helper.md").read_text(encoding="utf-8"))
+
     def test_non_object_and_malformed_json_rejected_without_traceback(self):
         self.put("event.json", [])
         with redirect_stdout(io.StringIO()) as output:
