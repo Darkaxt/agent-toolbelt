@@ -54,8 +54,13 @@ performs the concrete Git, identity, integrity and visible-process checks above.
 ## Stages
 
 1. Contract, helper, guidance and regression verification (R1-R4, R6, R7): COMPLETE.
-2. Documentation, installed verification, deployment, sync and notification (R5, R7):
-   ACTIVE.
+2. Documentation, installed verification, deployment and notification (R5, R7):
+   COMPLETE.
+
+GitHub integration is the required final delivery step after verified stage
+closure, not an implementation stage. Completion of this task additionally
+requires the reviewed changes on origin/main and a clean synchronized checkout;
+a local commit or feature-branch push is not final delivery evidence.
 
 Stage 1 evidence: retirement regressions cover exact authority, dirty/untracked/
 ignored work, recovery completeness and pruning anchors, dependent worktrees,
@@ -65,6 +70,15 @@ issued-ticket preservation, live ownership and bounded authenticated legacy read
 The installed-runtime fixture verifies real process inspection, deletion of only
 test-owned repositories, recovery cloning and unissued discard. The root wiring
 checks and skills.sh validation pass. No stage blockers or tracked deferrals remain.
+
+Stage 2 evidence: v0.5.0 installed in Codex, agents and Claude with identical skill
+content, valid structure and no deployment residuals. Morphe Extended was notified
+with the exact retirement and scratch-placement procedure and asked to validate it.
+No real obsolete checkout was deleted. Six explicitly selected superseded unissued
+snapshots were compacted without target-file deletion; observed helper state fell
+from 2.44 GB to about 0.70 GB while unrelated cleanup jobs continued. Issued tickets
+and partial manifests were preserved. The one leftover task-owned failed-test
+fixture was removed through a reviewed exact-file ticket.
 
 ## Discovery
 
