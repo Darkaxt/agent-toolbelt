@@ -11,6 +11,21 @@ new files survive; replaced objects are skipped; locked entries can be retried.
 Windows open handles bind deletion to verified file identity and protect ancestor
 directories from substitution. No recursive directory deletion is used.
 
+## Source Versus Artifact Routing
+
+Git-tracked source in a maintained working repository remains protected by the
+helper. Removing an obsolete source template within the user's authorized scope
+is a normal reviewed, verified and committed source change, not a cleanup ticket
+or a reason to add a tracked-file override. Preserve unrelated local changes.
+Unused wrapper templates are not downloaded Gradle distributions or caches.
+
+Untracked generated output inside a repository remains eligible with verified
+provenance. Inspect exact `git_tracked` exclusions and continue independent eligible
+cleanup rather than treating the whole repository or batch as blocked. Report
+removed output, preserved source and actual residual blockers separately.
+Verified disposable validation clones use the explicit contract below, including
+their tracked members; this does not authorize removal of maintained repositories.
+
 ## Install
 
 From this family run `python scripts/install.py`. It deploys a shared dependency-free

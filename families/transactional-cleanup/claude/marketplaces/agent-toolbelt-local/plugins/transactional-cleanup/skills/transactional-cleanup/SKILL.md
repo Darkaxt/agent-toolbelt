@@ -3,7 +3,7 @@ name: transactional-cleanup
 description: Clean generated build, deployment, browser, media and temporary artifacts through reviewed snapshots and exact-file deletion tickets. Use when a task leaves local output to reclaim, including output outside its workspace.
 license: MIT
 metadata:
-  version: "0.4.3"
+  version: "0.4.4"
   compatibility: Windows 10/11, Python 3.11+, NTFS/ReFS identity. Codex and Claude; installed local helper required.
 ---
 
@@ -21,6 +21,31 @@ requires current consumer evidence and safe native lifecycle or owner coordinati
 ambiguous targets are preserved, not a reason to reserve the host build gate for
 an entire mixed cleanup batch. Captures, old APKs and manifest hashing do not need
 the Gradle gate. Never stop another build to obtain cleanup clearance.
+
+## Route Source Changes And Cleanup Separately
+
+Git tracking protects working source from accidental artifact cleanup; it is not
+a blanket refusal to remove anything inside a repository. Classify each target:
+
+- Generated output: review exact provenance and current consumers, then use the
+  normal ticket workflow (or Existing Build Leftovers for pre-existing output).
+  A repository ancestor does not make untracked build output untouchable.
+- Disposable validation clone: use Disposable Validation Repositories only when
+  that exact clone satisfies its contract; tracked members can then be ticketed.
+- Obsolete tracked source or templates: removal is a normal source change, not a
+  cleanup ticket. If removal is within the user's authorized scope, inspect
+  references, build/package consumers and local changes, make the narrow reviewed
+  deletion, verify the affected behavior and commit it through normal Git review.
+  Do not force-remove local edits, untrack source just to bypass this helper, or
+  interpret an artifact-cleanup request as permission to delete source. If source
+  removal is outside scope, preserve it and report that decision separately.
+
+When a review reports `git_tracked`, inspect the exact excluded members; do not
+abandon independent eligible artifacts. Apply their reviewed ticket and separately
+report removed output, preserved source and genuine residual blockers. Do not
+describe the whole cleanup as blocked because a few tracked files are excluded.
+An unused wrapper template is not a downloaded Gradle distribution or cache;
+deleting the template does not reclaim those dependencies.
 
 ## Workflow
 
