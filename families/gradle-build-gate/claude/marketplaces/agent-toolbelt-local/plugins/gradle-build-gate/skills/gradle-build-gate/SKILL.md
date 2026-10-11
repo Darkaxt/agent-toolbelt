@@ -18,13 +18,38 @@ python scripts/invoke_gradle_build_gate.py status
 python scripts/invoke_gradle_build_gate.py run --project D:/path/android-project --owner-task "Verify unit tests" --thread-name "Actual conversation title" -- :app:testDebugUnitTest
 ```
 
-For each run, pass `--owner-task "Current operation"` and
-`--thread-name "Actual conversation title"` BEFORE `--`. The silent notification
-and tray show Task and Thread Name, not the project directory. Supply the real
-Codex/Claude conversation title when known; do not invent one or substitute the
-project folder. Omitted/blank thread names and legacy records display Unknown.
-Without a task label, the helper uses `CODEX_THREAD_ID` or a supplied
-`CLAUDE_SESSION_ID`; otherwise it reports an unknown task and supervisor PID.
+## Task And Thread Labels
+
+Before each run, agents must supply `--owner-task` and, when known,
+`--thread-name` BEFORE `--`. These are human-readable display labels:
+
+| Display field | CLI flag | Required meaning | Example |
+| --- | --- | --- | --- |
+| Task | `--owner-task` | The specific build or verification operation happening now | `Verify playback regression` |
+| Thread Name | `--thread-name` | The actual current Codex/Claude conversation title | `Navic - Player Improvements` |
+
+Keep Task concise and update it when the operation changes. It is not the overall
+project name, conversation identity, or a dump of internal stage/test notes.
+Thread Name stays the same across operations unless the conversation is renamed.
+Do not substitute the first user prompt, a project/worktree path, a UUID, a PID,
+or an invented title. Do not copy Task into Thread Name.
+
+For Codex, use the current conversation ID to look up its title through the
+available task-list/read tools when the title is not already known; match the ID,
+not merely a similar project path. For Claude, use the actual session title when
+exposed by its interface or context. Do not query unrelated histories or guess.
+If the title cannot be obtained, omit `--thread-name` and briefly record that
+limitation with the build report; Unknown is preferable to a fabricated label.
+Do not ask the user, delay a required build, or relaunch a queued/running build
+solely to repair cosmetic metadata.
+
+This is an agent instruction, not a new helper validation gate: both CLI flags
+remain optional for compatibility. Omitted/blank thread names and legacy records
+display Unknown. Without a task label the helper may display a conversation ID
+or supervisor PID; that fallback is not a meaningful operation description and
+agents must not rely on it instead of supplying `--owner-task`.
+
+The silent notification and tray show Task and Thread Name, not the project directory.
 The notification appears only after acquiring the mutex, never merely joining
 the queue. It identifies the gate owner, which may still be checking/waiting for
 existing activity, not proof that its requested build is already executing.
