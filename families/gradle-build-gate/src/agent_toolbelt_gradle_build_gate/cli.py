@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 
-from . import gate, usage, support
+from . import gate, usage, support, tray
 from .queue import queue_status
 
 
@@ -14,6 +14,8 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="operation", required=True)
     status = commands.add_parser("status", help="Read-only activity inspection; not launch clearance")
     status.add_argument("--observe-home", action="append", default=[])
+    tray_command = commands.add_parser("tray", help="Read-only desktop task/queue/usage observer; never controls builds")
+    tray_command.add_argument("action", choices=["start", "status", "stop"], nargs="?", default="status")
     inspect_support = commands.add_parser("support", help="Read one build's owner-support record")
     inspect_support.add_argument("--ticket", required=True)
     response = commands.add_parser("respond", help="Acknowledge a current support request; never releases the gate")
@@ -40,6 +42,7 @@ def main(argv=None):
     run.add_argument("--project", required=True, type=Path)
     run.add_argument("--owner-task", help="Human-readable current task title for the silent desktop notification")
     run.add_argument("--no-notify", action="store_true", help="Disable optional desktop owner notification")
+    run.add_argument("--no-tray", action="store_true", help="Disable optional tray telemetry and auto-start for this request")
     run.add_argument("--observe-home", action="append", default=[])
     run.add_argument("--log", type=Path)
     run.add_argument("--diagnostic-quiet-seconds", type=int, default=300,
@@ -55,7 +58,9 @@ def main(argv=None):
     run.add_argument("gradle_arguments", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     try:
-        if args.operation == "status":
+        if args.operation == "tray":
+            result = {"ok": True, "operation": "tray." + args.action, **getattr(tray, args.action)()}
+        elif args.operation == "status":
             result = {"ok": True, "operation": "status", "gate_acquired": False,
                       "queue": queue_status(),
                       **gate.inspect_activity(gate.observation_homes(extra=args.observe_home))}
@@ -84,6 +89,7 @@ def main(argv=None):
                                     memory_reason=args.memory_reason, kotlin_strategy=args.kotlin_strategy,
                                     diagnostic_quiet_seconds=args.diagnostic_quiet_seconds,
                                     owner_task=args.owner_task, notify=not args.no_notify,
+                                    tray=not args.no_tray,
                                     retire_daemons=args.retire_daemons, collect_all_failures=args.collect_all_failures)
         print(json.dumps(result, indent=2))
         return result.get("exit_code", 0)

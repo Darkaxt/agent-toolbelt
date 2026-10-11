@@ -65,7 +65,7 @@ class FailurePolicy(unittest.TestCase):
                  patch('agent_toolbelt_gradle_build_gate.usage.record_project', return_value={'ok': True}), \
                  patch.object(self.gate, 'inspect_activity', return_value={'safe_to_start': True, 'processes': []}), \
                  patch.object(self.gate, 'execute_wrapper', side_effect=lambda *a: events.append('failed_wrapper_exit') or {'exit_code': 1}):
-                result = self.gate.run_build(project, ['test'], retire_daemons='none', notify=False)
+                result = self.gate.run_build(project, ['test'], retire_daemons='none', notify=False, tray=False)
         self.assertEqual(events, ['ticket_turn', 'acquire', 'failed_wrapper_exit', 'release', 'ticket_release'])
         self.assertFalse(result['ok'])
         self.assertTrue(result['gate_acquired'])

@@ -14,7 +14,28 @@ python codex/skills/gradle-build-gate/scripts/invoke_gradle_build_gate.py run --
 The installer creates a dependency-free shared runtime and installs personal
 Codex, agents and Claude skills. Installed wrappers do not need the repository.
 Runtime override: `GRADLE_BUILD_GATE_HOME`; explicit development checkout:
-`AGENT_TOOLBELT_HOME`. No tasks, services or visible helper windows are created.
+`AGENT_TOOLBELT_HOME`. No tasks, services or console windows are created.
+
+## Gradle Elephant Tray
+
+New build requests start one read-only tray observer per login session. Hover the
+custom elephant for task/project, current phase, elapsed gate/build time, waiting
+requests and observed usage statistics. Click for full details. The icon changes
+between teal idle, amber busy and coral uncertain. Windows may place it in overflow.
+
+```powershell
+python codex/skills/gradle-build-gate/scripts/invoke_gradle_build_gate.py tray start
+python codex/skills/gradle-build-gate/scripts/invoke_gradle_build_gate.py tray status
+python codex/skills/gradle-build-gate/scripts/invoke_gradle_build_gate.py tray stop
+```
+
+The tray never acquires the build/queue locks, grants turns, or stops builds.
+Its one-second display refresh has no execution authority. Exit stops only the
+UI. `--no-tray` disables telemetry/auto-start for one request; toasts remain
+independent. Stats cover updated-helper observations only, with bounded recent
+history and cumulative counts/durations. Missing/legacy/uncertain owner evidence
+is labelled unknown; an empty tray is never launch clearance. Optional telemetry
+errors are reported in `tray_tracking`, without altering the build result.
 
 ## Silent Desktop Owner Notification
 

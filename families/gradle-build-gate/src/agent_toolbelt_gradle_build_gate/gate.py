@@ -568,11 +568,12 @@ def execute_wrapper(project, profile, log_path):
 
 
 def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemons="incompatible",
-              diagnostic_quiet_seconds=300, owner_task=None, notify=True, **options):
+              diagnostic_quiet_seconds=300, owner_task=None, notify=True, tray=True, **options):
     from contextlib import ExitStack
     from .notifications import BuildNotification
     from .queue import TicketQueue
     from .usage import record_project
+    from .tray import BuildTelemetry
     project = Path(project).expanduser().resolve()
     if not (project / "gradlew.bat").is_file():
         raise ValueError("Project must contain gradlew.bat")
@@ -586,10 +587,13 @@ def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemo
         local = Path(os.environ.get("LOCALAPPDATA", str(Path.home())))
         log_path = local / "Tools/gradle-build-gate/logs" / (uuid.uuid4().hex + ".log")
     with ExitStack() as lifetime:
+        telemetry = lifetime.enter_context(BuildTelemetry(project, owner_task, enabled=tray))
         desktop = lifetime.enter_context(BuildNotification(project, owner_task, enabled=notify))
-        request = lifetime.enter_context(TicketQueue())
+        request = lifetime.enter_context(TicketQueue(on_registered=telemetry.registered))
+        lifetime.callback(telemetry.released)
         mutex = lifetime.enter_context(NamedMutex())
         ticket = dict(request.ticket)
+        telemetry.phase(ticket, 'preflight')
         desktop.start(ticket)
         try:
             usage_tracking = record_project(project, home=observation_homes(arguments, project=project)[-1])
@@ -608,6 +612,7 @@ def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemo
                         # handle, then inspect again before trusting the snapshot.
                         break
                     print(json.dumps({"state": "waiting_for_existing_build", "activity": inspection}), file=sys.stderr, flush=True)
+                    telemetry.phase(ticket, 'waiting_for_external_build')
                     observer.wait()
                     inspection = inspect_activity(homes)
                 if inspection["safe_to_start"]:
@@ -622,12 +627,16 @@ def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemo
                         current = next((p for p in retirement_candidates(fresh, version, profile["gradle_jvmargs"].split()[-1], retire_daemons)
                                         if (p["pid"], p["created"]) == (candidate["pid"], candidate["created"])), None)
                         if current:
+                            telemetry.phase(ticket, 'retiring_idle_daemon')
                             print(json.dumps({"state": "retiring_idle_daemon", "pid": current["pid"], "reason": current["retirement_reason"]}), file=sys.stderr, flush=True)
                             retired.append(retire_daemon(current))
                         continue
                     profile["_support_ticket"] = ticket
                     profile["_diagnostic_quiet_seconds"] = diagnostic_quiet_seconds
+                    telemetry.phase(ticket, 'running')
                     result = execute_wrapper(project, profile, log_path)
+                    telemetry.completed(result['exit_code'])
+                    telemetry.phase(ticket, 'verifying_completion')
                     support_result = result.get("owner_support") or {}
                     if support_result.get("record") or (support_result.get("cancellation") or {}).get("state") == "ctrl_c_requested":
                         # Ctrl+C acceptance is not build completion. A surviving
@@ -655,6 +664,7 @@ def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemo
             "gate_acquired": True, "mutex": MUTEX_NAME, "abandoned_mutex_rechecked": mutex.abandoned,
             "queue_ticket": ticket, "queue_ordering": "fifo_registration",
             "desktop_notification": desktop.result,
+            "tray_tracking": telemetry.result,
             "usage_tracking": usage_tracking,
             "requested_profile": public_profile, "preflight_activity": inspection,
             "daemon_retirement": {"policy": retire_daemons, "target_version": version, "retired": retired}, **result}

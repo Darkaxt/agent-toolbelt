@@ -121,12 +121,13 @@ def queue_status(root=None, namespace=None):
 
 
 class TicketQueue:
-    def __init__(self, root=None, namespace=None):
+    def __init__(self, root=None, namespace=None, *, on_registered=None):
         self.native = NativeWait()
         self.root = Path(root) if root is not None else default_root(self.native)
         self.namespace = namespace or QUEUE_NAME
         self.ticket = None
         self.event = None
+        self.on_registered = on_registered
 
     def save(self, state):
         self.root.mkdir(parents=True, exist_ok=True)
@@ -185,6 +186,12 @@ class TicketQueue:
                 self.ticket = ticket
                 self.signal_head(state)
             print(json.dumps({"state": "queued", "ticket": ticket["number"], "ticket_id": ticket["id"]}), file=sys.stderr, flush=True)
+            if self.on_registered is not None:
+                # Observation is outside the FIFO metadata lock, never authority.
+                try:
+                    self.on_registered(dict(ticket))
+                except Exception:
+                    pass
         except BaseException:
             if self.ticket is not None:
                 self.release()
