@@ -17,8 +17,8 @@ performed by the helper, a new accounting system or permission to send anything.
    reread. Distinguish not inspected, inaccessible, not located in checked sources,
    contradictory and genuinely unresolved. Thread recollection is a locator, not
    proof that the current records say the same thing.
-3. Keep a compact working map in the existing private task note or operations
-   record: `claim/request | source + precise locator | evidence state | draft
+3. Keep a compact working map in the task's private working context or evidence
+   note, not as a new bookkeeping state: `claim/request | source + precise locator | evidence state | draft
    treatment / next action`. Cover material amounts, currency, dates/period,
    payer/payee, payment status, allocation and every requested document. Reuse
    current verified evidence where applicable; do not manufacture new paperwork.
