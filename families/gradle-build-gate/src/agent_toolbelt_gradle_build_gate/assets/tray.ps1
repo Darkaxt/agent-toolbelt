@@ -86,6 +86,14 @@ function Elapsed($Start) {
 function Duration($Seconds) {
     return [TimeSpan]::FromSeconds([Math]::Max(0,[double]$Seconds)).ToString('d\.hh\:mm\:ss')
 }
+function ThreadName($Row) {
+    if ([string]::IsNullOrWhiteSpace($Row.thread_name)) { return 'Unknown' }
+    return [string]$Row.thread_name
+}
+function ShortLabel([string]$Label) {
+    if ($Label.Length -gt 12) { return $Label.Substring(0,9) + '...' }
+    return $Label
+}
 function Get-View {
     try {
         $queue = Read-Json 'queue.json'
@@ -114,7 +122,7 @@ function Get-View {
                     $owners += $row
                 }
             } else {
-                $rows += [pscustomobject]@{ owner_task='Unknown / older helper'; project='Unknown'; phase='unobserved'; number=$ticket.number }
+                $rows += [pscustomobject]@{ owner_task='Unknown / older helper'; thread_name='Unknown'; project='Unknown'; phase='unobserved'; number=$ticket.number }
             }
         }
         if ($owners.Count -gt 1) { $uncertain = $true; $owners = @() }
@@ -136,7 +144,7 @@ function Get-View {
         $avgWait = if ($admissions) { $stats.queue_seconds / $admissions } else { 0 }
         $lines = @('GRADLE BUILD GATE', '')
         if ($owner) {
-            $lines += @("Task: $($owner.owner_task)", "Project: $($owner.project)", "Phase: $($owner.phase)",
+            $lines += @("Task: $($owner.owner_task)", "Thread Name: $(ThreadName $owner)", "Phase: $($owner.phase)",
                         "Gate held: $(Duration $gateElapsed)   Build: $(Duration $buildElapsed)")
         } elseif ($tickets.Count) {
             $lines += @('Owner: unknown / waiting for gate', 'A FIFO head is not proof of mutex ownership.')
@@ -154,12 +162,12 @@ function Get-View {
         if ($data.since) { $lines += "Since: $([DateTimeOffset]::FromUnixTimeSeconds([long]$data.since).ToLocalTime().ToString('yyyy-MM-dd HH:mm'))" }
         $lines += @('', 'QUEUE')
         foreach ($row in $rows) {
-            $lines += "#$($row.number) $($row.owner_task) | $($row.project) [$($row.phase)]"
+            $lines += "#$($row.number) Task: $($row.owner_task) | Thread Name: $(ThreadName $row) [$($row.phase)]"
         }
         if (-not $rows.Count) { $lines += '(empty)' }
         $lines += @('', 'Informational only. External builds are not inspected here.', 'Click the elephant for full details. Exit tray never stops a build.')
         $text = $lines -join "`r`n"
-        $short = if ($owner) { "Gradle | Q:$waiting | $(Duration $gateElapsed) | $($owner.owner_task)" }
+        $short = if ($owner) { "Gradle | Task: $(ShortLabel $owner.owner_task) | Thread Name: $(ShortLabel (ThreadName $owner)) | Q:$waiting" }
                  elseif ($null -eq $waiting) { "Gradle | owner unknown | Requests:$($tickets.Count)" }
                  else { "Gradle | $state | Waiting:$waiting | Builds:$builds" }
         if ($short.Length -gt 63) { $short = $short.Substring(0,60) + '...' }

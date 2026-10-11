@@ -20,12 +20,16 @@ gate = importlib.import_module('agent_toolbelt_gradle_build_gate.gate')
 
 class NotificationContracts(unittest.TestCase):
     def test_payload_is_silent_escaped_and_ticket_scoped(self):
-        payload = notifications.payload(Path('D:/Temp/A & B'), 'abc123', 'Task <one> & two')
+        payload = notifications.payload(Path('D:/Temp/A & B'), 'abc123', 'Task <one> & two',
+                                        thread_name='Thread <one> & two')
         xml = ET.fromstring(payload['xml'])
         self.assertEqual(xml.find('audio').attrib, {'silent': 'true'})
         text = [node.text for node in xml.findall('.//text')]
         self.assertIn('Task: Task <one> & two', text)
-        self.assertIn('Project: D:/Temp/A & B', [s.replace('\\', '/') for s in text])
+        self.assertIn('Thread Name: Thread <one> & two', text)
+        self.assertFalse(any(s.startswith('Project:') for s in text))
+        missing = ET.fromstring(notifications.payload(Path('D:/not-a-thread'), 'missing', 'Task')['xml'])
+        self.assertIn('Thread Name: Unknown', [node.text for node in missing.findall('.//text')])
         self.assertNotEqual(payload['tag'], notifications.payload(Path('D:/other'), 'def456', 'Other')['tag'])
         first = notifications.payload(Path('D:/same'), 'a' * 16 + 'b' * 16, 'One')
         second = notifications.payload(Path('D:/same'), 'a' * 16 + 'c' * 16, 'Two')
@@ -39,6 +43,16 @@ class NotificationContracts(unittest.TestCase):
             self.assertEqual(notifications.owner_label('Human task'), 'Human task')
         with patch.dict(os.environ, {'CLAUDE_SESSION_ID': 'claude-id'}, clear=True):
             self.assertEqual(notifications.owner_label(None), 'Claude session claude-id')
+
+    def test_thread_name_is_explicit_sanitized_and_independent_of_task(self):
+        self.assertEqual(notifications.thread_label('  Actual\r\n thread  '), 'Actual thread')
+        self.assertEqual(notifications.thread_label(' \t\n '), 'Unknown')
+        with patch.dict(os.environ, {'CODEX_THREAD_ID': 'id-not-a-title'}, clear=True):
+            self.assertEqual(notifications.thread_label(None), 'Unknown')
+        notice = notifications.BuildNotification(Path('D:/Project'), 'Compile app',
+                                                 thread_name='Actual conversation', enabled=False)
+        self.assertEqual(notice.result['thread_name'], 'Actual conversation')
+        self.assertEqual(notice.result['owner_task'], 'Compile app')
 
     def test_transport_failure_is_diagnostic_and_disabled_mode_is_noop(self):
         with patch.object(notifications, 'transport', side_effect=OSError('private detail')):
@@ -64,7 +78,7 @@ class NotificationContracts(unittest.TestCase):
             return {'state': 'submitted' if action == 'show' else 'removed'}
 
         with patch.object(notifications, 'transport', side_effect=transport):
-            notice = notifications.BuildNotification(Path('D:/fixture'), 'Task')
+            notice = notifications.BuildNotification(Path('D:/fixture'), 'Task', thread_name='Real thread')
             notice.start({'id': 'our-ticket'})
             entered.wait()
             self.assertEqual(actions, [('show', 'our-ticket')])
@@ -73,12 +87,22 @@ class NotificationContracts(unittest.TestCase):
         self.assertEqual(actions, [('show', 'our-ticket'), ('remove', 'our-ticket')])
         self.assertEqual(notice.result['removal']['state'], 'removed')
 
+    def test_submission_uses_thread_name_not_project(self):
+        with patch.object(notifications, 'transport', return_value={'state': 'disabled_by_windows'}) as transport:
+            with notifications.BuildNotification(Path('D:/not-a-title'), 'Compile app',
+                                                 thread_name='Real thread') as notice:
+                notice.start({'id': 'our-ticket'})
+        text = [node.text for node in ET.fromstring(transport.call_args.args[1]['xml']).findall('.//text')]
+        self.assertIn('Thread Name: Real thread', text)
+        self.assertFalse(any('not-a-title' in line for line in text))
+
     def test_cli_routes_owner_and_optout(self):
         cli = importlib.import_module('agent_toolbelt_gradle_build_gate.cli')
         with patch.object(gate, 'run_build', return_value={'exit_code': 0}) as run, contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(cli.main(['run', '--project', 'D:/fixture', '--owner-task', 'Our task',
-                                       '--no-notify', '--', 'test']), 0)
+                                       '--thread-name', 'Our conversation', '--no-notify', '--', 'test']), 0)
         self.assertEqual(run.call_args.kwargs['owner_task'], 'Our task')
+        self.assertEqual(run.call_args.kwargs['thread_name'], 'Our conversation')
         self.assertFalse(run.call_args.kwargs['notify'])
 
     @unittest.skipUnless(os.name == 'nt', 'Windows notification transport')

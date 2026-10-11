@@ -48,6 +48,19 @@ class TelemetryContracts(unittest.TestCase):
         self.assertEqual(data['recent'][0]['build_seconds'], 20)
         self.assertNotIn('arguments', json.dumps(data))
 
+    def test_thread_name_persists_separately_from_task_and_project(self):
+        store = self.store()
+        with self.tray.BuildTelemetry(Path('D:/Project'), 'Compile app', thread_name='Real thread',
+                                      store=store, autostart=False) as observer:
+            observer.registered(self.ticket)
+            observer.completed(0)
+        row = store.read()['recent'][0]
+        self.assertEqual(row['owner_task'], 'Compile app')
+        self.assertEqual(row['thread_name'], 'Real thread')
+        self.assertEqual(Path(row['project']), Path('D:/Project'))
+        missing = self.tray.BuildTelemetry(Path('D:/Not-a-title'), enabled=False)
+        self.assertEqual(missing.row['thread_name'], 'Unknown')
+
     def test_history_is_bounded_and_corruption_not_silently_reset(self):
         store = self.store()
         data = store.read()
@@ -147,8 +160,12 @@ class TelemetryContracts(unittest.TestCase):
              patch('agent_toolbelt_gradle_build_gate.usage.record_project', return_value={'ok': True}), \
              patch.object(gate, 'make_profile', return_value={}), \
              patch.object(gate, 'execute_wrapper', return_value={'exit_code': 7}), \
-             patch.object(self.tray, 'BuildTelemetry', return_value=telemetry):
-            result = gate.run_build(project, ['test'], retire_daemons='none', notify=False)
+             patch.object(self.tray, 'BuildTelemetry', return_value=telemetry) as create_telemetry, \
+             patch('agent_toolbelt_gradle_build_gate.notifications.BuildNotification') as create_notice:
+            result = gate.run_build(project, ['test'], retire_daemons='none', notify=False,
+                                    owner_task='Compile app', thread_name='Actual thread')
+        self.assertEqual(create_telemetry.call_args.kwargs['thread_name'], 'Actual thread')
+        self.assertEqual(create_notice.call_args.kwargs['thread_name'], 'Actual thread')
         self.assertEqual(events, ['ticket_turn', 'acquired', 'preflight', 'running', ('exit', 7),
                                   'verifying_completion', 'gate_released', 'release_observed',
                                   'ticket_release', 'telemetry_collected'])
@@ -195,7 +212,8 @@ class NativeTrayContracts(unittest.TestCase):
 
     def test_native_snapshot_hover_content_identity_and_read_only_behavior(self):
         store = self.store()
-        row = {**self.ticket, 'owner_task': 'A long human task title & symbols', 'project': 'D:/Exact Project'}
+        row = {**self.ticket, 'owner_task': 'A long human task title & symbols',
+               'thread_name': 'Real conversation & symbols', 'project': 'D:/Exact Project'}
         store.update(row, 'queued')
         store.update(row, 'preflight', acquired_at=100)
         store.update(row, 'running', build_started_at=110)
@@ -205,12 +223,27 @@ class NativeTrayContracts(unittest.TestCase):
         self.assertEqual(data['waiting'], 0)
         self.assertEqual(data['owner']['project'], 'D:/Exact Project')
         self.assertIn('A long human task title & symbols', data['text'])
+        self.assertIn('Thread Name: Real conversation & symbols', data['text'])
+        self.assertNotIn('Project:', data['text'])
+        self.assertNotIn('D:/Exact Project', data['text'])
         self.assertIn('Average queue wait', data['text'])
         self.assertEqual(data['icon_style'], 'local_gradle_elephant')
         self.assertLessEqual(len(data['tooltip']), 63)
+        self.assertIn('Task:', data['tooltip'])
+        self.assertIn('Thread Name:', data['tooltip'])
         second = {**self.ticket, 'id': 'b' * 32, 'number': 2}
         self.assertEqual(self.snapshot([self.ticket, second])['waiting'], 1)
         self.assertEqual((self.root / 'telemetry.json').read_bytes(), before[1])
+        # Pre-upgrade records retain their task/project, never a fabricated title.
+        legacy = store.read()
+        del legacy['live'][self.ticket['id']]['thread_name']
+        (self.root / 'telemetry.json').write_text(json.dumps(legacy), encoding='utf-8')
+        data = self.snapshot([self.ticket])
+        self.assertEqual(data['state'], 'busy')
+        self.assertIn('Thread Name: Unknown', data['text'])
+        self.assertIn('Thread Name: Unknown [running]', data['text'])
+        self.assertNotIn('D:/Exact Project', data['text'])
+        before = before[0], (self.root / 'telemetry.json').read_bytes()
         stale = {**self.ticket, 'created_ticks': self.ticket['created_ticks'] + 1}
         data = self.snapshot([stale])
         self.assertIsNone(data['owner']); self.assertEqual(data['waiting'], 0)

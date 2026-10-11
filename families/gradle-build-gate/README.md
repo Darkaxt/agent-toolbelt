@@ -19,7 +19,7 @@ Runtime override: `GRADLE_BUILD_GATE_HOME`; explicit development checkout:
 ## Gradle Elephant Tray
 
 New build requests start one read-only tray observer per login session. Hover the
-custom elephant for task/project, current phase, elapsed gate/build time, waiting
+custom elephant for Task and Thread Name, current phase, elapsed gate/build time, waiting
 requests and observed usage statistics. Click for full details. The icon changes
 between teal idle, amber busy and coral uncertain. Windows may place it in overflow.
 
@@ -40,9 +40,12 @@ errors are reported in `tray_tracking`, without altering the build result.
 ## Silent Desktop Owner Notification
 
 `run` sends one silent Windows app notification after actual mutex acquisition,
-showing the task and project holding the gate (including preflight/waiting).
-Pass `--owner-task "Current task title"` before `--`; absent a label, the current
-Codex task ID or supplied Claude session ID is used, otherwise owner is unknown.
+showing Task and Thread Name holding the gate (including preflight/waiting).
+Pass `--owner-task "Current operation" --thread-name "Actual conversation title"`
+before `--`. The project path remains execution metadata, not a conversation name.
+Missing/blank thread names and legacy records display Unknown. Absent a task
+label, the current Codex task ID or supplied Claude session ID is used, otherwise
+owner is unknown. Neither observers nor the gate guess conversation titles.
 `--no-notify` opts out. Notification errors never change the build result or queue.
 
 The installer registers only this helper's per-user Start-menu shortcut and
