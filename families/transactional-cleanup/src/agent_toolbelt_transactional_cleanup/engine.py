@@ -9,6 +9,7 @@ import hmac
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shutil
 import socket
@@ -16,11 +17,13 @@ import sqlite3
 import subprocess
 
 from . import filesystem as fs
+from . import retirement
+from . import legacy
 
 POLICY = '2'
 KINDS = ('temporary', 'compiler-output', 'package-cache', 'browser-artifact',
          'media-intermediate', 'test-output', 'generated-report', 'explicit-generated-output',
-         'disposable-repository')
+         'disposable-repository', 'retired-repository')
 GENERATED = {'__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache'}
 RETRY = {'locked', 'failed', 'not_empty'}
 BATCH_SIZE = 256
@@ -151,6 +154,11 @@ class Engine:
                     ADD COLUMN allow_disposable_repository INTEGER NOT NULL DEFAULT 0''')
             if 'repository_identity' not in registration_columns:
                 connection.execute('ALTER TABLE registrations ADD COLUMN repository_identity TEXT')
+            if 'retirement_json' not in registration_columns:
+                connection.execute('ALTER TABLE registrations ADD COLUMN retirement_json TEXT')
+            transaction_columns = {row[1] for row in connection.execute('PRAGMA table_info(transactions)')}
+            if 'discard_reason' not in transaction_columns:
+                connection.execute('ALTER TABLE transactions ADD COLUMN discard_reason TEXT')
             connection.commit()
         finally:
             connection.close()
@@ -599,7 +607,8 @@ class Engine:
 
     def register(self, transaction, path, kind, evidence, regenerated=False,
                  allow_hardlinks=False, allow_leaf_reparse=False,
-                 allow_disposable_repository=False):
+                 allow_disposable_repository=False, retirement_evidence=None,
+                 confirm_retire_repository=None):
         path = fs.canonical(path)
         reason = self.protection(path)
         if kind not in KINDS or not evidence.strip():
@@ -611,7 +620,23 @@ class Engine:
                 raise CleanupError('review_frozen', 'Registration is closed after review')
             roots = json.loads(row['roots_json'])
             repository_identity = None
-            if allow_disposable_repository:
+            retirement_proof = None
+            if kind == 'retired-repository' or retirement_evidence or confirm_retire_repository:
+                if (kind != 'retired-repository' or not regenerated or not retirement_evidence
+                        or not confirm_retire_repository or allow_disposable_repository
+                        or fs.canonical(confirm_retire_repository) != path):
+                    raise CleanupError('retirement_authority_required',
+                                       'Retirement requires its kind, --regenerated, evidence and exact root confirmation')
+                workspace = Path(row['workspace'])
+                if (reason != 'repository_root' or fs.within(workspace, path)
+                        or fs.within(path, workspace)):
+                    raise CleanupError('protected_path', reason or 'workspace_overlap')
+                if path_key(path) not in {path_key(root) for root in roots}:
+                    raise CleanupError('retirement_exact_root_required', 'Retired checkout must be an exact scan root')
+                retirement_proof = retirement.validate(path, retirement.load_evidence(retirement_evidence, path))
+                repository_identity = retirement_proof['root_identity']
+                reason = None
+            elif allow_disposable_repository:
                 if kind != 'disposable-repository' or not regenerated:
                     raise CleanupError('disposable_repository_contract',
                                        'Disposable repository authority requires its artifact kind and --regenerated')
@@ -645,6 +670,9 @@ class Engine:
                                (transaction, str(path), path_key(path), kind, evidence, int(regenerated),
                                 int(allow_hardlinks), int(allow_leaf_reparse),
                                 int(allow_disposable_repository), repository_identity))
+            if retirement_proof:
+                connection.execute('UPDATE registrations SET retirement_json=? WHERE id=last_insert_rowid()',
+                                   (encoded(retirement_proof).decode(),))
             connection.commit()
             return self.report('register', self._payload(self._row(connection, transaction)))
         finally:
@@ -669,7 +697,8 @@ class Engine:
     def _disposable_registration_for(path, registrations):
         for ancestor in (path, *path.parents):
             registration = registrations.get(path_key(ancestor))
-            if registration is not None and registration['allow_disposable_repository']:
+            if registration is not None and (registration['allow_disposable_repository']
+                                              or registration.get('retirement_json')):
                 return registration
         return None
 
@@ -686,6 +715,8 @@ class Engine:
             registration = self._registration_for(path, registrations)
             disposable = self._disposable_registration_for(path, registrations)
             allow_disposable = bool(disposable and fs.within(path, Path(disposable['path'])))
+            retirement_proof = (json.loads(disposable['retirement_json'])
+                                if disposable and disposable.get('retirement_json') else None)
             git_status = ('disposable_repository_authorized' if allow_disposable else
                           (self.git_reason(path) if not info.get('excluded') else None))
             reason = info.get('excluded') or (None if allow_disposable else git_status)
@@ -718,6 +749,15 @@ class Engine:
                     'discovery_source': 'explicit_registration' if registration else 'baseline_inventory',
                     'git_status': git_status or 'not_tracked_or_outside_repository',
                     'preexisting': preexisting}
+            if retirement_proof:
+                # Recovery proof is stored once on the root, not copied into every row.
+                item.update(retired_repository_root=disposable['path'],
+                            retired_repository_identity=retirement_proof['root_identity'],
+                            retirement_proof_sha256=digest(retirement_proof))
+                if path == Path(disposable['path']):
+                    item['retirement_proof'] = retirement_proof
+                if not reason and not info['directory']:
+                    item['content_sha256'] = fs.content_snapshot(item)
             item_text = encoded(item).decode()
             row_sha = hashlib.sha256(item_text.encode()).hexdigest()
             ordinal = start_ordinal + offset
@@ -783,6 +823,11 @@ class Engine:
             registrations, created_at = self._registrations(connection, transaction), now()
             disposable_roots = []
             for registration in registrations.values():
+                if registration.get('retirement_json'):
+                    proof = json.loads(registration['retirement_json'])
+                    retirement.validate(Path(registration['path']), proof['evidence'], proof)
+                    disposable_roots.append(registration['path'])
+                    continue
                 if not registration['allow_disposable_repository']:
                     continue
                 root = Path(registration['path'])
@@ -939,20 +984,36 @@ class Engine:
             transaction_row = self._row(connection, ticket['transaction_id'])
             self._verify_ticket_membership(connection, ticket, transaction_row)
             disposable_roots = {}
+            retired_roots = {}
             for record in connection.execute("""SELECT item_json FROM manifest
                     WHERE transaction_id=? AND decision='candidate'""", (ticket['transaction_id'],)):
                 item = json.loads(record['item_json'])
                 root = item.get('disposable_repository_root')
                 identity = item.get('disposable_repository_identity')
+                proof = item.get('retirement_proof')
+                if proof:
+                    if (item['path'] != item.get('retired_repository_root')
+                            or digest(proof) != item.get('retirement_proof_sha256')):
+                        raise CleanupError('review_mismatch', 'Invalid signed retirement root proof')
+                    retired_roots[item['path']] = proof
                 if item.get('allow_disposable_repository') and root and identity:
                     if root in disposable_roots and disposable_roots[root] != identity:
                         raise CleanupError('review_mismatch', 'Disposable repository identity is inconsistent')
                     disposable_roots[root] = identity
             for root, identity in disposable_roots.items():
+                if root in retired_roots:
+                    if os.path.lexists(root):
+                        proof = retired_roots[root]
+                        retirement.validate(Path(root), proof['evidence'], proof,
+                                            require_git=ticket['state'] == 'issued')
+                    continue
                 if os.path.lexists(root):
                     self._validate_disposable_repository(
                         root, identity, require_git=ticket['state'] == 'issued')
             if not dry_run:
+                connection.execute("UPDATE tickets SET state='partially_applied' WHERE ticket_id=?", (ticket_id,))
+                connection.execute("UPDATE transactions SET state='partially_applied' WHERE transaction_id=?",
+                                   (ticket['transaction_id'],))
                 self._set_progress(connection, ticket['transaction_id'], 'apply', 'deleting', 0,
                                    ticket['candidate_count'], ticket['deleted_bytes']); connection.commit()
             self.repo_cache.clear()
@@ -971,6 +1032,12 @@ class Engine:
                     item.get('allow_disposable_repository') and disposable_root and
                     item.get('disposable_repository_identity') == disposable_roots.get(disposable_root) and
                     fs.within(path, fs.canonical(disposable_root)))
+                retired_root = item.get('retired_repository_root')
+                if retired_root:
+                    proof = retired_roots.get(retired_root)
+                    if (not proof or digest(proof) != item.get('retirement_proof_sha256')
+                            or not allow_disposable):
+                        raise CleanupError('review_mismatch', 'Retired member is not bound to a signed root proof')
                 reason = self.protection(path)
                 if allow_disposable and reason in {'repository_root', 'filesystem_or_repository_metadata'}:
                     reason = None
@@ -1057,6 +1124,101 @@ class Engine:
                                  deleted_bytes=ticket['deleted_bytes'])
             self.finish(connection, payload, ticket, result)
             return result
+        finally:
+            connection.close()
+
+    def legacy_path(self, transaction):
+        if not re.fullmatch(r'[a-f0-9]{32}', transaction):
+            raise CleanupError('invalid_id', 'Expected a helper-issued transaction identifier')
+        return self.root / (transaction + '.json')
+
+    def discard_legacy(self, transaction, reason):
+        if not reason.strip():
+            raise CleanupError('discard_reason_required', 'Record why the unissued transaction is abandoned')
+        path = self.legacy_path(transaction)
+        # Block legacy operations and new launches during the short rewrite, but
+        # preserve already running operations on independently claimed roots.
+        with self._legacy_lock():
+            fs.check_chain(path)
+            before = fs.identity(path)
+            payload, original_hash = legacy.open_snapshot(path, self.key, host())
+            if payload['transaction_id'] != transaction:
+                raise CleanupError('invalid_state', 'Legacy transaction identity mismatch')
+            roots = [fs.canonical(value) for value in payload['roots']]
+            with self._coordination_lock():
+                if any(self._roots_overlap(roots, [fs.canonical(value) for value in claim['roots']])
+                       for claim in self._live_claims()):
+                    raise CleanupError('target_busy', 'A live cleanup operation overlaps the legacy snapshot roots')
+            for ticket_path in self.root.glob('*.json'):
+                if not re.fullmatch(r'[a-f0-9]{64}', ticket_path.stem):
+                    continue
+                fs.check_chain(ticket_path)
+                with ticket_path.open('rb') as stream:
+                    stream.seek(max(0, ticket_path.stat().st_size - 1024 * 1024))
+                    tail = stream.read()
+                if ('"transaction_id":"' + transaction + '"').encode() in tail:
+                    raise CleanupError('discard_ticket_exists', 'Legacy ticket exists; use its revoke procedure')
+            summary = {key: payload[key] for key in ('host', 'policy', 'transaction_id', 'workspace',
+                                                     'created_at', 'discovery_coverage')}
+            summary.update(state='discarded', completed_at=now(), discard_reason=reason,
+                           original_sha256=original_hash, original_bytes=before['size'])
+            envelope = encoded({'payload': summary,
+                                'mac': hmac.new(self.key, encoded(summary), 'sha256').hexdigest()})
+            pending = path.with_suffix('.' + secrets.token_hex(8) + '.discard.pending')
+            fs.check_chain(pending)
+            try:
+                with pending.open('xb') as stream:
+                    stream.write(envelope); stream.flush(); os.fsync(stream.fileno())
+                current = fs.identity(path)
+                if any(current[key] != before[key] for key in ('identity', 'size', 'mtime')):
+                    raise CleanupError('state_changed', 'Legacy snapshot changed during discard')
+                os.replace(pending, path)
+            finally:
+                pending.unlink(missing_ok=True)
+            return {'ok': True, 'operation': 'discard', 'transaction_id': transaction,
+                    'state': 'discarded', 'legacy': True, 'target_files_deleted': 0,
+                    'state_bytes_removed': before['size'] - len(envelope),
+                    'warnings': [], 'errors': [], 'failure_kind': None}
+
+    def discard(self, transaction, reason):
+        if not reason.strip():
+            raise CleanupError('discard_reason_required', 'Record why the unissued transaction is abandoned')
+        connection = self.connect()
+        try:
+            row = self._row(connection, transaction)
+            if (row['state'] not in {'open', 'reviewed'} or row['ticket_id']
+                    or connection.execute('SELECT 1 FROM tickets WHERE transaction_id=?', (transaction,)).fetchone()):
+                raise CleanupError('discard_ticket_exists', 'Only unissued open/reviewed transactions may be discarded')
+            connection.execute('UPDATE transactions SET discard_reason=? WHERE transaction_id=?',
+                               (reason, transaction))
+            payload = self._payload(self._row(connection, transaction))
+            self.finish(connection, payload,
+                        {'state': 'discarded', 'ticket_id': None, 'deleted_bytes': 0},
+                        {'result_counts': {}})
+            return self.report('discard', self.txn(transaction), target_files_deleted=0, discard_reason=reason)
+        finally:
+            connection.close()
+
+    def state_inventory(self):
+        connection = self.connect()
+        try:
+            transactions = [dict(row) for row in connection.execute('''SELECT transaction_id,workspace,state,
+                created_at,detail_retained,ticket_id,active_operation,owner_pid FROM transactions
+                WHERE detail_retained=1 ORDER BY created_at''')]
+            for table in ('baseline', 'manifest'):
+                counts = {row[0]: row[1] for row in connection.execute(
+                    f'SELECT transaction_id,COUNT(*) FROM {table} GROUP BY transaction_id')}
+                for transaction in transactions:
+                    transaction[table + '_rows'] = counts.get(transaction['transaction_id'], 0)
+            with self._coordination_lock():
+                live = self._live_claims()
+            files = [{'name': path.name, 'bytes': path.stat().st_size}
+                     for path in self.root.iterdir() if path.is_file()]
+            return {'ok': True, 'operation': 'state-inventory', 'state_root': str(self.root),
+                    'state_bytes': sum(item['bytes'] for item in files), 'files': files,
+                    'unfinished_transactions': transactions, 'live_claims': live,
+                    'warnings': ['Age and recorded owner PID do not establish abandonment. No automatic discard.'],
+                    'errors': [], 'failure_kind': None}
         finally:
             connection.close()
 

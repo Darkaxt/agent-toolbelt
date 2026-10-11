@@ -152,6 +152,9 @@ raise SystemExit(result)
             subprocess.run(['git', '-C', str(disposable), '-c', 'user.name=Cleanup Tests',
                             '-c', 'user.email=cleanup@example.invalid', 'commit', '-m', 'fixture'],
                            check=True, capture_output=True)
+            recovery = root / 'recovery.git'
+            subprocess.run(['git', 'clone', '--mirror', '--no-hardlinks', str(disposable), str(recovery)],
+                           check=True, capture_output=True)
             repository_start = run('begin', '--workspace', str(work),
                                    '--scan-root', str(disposable))
             repository_transaction = repository_start['transaction_id']
@@ -166,6 +169,36 @@ raise SystemExit(result)
             self.assertEqual(repository_result['ticket_state'], 'applied', repository_result)
             self.assertFalse(disposable.exists())
 
+            retired = root / 'obsolete-checkout'
+            subprocess.run(['git', 'clone', '--no-hardlinks', str(recovery), str(retired)], check=True, capture_output=True)
+            subprocess.run(['git', '-C', str(recovery), 'fetch', str(retired), '+refs/*:refs/*'],
+                           check=True, capture_output=True)
+            evidence = root / 'retirement.json'
+            evidence.write_text(json.dumps({
+                'version': 1, 'repository': str(retired), 'authorization': 'Retire test-owned obsolete fixture',
+                'recovery_repository': str(recovery), 'recovery_instructions': 'Clone independent recovery.git',
+                'consumer_review': {'checked_at': 'fixture', 'ownership': 'Only this test owns it',
+                                    'schedulers_services': 'No persistent test services/tasks',
+                                    'dependencies': 'No test consumers remain', 'active_consumers': []}
+            }), encoding='utf-8')
+            retired_tx = run('begin', '--workspace', str(work), '--scan-root', str(retired))['transaction_id']
+            run('register', '--transaction', retired_tx, '--path', str(retired), '--kind', 'retired-repository',
+                '--evidence', 'Installed retirement fixture', '--regenerated', '--retirement-evidence', str(evidence),
+                '--confirm-retire-repository', str(retired))
+            retired_review = run('review', '--transaction', retired_tx)
+            retired_ticket = run('ticket', '--transaction', retired_tx,
+                                 '--manifest-sha256', retired_review['manifest_sha256'])['ticket_id']
+            retired_result = run('apply', '--ticket', retired_ticket)
+            self.assertEqual(retired_result['ticket_state'], 'applied', retired_result)
+            self.assertFalse(retired.exists())
+            subprocess.run(['git', 'clone', str(recovery), str(root / 'restored')], check=True, capture_output=True)
+            self.assertEqual((root / 'restored/fixture.txt').read_text(), 'tracked validation data')
+
+            abandoned = run('begin', '--workspace', str(work), '--scan-root', str(work))['transaction_id']
+            self.assertIn(abandoned, [row['transaction_id'] for row in run('state-inventory')['unfinished_transactions']])
+            self.assertEqual(run('discard', '--transaction', abandoned, '--reason', 'Installed abandonment test')['state'],
+                             'discarded')
+
             second = install()
             self.assertFalse(Path(first['active_runtime']).exists())
             self.assertTrue(Path(second['active_runtime']).exists())
@@ -179,7 +212,7 @@ raise SystemExit(result)
     def test_bundles_match(self):
         codex = FAMILY / 'codex/skills/transactional-cleanup'
         claude = FAMILY / 'claude/marketplaces/agent-toolbelt-local/plugins/transactional-cleanup/skills/transactional-cleanup'
-        for name in ('SKILL.md', 'scripts/invoke_transactional_cleanup.py'):
+        for name in ('SKILL.md', 'scripts/invoke_transactional_cleanup.py', 'references/retirement.md'):
             self.assertEqual((codex / name).read_bytes(), (claude / name).read_bytes())
 
 
