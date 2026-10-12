@@ -45,8 +45,9 @@ build is needed solely to test this change. Existing supervisors are untouched.
    FIFO, cancellation, notification and usage tests pass; real build smoke tests
    remain intentionally opt-in. A stale installed-version assertion was updated
    and its entire focused test module rerun successfully.
-3. Delivery -- ACTIVE. V1: integrated checks, install both clients, verify
-   installed entrypoints/hashes, commit and push; reconcile all requirements.
+3. Installation and verification -- COMPLETE. V1: integrated checks, both clients,
+   installed entrypoints/hashes and specification reconciliation pass. Commit and
+   protected-branch GitHub delivery follow these verified implementation stages.
 
 No required deferrals. Test fixtures stay under D:/Temp and are removed by their
 test lifecycle. No original denied deletion is retried and no real build stopped.
@@ -70,4 +71,14 @@ test lifecycle. No original denied deletion is retried and no real build stopped
   pre-existing legacy transactions remains intentionally retained. It is not
   task-generated expendable state and was not removed.
 
-Delivery still requires commit, push and the requested NuvioDV notification.
+## Delivery Record
+
+Implementation commit e68b093 is pushed in GitHub PR #95. Direct main push was
+rejected by branch protection, so delivery uses the required pull-request/checks
+route, not a protection bypass. Final merge and main parity are verified in the
+task's closing report rather than predicted in this pre-merge document.
+
+The requested NuvioDV notification was delivered through the app to task
+01a091fa-f544-7942-809b-df4d7589d45f with the installed version, exact marker contract,
+validation request and explicit distinction between helper eligibility and the
+original execution-policy denial. No new release or build was requested there.
