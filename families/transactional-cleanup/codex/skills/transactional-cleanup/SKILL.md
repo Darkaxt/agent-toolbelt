@@ -198,6 +198,31 @@ removed Git metadata. No recursive delete or Gradle gate is used. An unsupported
 helper mode is not a tool rejection. A rejected direct shell command does not
 establish that the helper was attempted or rejected, but must not be evaded.
 
+## Temporary Credentials And Restrictive ACLs
+
+Task-owned staged SSH keys are sensitive disposable artifacts, not ordinary
+cache. Preserve the original credential. Stage copies inside an exact task-owned
+D:/Temp or E:/Temp directory when supported, restrict access to the intended user,
+and arrange cleanup for normal completion, failure and cancellation. Do not print
+key contents or include credentials in logs, tickets, archives or source control.
+
+Before tightening a staged copy\'s ACL, ensure its owner retains the rights needed
+for the intended cleanup mechanism; owner-only read access can prevent deletion.
+Keep other principals excluded. The producer must report cleanup failures with
+only the exact path and sanitized error, never silently swallow unlink errors or
+claim cleanup succeeded. Abrupt process termination may bypass finally blocks;
+record residual copies for reviewed cleanup after consumers have exited.
+
+Distinguish an actual tool-policy rejection, a helper exclusion, Windows access
+denied, and a sharing violation using the original result. A read-only ACL alone
+does not prove which caused a rejected invocation. Do not automatically repair
+ACLs, take ownership, reset inheritance, or grant broad access. Any authorized
+ACL repair must target only the independently attributed disposable copy after
+identity/consumer checks, preserve credential confidentiality, and precede a new
+review when relevant state changed. Never alter the original key or parent ACLs.
+A policy-denied deletion must not be retried through this helper or another shell
+as a workaround; report it separately from the producer\'s lifecycle defect.
+
 ## Keep Helper State Small
 
 Run `state-inventory` to see retained files, unfinished transactions and live
