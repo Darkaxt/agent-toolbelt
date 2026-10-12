@@ -62,15 +62,22 @@ Compiler diagnostics expose only allowlisted symbols/signatures; runtime errors
 expose fixed step/reason/type codes, never arbitrary exception messages or tokens.
 Inspect `retirement_diagnostics` and `failure_kind` when retirement is blocked.
 
-`run` defaults to `--retire-daemons incompatible`: different version or heap is
-retired after fresh idle evidence. `all-idle` retires all confirmed-idle Gradle
-daemons; `none` preserves previous behavior. Each request uses `StopWhenIdle` and
+`run` defaults to `--retire-daemons all-idle` plus native `--no-daemon`.
+Pre-build `incompatible` limits retirement to different versions/heaps; `none`
+disables only pre-build retirement. Each request uses `StopWhenIdle` and
 waits for the identity-checked target's native process-exit event. An external
 build racing the request is allowed to finish. Active/ambiguous activity is never
 forcefully stopped. Signals retain supervision during retirement too.
 The same-version/same-heap policy does not promise full Gradle JVM compatibility
 (other JVM flags or Java homes can also differ); use all-idle when needed.
-No post-build sweep, Kotlin shutdown, new cleaner, or 120-minute timer is added.
+The post-build phase waits on lifecycle events for active/ambiguous activity,
+then rechecks each idle identity and retires survivors under the same mutex.
+Only an empty authoritative Gradle activity snapshot establishes
+`post_build_daemons.exit_verified`. The guarantee covers inspected observation
+homes and the current session, not all future external launches. Explicit
+`--keep-daemon` skips the post-build phase and selects native daemon reuse;
+combine with `--retire-daemons incompatible` for matching reuse.
+No Kotlin shutdown, new cleaner, force-kill or 120-minute timer is added.
 
 The main OS thread owns the named mutex. Observer subprocesses are hidden and
 subscribe to process exit and daemon-log changes before authoritative inspection.

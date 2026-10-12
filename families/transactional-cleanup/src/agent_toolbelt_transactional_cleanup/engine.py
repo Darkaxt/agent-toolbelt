@@ -19,11 +19,12 @@ import subprocess
 from . import filesystem as fs
 from . import retirement
 from . import legacy
+from . import git_markers
 
 POLICY = '2'
 KINDS = ('temporary', 'compiler-output', 'package-cache', 'browser-artifact',
          'media-intermediate', 'test-output', 'generated-report', 'explicit-generated-output',
-         'disposable-repository', 'retired-repository')
+         'disposable-repository', 'retired-repository', 'generated-git-marker')
 GENERATED = {'__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache'}
 RETRY = {'locked', 'failed', 'not_empty'}
 BATCH_SIZE = 256
@@ -156,6 +157,8 @@ class Engine:
                 connection.execute('ALTER TABLE registrations ADD COLUMN repository_identity TEXT')
             if 'retirement_json' not in registration_columns:
                 connection.execute('ALTER TABLE registrations ADD COLUMN retirement_json TEXT')
+            if 'git_marker_json' not in registration_columns:
+                connection.execute('ALTER TABLE registrations ADD COLUMN git_marker_json TEXT')
             transaction_columns = {row[1] for row in connection.execute('PRAGMA table_info(transactions)')}
             if 'discard_reason' not in transaction_columns:
                 connection.execute('ALTER TABLE transactions ADD COLUMN discard_reason TEXT')
@@ -353,7 +356,7 @@ class Engine:
         except (OSError, ValueError):
             return False
 
-    def protection(self, path):
+    def protection(self, path, *, allow_git_marker=False):
         path = fs.canonical(path)
         if path == Path(path.anchor) or path == Path.home() or path == Path.home().parent:
             return 'critical_root'
@@ -385,7 +388,7 @@ class Engine:
         empty_leaf_marker = (path.name.casefold() == '.git'
                              and '.git' not in {part.casefold() for part in path.parent.parts}
                              and self._empty_git_marker(path))
-        if '.git' in parts and not empty_leaf_marker:
+        if '.git' in parts and not empty_leaf_marker and not allow_git_marker:
             return 'filesystem_or_repository_metadata'
         if (path / '.git').exists() and not self._empty_git_marker(path / '.git'):
             return 'repository_root'
@@ -426,7 +429,7 @@ class Engine:
             return 'git_tracked'
         return None
 
-    def scan(self, roots, disposable_roots=()):
+    def scan(self, roots, disposable_roots=(), git_marker_paths=()):
         """Yield metadata one object at a time; callers own bounded persistence."""
         disposable_roots = [fs.canonical(path) for path in disposable_roots]
         for root_value in roots:
@@ -437,7 +440,7 @@ class Engine:
                 if not os.path.lexists(path):
                     continue
                 key = str(path)
-                reason = self.protection(path)
+                reason = self.protection(path, allow_git_marker=key in git_marker_paths)
                 disposable_member = any(fs.within(path, root) for root in disposable_roots)
                 if disposable_member and reason in {'repository_root', 'filesystem_or_repository_metadata'}:
                     reason = None
@@ -608,7 +611,7 @@ class Engine:
     def register(self, transaction, path, kind, evidence, regenerated=False,
                  allow_hardlinks=False, allow_leaf_reparse=False,
                  allow_disposable_repository=False, retirement_evidence=None,
-                 confirm_retire_repository=None):
+                 confirm_retire_repository=None, confirm_git_marker=None):
         path = fs.canonical(path)
         reason = self.protection(path)
         if kind not in KINDS or not evidence.strip():
@@ -621,7 +624,20 @@ class Engine:
             roots = json.loads(row['roots_json'])
             repository_identity = None
             retirement_proof = None
-            if kind == 'retired-repository' or retirement_evidence or confirm_retire_repository:
+            marker_proof = None
+            if kind == 'generated-git-marker' or confirm_git_marker:
+                if (kind != 'generated-git-marker' or not regenerated or not confirm_git_marker
+                        or fs.canonical(confirm_git_marker) != path or allow_hardlinks
+                        or allow_leaf_reparse or allow_disposable_repository
+                        or retirement_evidence or confirm_retire_repository):
+                    raise CleanupError('git_marker_authority_required',
+                                       'Generated Git markers require exact confirmation and --regenerated')
+                try:
+                    marker_proof = git_markers.validate(path)
+                except (ValueError, OSError, subprocess.CalledProcessError) as exc:
+                    raise CleanupError('git_marker_invalid', 'Generated Git marker validation failed') from exc
+                reason = self.protection(path, allow_git_marker=True)
+            elif kind == 'retired-repository' or retirement_evidence or confirm_retire_repository:
                 if (kind != 'retired-repository' or not regenerated or not retirement_evidence
                         or not confirm_retire_repository or allow_disposable_repository
                         or fs.canonical(confirm_retire_repository) != path):
@@ -673,6 +689,9 @@ class Engine:
             if retirement_proof:
                 connection.execute('UPDATE registrations SET retirement_json=? WHERE id=last_insert_rowid()',
                                    (encoded(retirement_proof).decode(),))
+            if marker_proof:
+                connection.execute('UPDATE registrations SET git_marker_json=? WHERE id=last_insert_rowid()',
+                                   (encoded(marker_proof).decode(),))
             connection.commit()
             return self.report('register', self._payload(self._row(connection, transaction)))
         finally:
@@ -717,9 +736,13 @@ class Engine:
             allow_disposable = bool(disposable and fs.within(path, Path(disposable['path'])))
             retirement_proof = (json.loads(disposable['retirement_json'])
                                 if disposable and disposable.get('retirement_json') else None)
-            git_status = ('disposable_repository_authorized' if allow_disposable else
+            marker_proof = (json.loads(registration['git_marker_json'])
+                            if registration and registration.get('git_marker_json')
+                            and path_key(path) == registration['path_key'] else None)
+            git_status = ('generated_git_marker_authorized' if marker_proof else
+                          'disposable_repository_authorized' if allow_disposable else
                           (self.git_reason(path) if not info.get('excluded') else None))
-            reason = info.get('excluded') or (None if allow_disposable else git_status)
+            reason = info.get('excluded') or (None if allow_disposable or marker_proof else git_status)
             if path == workspace or (str(path) in roots and not registration):
                 reason = reason or 'scan_root'
             allow_reparse = bool(registration and registration['allow_leaf_reparse'])
@@ -758,6 +781,9 @@ class Engine:
                     item['retirement_proof'] = retirement_proof
                 if not reason and not info['directory']:
                     item['content_sha256'] = fs.content_snapshot(item)
+            if marker_proof and not reason:
+                item['git_marker_proof'] = marker_proof
+                item['content_sha256'] = fs.content_snapshot(item)
             item_text = encoded(item).decode()
             row_sha = hashlib.sha256(item_text.encode()).hexdigest()
             ordinal = start_ordinal + offset
@@ -822,7 +848,13 @@ class Engine:
             roots, workspace = json.loads(row['roots_json']), Path(row['workspace'])
             registrations, created_at = self._registrations(connection, transaction), now()
             disposable_roots = []
+            git_marker_paths = []
             for registration in registrations.values():
+                if registration.get('git_marker_json'):
+                    proof = json.loads(registration['git_marker_json'])
+                    git_markers.validate(Path(registration['path']), proof)
+                    git_marker_paths.append(registration['path'])
+                    continue
                 if registration.get('retirement_json'):
                     proof = json.loads(registration['retirement_json'])
                     retirement.validate(Path(registration['path']), proof['evidence'], proof)
@@ -842,7 +874,7 @@ class Engine:
             ordinal = candidate_count = candidate_bytes = excluded_count = processed_bytes = 0
             diagnostics, batch = [], []
             self.repo_cache.clear()
-            for info in self.scan(roots, disposable_roots):
+            for info in self.scan(roots, disposable_roots, git_marker_paths):
                 batch.append(info)
                 if len(batch) < BATCH_SIZE:
                     continue
@@ -1038,10 +1070,18 @@ class Engine:
                     if (not proof or digest(proof) != item.get('retirement_proof_sha256')
                             or not allow_disposable):
                         raise CleanupError('review_mismatch', 'Retired member is not bound to a signed root proof')
-                reason = self.protection(path)
+                marker_proof = item.get('git_marker_proof')
+                marker_valid = False
+                if marker_proof:
+                    try:
+                        git_markers.validate(path, marker_proof)
+                        marker_valid = bool(item.get('content_sha256'))
+                    except (ValueError, OSError):
+                        pass
+                reason = self.protection(path, allow_git_marker=marker_valid)
                 if allow_disposable and reason in {'repository_root', 'filesystem_or_repository_metadata'}:
                     reason = None
-                if not reason and not allow_disposable:
+                if not reason and not allow_disposable and not marker_valid:
                     reason = self.git_reason(path)
                 result, count = ('protected', 0) if reason else fs.delete_exact(item, dry_run=dry_run)
                 result_counts[result] += 1; processed += 1

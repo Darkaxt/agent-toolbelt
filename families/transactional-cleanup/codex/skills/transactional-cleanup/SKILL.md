@@ -3,7 +3,7 @@ name: transactional-cleanup
 description: Clean generated build, deployment, browser, media and temporary artifacts through reviewed snapshots and exact-file deletion tickets. Use when a task leaves local output to reclaim, including output outside its workspace.
 license: MIT
 metadata:
-  version: "0.5.0"
+  version: "0.5.1"
   compatibility: Windows 10/11, Python 3.11+, NTFS/ReFS identity. Codex and Claude; installed local helper required.
 ---
 
@@ -135,6 +135,25 @@ authority, ancestor Git tracking, stable identity and exact-file checks apply.
 Nonempty or linked markers and real repositories remain protected. `.gitignore`
 is governed by attribution and Git tracking, not its filename. Failure to inspect
 a real repository remains fail-closed.
+
+## Generated Git Workflow Markers
+
+Prefer future workflow pointers under an exact task-owned D:/Temp directory,
+not inside .git. Existing automation-generated tree pointers can use a narrowly
+scoped exception: a regular single-link file directly named
+`.git/<namespace>-workflow-tree`, containing only an existing Git tree object ID.
+Inspect producer provenance and consumers first. This does not authorize removing
+the tree object or any other Git metadata.
+
+Begin with that exact file as `--scan-root`, then register:
+`--kind generated-git-marker --regenerated --confirm-git-marker <exact-file>
+--evidence "<producer and why this marker is expendable>"`.
+Use the normal separate review, inspect, ticket and apply invocations.
+The helper binds the repository and .git directory identities, hashes the reviewed
+content and preserves edited/replaced markers and new concurrent files. Broad
+.git registrations, native metadata, linked files and linked worktrees are not
+supported by this exception. Never use it to work around a tool-policy denial;
+a previously denied deletion still needs resolution outside this helper.
 
 ## Disposable Validation Repositories
 

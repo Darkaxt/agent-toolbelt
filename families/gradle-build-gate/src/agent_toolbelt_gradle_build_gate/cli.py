@@ -54,8 +54,10 @@ def main(argv=None):
     run.add_argument("--kotlin-heap-gb", type=int, default=3)
     run.add_argument("--memory-reason")
     run.add_argument("--kotlin-strategy", choices=["daemon", "in-process", "out-of-process"])
-    run.add_argument("--retire-daemons", choices=["incompatible", "all-idle", "none"], default="incompatible",
-                     help="Gracefully retire incompatible idle daemons before building (default: version/heap mismatch)")
+    run.add_argument("--retire-daemons", choices=["incompatible", "all-idle", "none"], default="all-idle",
+                     help="Pre-build graceful retirement policy (default: all confirmed-idle Gradle daemons)")
+    run.add_argument('--keep-daemon', action='store_true',
+                     help='Opt into reusable Gradle daemons; default is native single-use plus verified retirement')
     run.add_argument("gradle_arguments", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     try:
@@ -91,7 +93,8 @@ def main(argv=None):
                                     diagnostic_quiet_seconds=args.diagnostic_quiet_seconds,
                                     owner_task=args.owner_task, thread_name=args.thread_name, notify=not args.no_notify,
                                     tray=not args.no_tray,
-                                    retire_daemons=args.retire_daemons, collect_all_failures=args.collect_all_failures)
+                                    retire_daemons=args.retire_daemons, collect_all_failures=args.collect_all_failures,
+                                    keep_daemon=args.keep_daemon)
         print(json.dumps(result, indent=2))
         return result.get("exit_code", 0)
     except (ValueError, OSError, RuntimeError) as exc:
