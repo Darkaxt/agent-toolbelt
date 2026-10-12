@@ -90,11 +90,18 @@ opt-in native failure-policy fixture below runs real Gradle through the gate.
 Verify each actual project/compiler/native profile with its next required
 focused build. See the skill's runtime reference for limitations.
 
-Before each build the default retirement policy removes confirmed-idle daemons
-with a different wrapper version or maximum heap. Matching daemons remain reusable.
-`--retire-daemons all-idle` removes every confirmed-idle Gradle daemon first;
-`--retire-daemons none` preserves prior behavior. This does not stop Kotlin or
-unrelated Java and does not change a separate periodic cleanup task.
+Before each build the default `--retire-daemons all-idle` policy gracefully
+retires every confirmed-idle Gradle daemon, including matching versions/profiles.
+Builds default to native `--no-daemon`: Gradle's single-use daemon exits when
+the build finishes. The gate remains held while residual Gradle activity completes
+and verified-idle survivors retire. Inspect `post_build_daemons.exit_verified`
+before claiming memory reclamation. Retirement failure retains `build_exit_code`,
+reports its own diagnostics and makes a successful build return helper exit 2.
+Use `--keep-daemon --retire-daemons incompatible` before `--` only for intentional
+warm reuse; `--keep-daemon --retire-daemons none` disables both retirement phases.
+This does not stop Kotlin or unrelated Java and does not change a periodic cleaner.
+Kotlin in-process compilation can avoid a separate compiler daemon when assessed
+as compatible with the project; no compiler strategy is changed automatically.
 
 Retirement uses a small source-mode Java adapter with the target daemon's existing
 JDK and distribution jars. Gradle's internal authenticated `StopWhenIdle` protocol

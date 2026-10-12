@@ -3,7 +3,7 @@ name: gradle-build-gate
 description: Run Windows Gradle builds and tests through a shared session-wide mutex supervisor, inspect active versus idle daemons, and apply a conservative memory profile without interrupting other builds.
 license: MIT
 metadata:
-  version: "0.7.1"
+  version: "0.8.0"
   compatibility: Windows desktop, Python 3.11+, Windows PowerShell, project gradlew.bat, existing JDK with source-file execution; no Python dependencies.
 ---
 
@@ -177,10 +177,10 @@ states (`accepted_unacknowledged`, `delivery_unknown`, `unavailable`) honestly.
 
 ## Daemon Retirement
 
-The default `--retire-daemons incompatible` retires confirmed-idle Gradle daemons
-whose version or maximum heap differs from the next wrapper/profile. Matching
-daemons remain reusable. Use `--retire-daemons all-idle` before `--` to retire all
-confirmed-idle Gradle daemons before a build; `none` preserves previous retention.
+The default `--retire-daemons all-idle` retires every confirmed-idle Gradle daemon,
+including matching versions/heaps. Use `--retire-daemons incompatible` before
+`--` to restrict pre-build retirement to different versions/heaps; `none` disables
+only pre-build retirement. These settings do not opt out of post-build retirement.
 Do not add an independent timed cleaner or wait 120 minutes inside this helper.
 
 Retirement holds the same gate, reinspects activity, verifies native PID/start
@@ -188,17 +188,27 @@ identity and authenticated registry idle state, requests `StopWhenIdle`, and wai
 for actual process exit. A racing external build can finish without cancellation.
 Never substitute `gradle --stop`, taskkill, Stop-Process, or broad Java termination.
 Unknown registry/distribution/JDK protocol blocks the build; diagnose it rather
-than bypassing the guard. Custom wrapper names require `none` until their version
+than bypassing the guard. Custom wrapper names require pre-build `none` until their version
 is explicitly supported. Inspect `daemon_retirement` in the final result.
 Gradle 8.6 and newer callback/idle-state variants are handled. An
 `adapter_compilation_failure` means no adapter shutdown request was sent, not
 that a build is active. Inspect sanitized `retirement_diagnostics`; never bypass
 compatibility failure with force termination or immediate shutdown.
 
-This is pre-build retirement, not zero retention after every build. Kotlin
-compiler daemons, workers, unrelated Java, and separate cleanup tasks are outside
-its scope. `--no-daemon` after `--` remains available when no Gradle reuse is wanted;
-Gradle's single-use daemon then exits after its build. No global settings change.
+Native `--no-daemon` is now the default: Gradle uses a single-use daemon and exits
+after the build. The gate stays held through post-build activity verification and
+graceful retirement of confirmed-idle survivors. Read
+`post_build_daemons.exit_verified`; do not equate wrapper exit with daemon exit.
+No sleeps, time limits or force-kill loop is used. Post-build retirement failure
+reports diagnostics and the original `build_exit_code`; a passing build returns
+helper exit 2 rather than claiming full success.
+
+Only for intentional warm reuse, pass `--keep-daemon` before `--`; combine with
+`--retire-daemons incompatible` to retain matching daemons or `none` to disable
+pre-build retirement too. Raw conflicting daemon flags/properties are rejected.
+The periodic cleaner is unchanged. Separate Kotlin compiler daemons and unrelated
+Java are not retirement targets; assess the existing `--kotlin-strategy in-process`
+option when appropriate instead of killing shared compiler processes.
 
 ## Resource Profile
 

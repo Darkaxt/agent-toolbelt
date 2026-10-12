@@ -275,7 +275,7 @@ def observation_homes(arguments=(), extra=(), project=None):
 
 
 def make_profile(project, arguments, homes, *, gradle_heap=3, kotlin_heap=3, memory_reason=None, kotlin_strategy=None,
-                 collect_all_failures=False):
+                 collect_all_failures=False, keep_daemon=False):
     if any(not 1 <= n <= 64 for n in (gradle_heap, kotlin_heap)):
         raise ValueError("Heap budgets must be between 1 and 64 GB")
     if max(gradle_heap, kotlin_heap) > 3 and not memory_reason:
@@ -283,6 +283,11 @@ def make_profile(project, arguments, homes, *, gradle_heap=3, kotlin_heap=3, mem
     validate_arguments(arguments)
     for arg in arguments:
         option = arg.split("=", 1)[0]
+        if ((not keep_daemon and (arg == '--daemon' or
+                re.fullmatch(r'-[DP]org\.gradle\.daemon=true', arg, re.I)))
+                or (keep_daemon and (arg == '--no-daemon' or
+                re.fullmatch(r'-[DP]org\.gradle\.daemon=false', arg, re.I)))):
+            raise ValueError('Conflicting daemon lifecycle; use --keep-daemon before -- for explicit reuse')
         if option in ("--fail-fast", "--no-fail-fast"):
             raise ValueError("Test failure policy is owned by the helper; use --collect-all-failures before --")
         if option == "--continue" and not collect_all_failures:
@@ -299,6 +304,8 @@ def make_profile(project, arguments, homes, *, gradle_heap=3, kotlin_heap=3, mem
         if env_key in os.environ:
             properties[key] = os.environ[env_key]
     for arg in arguments:
+        if arg in ('--daemon', '--no-daemon'):
+            continue
         handled = False
         for key in keys:
             for prefix in ("-D" + key + "=", "-P" + key + "="):
@@ -317,7 +324,8 @@ def make_profile(project, arguments, homes, *, gradle_heap=3, kotlin_heap=3, mem
             raise ValueError("_JAVA_OPTIONS can override JVM heap budgets; resolve it before building")
     gradle_args = heap_args(properties.get("org.gradle.jvmargs", ""), gradle_heap)
     kotlin_args = heap_args(properties.get("kotlin.daemon.jvmargs", ""), kotlin_heap)
-    full = clean + ["--max-workers=2", "--no-parallel", f"-Dorg.gradle.jvmargs={gradle_args}",
+    full = clean + ["--daemon" if keep_daemon else "--no-daemon",
+                    "--max-workers=2", "--no-parallel", f"-Dorg.gradle.jvmargs={gradle_args}",
                     f"-Pkotlin.daemon.jvmargs={kotlin_args}", "--init-script", str(ASSETS / "profile.init.gradle")]
     if kotlin_strategy:
         full.append(f"-Pkotlin.compiler.execution.strategy={kotlin_strategy}")
@@ -330,6 +338,7 @@ def make_profile(project, arguments, homes, *, gradle_heap=3, kotlin_heap=3, mem
     env["CMAKE_BUILD_PARALLEL_LEVEL"] = "2"
     env["MAKEFLAGS"] = re.sub(r"(?:^|\s)(?:-j\s*\d*|--jobs(?:=\d+)?)", "", env.get("MAKEFLAGS", "")).strip() + " -j2"
     return {"arguments": full, "environment": env, "gradle_jvmargs": gradle_args,
+            "daemon_lifecycle": "reusable" if keep_daemon else "single_use",
             "kotlin_daemon_jvmargs": kotlin_args, "kotlin_strategy": kotlin_strategy or "project_default",
             "max_workers": 2, "parallel": False, "test_max_parallel_forks": 1,
             "test_fail_fast": not collect_all_failures, "test_ignore_failures": False,
@@ -567,7 +576,37 @@ def execute_wrapper(project, profile, log_path):
                 ([] if test_profiles else ["No test profile marker observed; test failure policy not verified"])}
 
 
-def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemons="incompatible",
+def finish_daemon_lifecycle(homes, waiting):
+    """Caller holds the build mutex; only authenticated idle targets may retire."""
+    retired = []
+    while True:
+        with LifecycleObserver(homes) as observer:
+            inspection = inspect_activity(homes)
+            if not inspection['safe_to_start']:
+                waiting()
+                pids = getattr(observer, 'pids', None)
+                if pids is not None and any(p['pid'] not in pids for p in inspection['processes']):
+                    continue
+                print(json.dumps({'state': 'waiting_for_post_build_completion',
+                                  'activity': inspection}), file=sys.stderr, flush=True)
+                observer.wait()
+                continue
+            candidates = retirement_candidates(inspection, None, None, 'all-idle')
+            if not candidates:
+                return {'policy': 'single_use_and_verified_idle_retirement',
+                        'exit_verified': True, 'retired': retired,
+                        'kotlin_daemons': 'not_targeted'}
+            candidate = candidates[0]
+            fresh = inspect_activity(homes)
+            if not fresh['safe_to_start']:
+                continue
+            current = next((p for p in retirement_candidates(fresh, None, None, 'all-idle')
+                            if (p['pid'], p['created']) == (candidate['pid'], candidate['created'])), None)
+            if current:
+                retired.append(retire_daemon({**current, 'retirement_reason': 'post_build_idle'}))
+
+
+def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemons="all-idle",
               diagnostic_quiet_seconds=300, owner_task=None, thread_name=None, notify=True, tray=True, **options):
     from contextlib import ExitStack
     from .notifications import BuildNotification
@@ -657,6 +696,24 @@ def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemo
                         from .support import complete
                         complete(ticket["id"])
                         support_result["completion_verified"] = True
+                    result['build_exit_code'] = result['exit_code']
+                    if profile.get('daemon_lifecycle') == 'single_use':
+                        telemetry.phase(ticket, 'retiring_post_build_daemons')
+                        try:
+                            result['post_build_daemons'] = finish_daemon_lifecycle(
+                                homes, lambda: telemetry.phase(ticket, 'waiting_for_external_build'))
+                        except (ValueError, OSError, RuntimeError) as exc:
+                            result['post_build_daemons'] = {
+                                'exit_verified': False,
+                                'safe_to_continue': False,
+                                'failure_kind': getattr(exc, 'failure_kind', 'post_build_retirement_error'),
+                                'diagnostics': getattr(exc, 'diagnostics', {'details': [type(exc).__name__]}),
+                                'kotlin_daemons': 'not_targeted'}
+                            if result['exit_code'] == 0:
+                                result['exit_code'] = 2
+                    else:
+                        result['post_build_daemons'] = {'policy': 'retain_requested', 'exit_verified': False,
+                                                        'kotlin_daemons': 'not_targeted'}
                     break
     public_profile = {key: value for key, value in profile.items()
                       if key not in ("arguments", "environment") and not key.startswith("_")}

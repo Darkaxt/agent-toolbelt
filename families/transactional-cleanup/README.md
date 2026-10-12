@@ -162,3 +162,13 @@ V2 implements workspace and known/explicit-root snapshots and registration. USN 
 ETW are honestly reported as unavailable. This release does not claim complete host
 or process attribution. The helper is subject to Codex/tool execution policy and
 does not provide a policy bypass.
+
+## Generated Git Markers
+
+Exact generated `.git/<namespace>-workflow-tree` pointer files have a dedicated
+`generated-git-marker` registration kind, requiring `--regenerated`,
+`--confirm-git-marker <exact-path>` and producer provenance. Normal review and
+ticket gates apply, with ancestor identities and reviewed content hashes.
+Source, tree objects, refs and other Git metadata remain protected.
+This exception does not override execution policy or authorize retrying a denied
+deletion. Put new task-local markers under D:/Temp instead.
