@@ -6,6 +6,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 EXPECTED_FAMILIES = {
+    "windows-elevation-gate": {
+        "project_name": "agent-toolbelt-windows-elevation-gate",
+        "script_name": "agent-toolbelt-windows-elevation-gate",
+        "package_dir": "agent_toolbelt_windows_elevation_gate",
+        "has_claude": False,
+    },
     "operational-recordkeeping": {
         "runtime": False,
         "has_claude": False,
@@ -140,6 +146,7 @@ class MonorepoLayoutTests(unittest.TestCase):
                 "packages/core",
                 "families/adb-archive-transfer",
                 "families/gradle-build-gate",
+                "families/windows-elevation-gate",
                 "families/context-transfer",
                 "families/transactional-cleanup",
                 "families/c-drive-maintenance",

@@ -1,5 +1,9 @@
 # Codex install guide
 
+Windows Elevation Gate: run `python families/windows-elevation-gate/scripts/install.py`.
+This installs the shared runtime and canonical
+`families/windows-elevation-gate/codex/skills/windows-elevation-gate` for Codex and Claude.
+
 Each runtime family ships its own Codex skill bundle. Instruction-only skills use one canonical cross-agent directory. Install only what you want.
 
 ## Skill locations

@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-toolbelt-windows-elevation-gate"
+version = "0.1.0"
+description = "Explained, feedback-aware Windows elevation through a session FIFO prompt gate."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+
+[project.scripts]
+agent-toolbelt-windows-elevation-gate = "agent_toolbelt_windows_elevation_gate.cli:entrypoint"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
