@@ -1,0 +1,4 @@
+interface:
+  display_name: "Diagnostics-First UI"
+  short_description: "Debug UI with rendered state, actions and measured readiness"
+  default_prompt: "Use $ui-diagnostics-first to reuse or add scoped UI debugging hooks, inspect actual rendered state and measured readiness, and reserve screenshots for visual evidence."
