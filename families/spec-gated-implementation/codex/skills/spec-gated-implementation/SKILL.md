@@ -3,7 +3,7 @@ name: spec-gated-implementation
 description: Use for non-trivial implementation work that must start from a specification, proceed through a compact staged plan, reuse existing user authorization, reconcile every stage against the specification, and close all blockers and tracked deferrals before completion.
 license: MIT
 metadata:
-  version: "0.1.0"
+  version: "0.2.0"
   compatibility: Instruction-only workflow for Codex, Claude, and other agents that can maintain project documents and run verification.
 ---
 
@@ -13,13 +13,17 @@ Keep the authoritative specification, not the staged plan, as the source of trut
 
 Skip this workflow for trivial one-step edits or purely read-only investigation. Use it for features, projects, migrations, and other multi-stage implementation where omissions can accumulate between stages.
 
+Applicable standing instructions govern authority, stage statuses, parking and
+delivery. This skill supplies reconciliation techniques, not permission to add
+approvals, delegation, release authority or new scope.
+
 ## 1. Establish The Specification
 
 Create or identify one authoritative specification document before implementation. Follow the repository's documentation conventions when they exist.
 
 The specification must contain clear requirements and acceptance criteria. Give non-trivial requirements stable identifiers when that improves traceability.
 
-Do not silently weaken, reinterpret, or remove a requirement. Only an explicit user decision can revise the specification.
+Do not silently weaken, reinterpret, or remove a requirement. Only an explicit user decision can revise the specification's required behavior or scope, subject to higher-priority constraints. Ordinary wording corrections that preserve requirements do not require new approval.
 
 ## 2. Derive A Compact Staged Plan
 
@@ -32,7 +36,17 @@ Create a simplified staged plan from the specification. For each stage, record:
 
 Map every specification requirement to a stage. An unassigned requirement is a planning blocker.
 
+Use complete specification-defined features as acceptance units, or complete
+specified outcomes for non-feature work. Do not split one coherent feature into
+component-only validation stages. If existing stage boundaries conflict with the
+specification, reconcile them without weakening criteria or pulling unrelated
+later-stage scope into the current stage.
+
 Keep a cumulative reconciliation ledger in the plan or a nearby status artifact. It must show satisfied requirements, blockers, tracked deferrals, and verification evidence for each stage.
+
+Use the existing ledger's concise current state at meaningful integration
+checkpoints. Do not create a new document, artificial stage or checkpoint report
+for each component or small edit.
 
 ## 3. Reuse Existing Authorization
 
@@ -48,35 +62,88 @@ Review the current task history before asking for implementation approval.
 
 For every stage:
 
-1. Implement only the planned stage scope.
-2. Run fresh stage verification.
-3. Re-read the authoritative specification, not only the plan.
-4. Compare the delivered behavior and evidence with every applicable requirement.
-5. Update the reconciliation ledger.
-6. Classify every gap as a `blocker` or `tracked_deferral`.
-7. Resolve all blockers, rerun verification, and reconcile again before advancing.
-8. Implement any deferral required by the next stage before starting that stage.
+1. Implement only the planned stage scope, with at most one ACTIVE stage.
+2. Prioritize the narrowest required integrated workflow and its remaining acceptance criteria.
+3. Validate fully implemented features against their assigned acceptance criteria; inspect applicable evidence and run affected checks when evidence is missing or invalidated, or an explicit requirement mandates a new run.
+4. Re-read the authoritative specification, not only the plan.
+5. Compare the delivered behavior and evidence with every applicable requirement.
+6. Update the reconciliation ledger and classify every required gap as a `blocker` or `tracked_deferral`.
+7. Resolve all blockers, rerun verification where needed, and reconcile again before ordinary advancement.
+8. Complete deferrals in their assigned stages, before dependent work needs them.
 
 Do not pass a stage merely because its tasks were checked off. The stage passes only when the specification comparison supports it.
+
+### Cohesive Implementation And Verification
+
+Formal validation is feature-complete only. Implement the specification-defined
+feature's required behavior, wiring and integration before acceptance validation.
+Do not validate micro-implementations as checkpoints or rename an incomplete
+component a feature or vertical slice to bypass this rule. A narrow vertical
+slice qualifies only when it fully implements a feature already defined by the
+specification/current-stage criteria; missing parts remain advancement blockers.
+Implementation complete means the required paths are present and integrated,
+not that correctness has already been proven. Validation determines correctness;
+a failed check returns the same feature to implementation and affected revalidation.
+
+Prefer cohesive patches over fragmented micro-implementations and repeated
+edit/test/report cycles. Cohesive means one meaningful integrated outcome, not a
+line-count quota or permission to mix stages or unrelated changes. Once a real
+vertical slice works, close the remaining stage criteria rather than repeatedly
+reopening verified parts. Avoid speculative micro-optimizations, abstractions and
+optional edge-case work while required integration remains unfinished.
+
+Batch related edits when practical, without suppressing meaningful test-first
+reproductions or necessary diagnostics. Diagnostic feedback is not feature
+validation, stage acceptance or a completion claim. It must not become repeated
+component build/device/report ceremonies. Use the smallest credible affected checks.
+An interim diagnostic must answer a concrete implementation question; do not
+relabel micro-validation as diagnostics to evade the feature-complete boundary.
+Reuse inspected current-task results only when relevant code, configuration,
+environment, dependencies and integration conditions are unchanged and no
+applicable requirement mandates a new run. Otherwise rerun affected checks.
+Stage closure, a new report or a commit alone does not invalidate evidence or
+require the full suite. Broaden checks when risk or an explicit requirement
+requires it. Required integration and recovery checks must not be skipped to
+make a patch appear efficient.
 
 ## 5. Classify Gaps Correctly
 
 ### Blocker
 
-A blocker is any of the following:
+Missing required work has exactly two categories: advancement blockers and
+tracked deferrals. Do not introduce an unclassified unfinished-work bucket.
 
-- required behavior is missing;
-- an acceptance criterion or verification fails;
-- the stage introduces a regression or safety issue;
-- a later stage depends on the missing work.
+A blocker is missing work or a defect that prevents:
 
-Blockers must be fixed before advancing.
+- a current-stage acceptance criterion from passing;
+- required integration or verification from passing;
+- resolution of a regression or safety failure in the current stage;
+- an assigned prerequisite for dependent work from being satisfied.
+
+A blocker blocks stage completion and ordinary advancement; it does not stop
+implementation inside the stage. Implementable gaps keep the stage ACTIVE.
+Blockers must be fixed before advancing, except for an explicitly justified
+BLOCKED-stage parking transition under standing parking and dependency rules.
+
+BLOCKED status requires an identified condition that cannot presently be resolved,
+not merely unfinished, slow or difficult work. Record the affected criterion,
+reason, internal/external cause, resolution condition and dependent work.
+Parking is not completion: retain every criterion and resume when actionable.
+Do not start dependent work whose prerequisite is unresolved. Keep at most one
+ACTIVE stage, including after parking.
 
 ### Tracked Deferral
 
-A `tracked_deferral` is required work that does not block the current stage. Record its exact requirement, reason, destination stage, and verification method.
+A `tracked_deferral` is required work assigned to a specifically named later stage.
+Record its exact requirement, reason, destination stage, and verification method.
+It is valid only when current-stage acceptance criteria do not depend on it and
+the move preserves the specification, integration and verification requirements.
+Otherwise it is an advancement blocker, not a deferral.
 
-Deferral changes scheduling only. It does not remove the requirement and it is not an acceptable final state. Implement it before a dependent stage or in the mandatory final-remediation stage.
+Deferral changes scheduling only. All required tracked deferrals must be
+implemented in their assigned stage, before dependent work or final completion.
+If real remaining work needs a named remediation stage, add one without opening
+concurrent stages or weakening acceptance. No empty remediation stage is required.
 
 If the work cannot be implemented, keep the plan incomplete unless the user explicitly revises the specification. Reclassifying required work as "out of scope" without that decision is prohibited.
 
@@ -84,13 +151,21 @@ If the work cannot be implemented, keep the plan incomplete unless the user expl
 
 Before claiming the plan complete:
 
-1. Run a final-remediation stage for every remaining tracked deferral.
+1. Complete every required blocker and tracked deferral in its assigned stage or a justified named remediation stage.
 2. Re-read and reconcile the full specification.
 3. Confirm `blockers = 0` and `tracked_deferrals = 0`.
-4. Run fresh end-to-end verification.
+4. Inspect end-to-end evidence applicable to the integrated result; run checks where evidence is missing or invalidated or an applicable requirement mandates them.
 5. Report implementation evidence and any explicit user-approved specification revisions.
 
-Only then follow the repository's commit, deploy, release, and sync requirements. "Tracked for later" is not completion.
+Final completion claims and delivery require this gate. Intermediate commits
+remain allowed when applicable instructions permit them; they do not validate
+an incomplete feature or close a stage. Deployment, release and sync follow their
+actual authorization and repository requirements. "Tracked for later" is not completion.
+
+For an existing task after instruction updates, explicitly reread the current
+standing instructions and installed skill before continuing under the changed
+wording. Successful deployment is not proof that an active task has loaded or
+followed those instructions. Preserve its existing scope, authorization and work.
 
 ## Related Skills
 
