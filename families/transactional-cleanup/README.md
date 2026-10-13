@@ -41,8 +41,27 @@ Existing attributable output outside Temp remains eligible for scoped cleanup.
 From this family run `python scripts/install.py`. It deploys a shared dependency-free
 runtime under LOCALAPPDATA/Tools/transactional-cleanup and skills to the personal
 Codex, agents and Claude skill roots. No virtual environment or downloaded package
-is required. Python 3.11+ and Windows with stable NTFS/ReFS identities are required
-for deletion. Unsupported filesystems are reported as protected.
+is required. Python 3.11+ and Windows NTFS/ReFS or the content-bound exFAT mode
+below are required for deletion. Other filesystems remain protected.
+
+## exFAT Generated Output
+
+Ordinary generated files and empty directories on exFAT use the same reviewed
+manifest/ticket workflow. When FileIdInfo is unsupported, the helper confirms
+exFAT through the open handle and records its volume serial, 64-bit index and
+creation time. It never substitutes 64-bit IDs on NTFS/ReFS. Every eligible exFAT
+regular file also receives SHA-256, size and write-time proof at review. Apply
+checks that proof through the same write/delete-guarded handle used to delete it.
+Modified/replaced files and new concurrent files survive. Changes need a fresh
+review; simply retrying an old ticket does not authorize new content. This is
+stricter than NTFS/ReFS same-identity generated-output edits. Locked/unreadable
+review members are excluded independently; apply sharing failures remain retryable.
+Hashing streams content and adds I/O only for exFAT candidates, not every NTFS file.
+
+No recursive deletion, alternate deletion mechanism or global maintenance mutex
+is used. Special disposable-repository, checkout-retirement and generated Git
+workflow-marker contracts remain NTFS/ReFS-only. A historical discarded review
+must be replaced with begin/register/review/inspect and a new ticket.
 
 ## Commands
 

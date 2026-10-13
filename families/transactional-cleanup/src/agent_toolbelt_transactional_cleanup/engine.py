@@ -751,8 +751,11 @@ class Engine:
                 reason = 'reparse_point'
             if not reason and not info['directory'] and info['links'] != 1 and not allow_hardlinks:
                 reason = 'hardlink'
-            if not reason and info.get('filesystem') not in {'NTFS', 'ReFS'}:
+            if not reason and info.get('filesystem') not in {'NTFS', 'ReFS', 'exFAT'}:
                 reason = 'stable_identity_unavailable'
+            if not reason and info.get('filesystem') == 'exFAT' and (
+                    allow_disposable or marker_proof or allow_hardlinks or allow_reparse):
+                reason = 'exfat_regular_cleanup_only'
             preexisting = path_key(path) in existing
             if not reason and preexisting and not (registration and registration['regenerated']):
                 reason = 'preexisting_protected'
@@ -784,6 +787,13 @@ class Engine:
             if marker_proof and not reason:
                 item['git_marker_proof'] = marker_proof
                 item['content_sha256'] = fs.content_snapshot(item)
+            if not reason and info.get('filesystem') == 'exFAT' and not info['directory']:
+                try:
+                    item['content_sha256'] = fs.content_snapshot(item)
+                except (OSError, ValueError) as exc:
+                    item.update(decision='excluded', reason='content_snapshot_unavailable',
+                                snapshot_error={'type': type(exc).__name__,
+                                                'winerror': getattr(exc, 'winerror', None)})
             item_text = encoded(item).decode()
             row_sha = hashlib.sha256(item_text.encode()).hexdigest()
             ordinal = start_ordinal + offset

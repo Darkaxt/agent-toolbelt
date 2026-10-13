@@ -3,8 +3,8 @@ name: transactional-cleanup
 description: Clean generated build, deployment, browser, media and temporary artifacts through reviewed snapshots and exact-file deletion tickets. Use when a task leaves local output to reclaim, including output outside its workspace.
 license: MIT
 metadata:
-  version: "0.5.1"
-  compatibility: Windows 10/11, Python 3.11+, NTFS/ReFS identity. Codex and Claude; installed local helper required.
+  version: "0.5.2"
+  compatibility: Windows 10/11, Python 3.11+, NTFS/ReFS or content-bound exFAT. Codex and Claude; installed local helper required.
 ---
 
 # Transactional Cleanup
@@ -177,9 +177,21 @@ deleting them outside the helper.
 
 ## Snapshot And Retry Contract
 
+Ordinary generated output on exFAT is supported without a cleanup exception. The
+helper confirms the filesystem through its open handle and uses volume serial,
+64-bit file index and creation time where FileIdInfo is unsupported. Reviewed
+regular files additionally require SHA-256, size and write-time proof, rechecked
+through the exact handle used for deletion. Modified/replaced or new files survive;
+edits need a fresh review, not repeated apply of the old ticket. Hashing is streamed
+and limited to eligible exFAT files. Unreadable content is excluded independently;
+sharing failures at apply remain retryable. No ID fallback on NTFS/ReFS or unknown
+filesystems. Special repository-retirement, disposable-clone and generated Git
+workflow-marker modes remain NTFS/ReFS-only. Discarded historical transactions
+require a fresh begin/register/review/inspect/ticket sequence after upgrading.
+
 - Apply accepts only an opaque helper-issued ticket, never a path, wildcard or shell expression.
 - New concurrent files survive. Their nonempty directories remain and are reported.
-- A modified generated file with the same Windows identity remains eligible.
+- On NTFS/ReFS, a modified generated file with the same Windows identity remains eligible; exFAT requires unchanged reviewed content and metadata.
 - A replacement at the same path is skipped as `replaced_after_scan`.
 - Locked files are retryable; other eligible files are processed independently.
 - Junctions, symlinks, hard links, tracked files and critical roots are protected.
