@@ -258,7 +258,45 @@ class VideoEvidenceTests(unittest.TestCase):
         self.assertIn("A" * 1_000, bundle.packet_text)
         self.assertNotIn("A" * 1_001, bundle.packet_text)
         self.assertTrue(bundle.diagnostics["transcript_truncated"])
+        self.assertEqual(bundle.diagnostics["transcript_source_chars"], 1080)
+        self.assertEqual(bundle.diagnostics["transcript_chars"], 1000)
+        self.assertIn('"transcript_truncated": true', bundle.packet_text)
+        self.assertIn('"status": "unverified"', bundle.packet_text)
+        self.assertNotIn(str(manifest_path), bundle.packet_text)
         self.assertEqual(bundle.diagnostics["image_count"], 1)
+
+    def test_complete_file_preserves_partial_source_coverage(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            transcript = root / "transcript.txt"
+            transcript.write_text("Only the available speech.\n", encoding="utf-8")
+            manifest = root / "analysis-manifest.json"
+            coverage = {"status": "partial", "complete": False, "acquisition_exit_code": 1}
+            manifest.write_text(json.dumps({
+                "operation": "prepare-analysis", "analysis_dir": str(root),
+                "transcript_coverage": coverage,
+                "evidence": {"transcript": str(transcript)},
+            }), encoding="utf-8")
+            bundle = evidence.load_video_evidence(manifest)
+        self.assertFalse(bundle.diagnostics["transcript_truncated"])
+        self.assertEqual(bundle.diagnostics["transcript_source_chars"], bundle.diagnostics["transcript_chars"])
+        self.assertEqual(bundle.diagnostics["transcript_coverage"], coverage)
+        self.assertIn('"status": "partial"', bundle.packet_text)
+
+    def test_frame_only_evidence_does_not_claim_a_transcript(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            frame = root / "frame.jpg"
+            frame.write_bytes(b"frame")
+            manifest = root / "analysis-manifest.json"
+            manifest.write_text(json.dumps({
+                "operation": "prepare-analysis", "analysis_dir": str(root),
+                "evidence": {"interval_frames": [str(frame)]},
+            }), encoding="utf-8")
+            bundle = evidence.load_video_evidence(manifest)
+        self.assertEqual(bundle.diagnostics["transcript_source_chars"], 0)
+        self.assertEqual(bundle.diagnostics["transcript_coverage"]["status"], "missing")
+        self.assertIn('"status": "missing"', bundle.packet_text)
 
     def test_manifest_rejects_evidence_paths_outside_analysis_directory(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -323,7 +361,9 @@ class VideoEvidenceTests(unittest.TestCase):
             source_type="youtube",
             packet_text="# Video Evidence\nTranscript.",
             image_paths=(Path("frame.jpg"),),
-            diagnostics={"image_count": 1, "transcript_chars": 11},
+            diagnostics={"image_count": 1, "transcript_chars": 11,
+                         "transcript_truncated": True,
+                         "transcript_coverage": {"status": "unverified", "complete": False}},
             source={"title": "Demo"},
         )
         calls = []
@@ -350,6 +390,9 @@ class VideoEvidenceTests(unittest.TestCase):
         self.assertEqual(calls[0]["operation"], "analyze-video")
         self.assertEqual(calls[0]["image_paths"], bundle.image_paths)
         self.assertEqual(result["evidence_diagnostics"]["image_count"], 1)
+        self.assertTrue(any("TRUNCATED" in warning for warning in result["warnings"]))
+        self.assertTrue(any("unverified" in warning for warning in result["warnings"]))
+        self.assertIn("whole-video", calls[0]["instruction"])
 
 
 if __name__ == "__main__":

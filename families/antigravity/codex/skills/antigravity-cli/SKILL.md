@@ -1,9 +1,9 @@
 ---
 name: antigravity-cli
-description: Use the local Antigravity helper for independent exact-model review of explicit packets, bounded public web-page analysis, and transcript/frame analysis of public videos prepared by yt-dlp-ffmpeg, with isolated OAuth/runtime state and no model fallback.
+description: Use the local Antigravity helper when independent exact-model review of explicit packets or prepared public evidence is requested or useful and authorized. Not required for YouTube transcript retrieval or ordinary video analysis.
 license: MIT
 metadata:
-  version: "0.1.0"
+  version: "0.1.1"
   compatibility: Windows/local CLI oriented; requires helper-owned CLIProxyAPI runtime and explicit Antigravity login.
 ---
 
@@ -11,6 +11,22 @@ metadata:
 
 Use `scripts/invoke_antigravity.py` for bounded independent analysis. The
 helper sends no tools and never exposes a general-purpose local proxy.
+
+## Optional Independent Video Analysis
+
+Acquire public captions with `yt-dlp-ffmpeg`, or read the public browser transcript
+panel when extraction fails or is inadequate. Analyze that evidence in the current
+task by default; this helper is not a YouTube player or transcript extractor.
+An unavailable optional reviewer does not invalidate evidence already acquired.
+Do not silently skip an independent review that the user explicitly required.
+
+For authorized `analyze-video`, inspect `transcript_coverage`,
+`transcript_source_chars`, `transcript_chars`, `transcript_truncated` and warnings.
+The default text budget is 120,000 characters; larger budgets are still bounded.
+Truncation supplies a prefix only. Read remaining timestamped chunks directly or
+prepare explicit chunk review packets and reconcile their coverage. Never claim a
+whole-video review from partial text or sampled frames. `ok` and `model_verified`
+confirm execution/model attribution, not evidence completeness.
 
 ## Workflow
 

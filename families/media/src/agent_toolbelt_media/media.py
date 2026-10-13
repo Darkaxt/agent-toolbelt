@@ -352,6 +352,28 @@ def clean_vtt_text(raw_text: str) -> str:
     return "\n".join(cleaned_lines) + ("\n" if cleaned_lines else "")
 
 
+def transcript_coverage(
+    raw_vtt: str, transcript: str, *, duration: Any, acquisition_exit_code: int,
+) -> dict[str, Any]:
+    timestamp = r"(?:\d{2,}:)?[0-5]\d:[0-5]\d\.\d{3}"
+    cues = re.findall(rf"(?m)^({timestamp})[ \t]+-->[ \t]+({timestamp})(?:[ \t]|$)", raw_vtt)
+
+    def seconds(value: str) -> float:
+        return sum(float(part) * 60 ** index for index, part in enumerate(reversed(value.split(":"))))
+
+    bounds = [(seconds(start), seconds(end)) for start, end in cues if seconds(end) >= seconds(start)]
+    return {
+        "status": "missing" if not transcript.strip() else "partial" if acquisition_exit_code else "unverified",
+        "complete": False,
+        "characters": len(transcript),
+        "acquisition_exit_code": acquisition_exit_code,
+        "first_cue_sec": min((start for start, _ in bounds), default=None),
+        "last_cue_sec": max((end for _, end in bounds), default=None),
+        "video_duration_sec": duration,
+        "note": "Cue bounds and a successful download do not prove complete spoken coverage.",
+    }
+
+
 def analysis_run_directory(output_dir: str | None, source_id: str | None) -> Path:
     base_dir = Path(output_dir).expanduser().resolve() if output_dir else (Path.cwd() / "media-analysis").resolve()
     safe_id = re.sub(r"[^A-Za-z0-9._-]+", "-", source_id or "media").strip("-.") or "media"
@@ -754,18 +776,31 @@ def invoke_prepare_analysis(
             "Subtitle acquisition failed: "
             + (summarize_stderr(subtitle_run.stderr, success=False) or "yt-dlp subtitle request failed.")
         )
+    raw_vtt = ""
+    transcript_text = ""
+    preferred_vtt = None
     if not subtitle_paths:
         warnings.append("No subtitles were available for the requested language selector.")
     else:
         preferred_vtt = next((path for path in subtitle_paths if path.suffix.lower() == ".vtt"), None)
         if preferred_vtt is not None:
-            transcript_text = clean_vtt_text(preferred_vtt.read_text(encoding="utf-8", errors="replace"))
+            raw_vtt = preferred_vtt.read_text(encoding="utf-8", errors="replace")
+            transcript_text = clean_vtt_text(raw_vtt)
             if transcript_text:
                 transcript_path = analysis_dir / "transcript.txt"
                 transcript_path.write_text(transcript_text, encoding="utf-8")
                 evidence["transcript"] = str(transcript_path.resolve())
             else:
                 warnings.append("The selected subtitle artifact did not contain readable transcript text.")
+
+    coverage = transcript_coverage(
+        raw_vtt, transcript_text, duration=source.get("duration"),
+        acquisition_exit_code=subtitle_run.returncode,
+    )
+    coverage["selected_subtitle"] = str(preferred_vtt.resolve()) if preferred_vtt else None
+    warnings.append(
+        f"Transcript coverage: {coverage['status']}. Analysis-ready does not mean whole-video coverage."
+    )
 
     media_path: Path | None = None
     if include_visuals:
@@ -933,7 +968,12 @@ def invoke_prepare_analysis(
     if evidence["transcript"]:
         next_steps.append("Read the cleaned transcript before acquiring heavier media artifacts.")
     else:
-        next_steps.append("No transcript was prepared; request audio for transcription or visual frames as needed.")
+        next_steps.append("No transcript was prepared; inspect the public browser transcript panel if available.")
+    if coverage["status"] in ("missing", "partial"):
+        next_steps.append(
+            "Capture all browser transcript segments, checking lazy loading, timestamps and gaps; "
+            "otherwise report missing coverage. Do not export browser cookies."
+        )
     if not include_visuals:
         next_steps.append("Rerun with --include-visuals when visual context is material to the question.")
     elif evidence["interval_frames"] or evidence["scene_frames"]:
@@ -946,6 +986,7 @@ def invoke_prepare_analysis(
         "source": source,
         "analysis_dir": str(analysis_dir),
         "analysis_ready": analysis_ready,
+        "transcript_coverage": coverage,
         "requested": {
             "subtitle_langs": subtitle_langs,
             "include_visuals": include_visuals,
@@ -982,6 +1023,7 @@ def invoke_prepare_analysis(
         artifacts=list(dict.fromkeys(artifacts)),
         metadata={
             "analysis_ready": analysis_ready,
+            "transcript_coverage": coverage,
             "analysis_dir": str(analysis_dir),
             "source": source,
             "evidence": evidence,

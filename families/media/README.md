@@ -43,6 +43,16 @@ scene-change frames. Use `--include-audio` when another local tool or model will
 transcribe spoken content. The command prepares evidence; it does not call an
 LLM or generate a summary.
 
+Inspect `metadata.transcript_coverage` (also stored in the manifest): status,
+selected subtitle, characters, acquisition exit code, cue bounds and video duration.
+`analysis_ready` means evidence exists, not that all speech was recovered. Successful
+caption acquisition remains `unverified`; failed acquisition with text is `partial`.
+Use the public browser transcript panel when extraction fails or evidence is
+inadequate, checking lazy-loaded segments and timestamp gaps. Never export cookies
+or infer a full transcript from a visible viewport. No panel means an explicit
+coverage limit, not permission to invent missing speech. Analyze directly in the
+current task; Antigravity is optional authorized independent review.
+
 Codex integration:
 
 - `families/media/codex/skills/yt-dlp-ffmpeg`

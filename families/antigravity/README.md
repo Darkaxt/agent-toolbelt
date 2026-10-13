@@ -29,6 +29,13 @@ with `yt-dlp-ffmpeg prepare-analysis`; `analyze-video` reads the explicit
 manifest, bounded transcript, and up to eight prepared frame images. It never
 uploads the downloaded media or audio file automatically.
 
+Antigravity is optional independent analysis, not transcript acquisition. Ordinary
+video understanding can use media-helper captions or public browser transcript
+capture directly in the current task. The video packet and result expose source
+coverage, original/supplied character counts and truncation. The default transcript
+budget is 120,000 characters; a truncated prefix is not whole-video analysis. Read
+remaining timestamped chunks separately and reconcile coverage before claiming it.
+
 ## Runtime Isolation
 
 The helper owns `%LOCALAPPDATA%\Tools\antigravity-review`. It downloads and
