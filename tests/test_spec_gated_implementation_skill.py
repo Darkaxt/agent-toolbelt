@@ -109,6 +109,44 @@ class SpecGatedImplementationSkillTests(unittest.TestCase):
         self.assertIn("intermediate commits remain allowed", self.skill_text_lower)
         self.assertIn("do not validate an incomplete feature or close a stage", self.skill_text_lower)
 
+    def consolidation_text(self):
+        start = self.skill_text_lower.index("### stage-closure refactoring assessment")
+        return self.skill_text_lower[start:self.skill_text_lower.index("## 5.", start)]
+
+    def test_assessment_is_lightweight_not_automatic_refactoring(self):
+        text = self.consolidation_text()
+        for requirement in ("fully implemented and verified", "final reconciliation",
+                            "reuse an unchanged assessment", "not automatic refactoring",
+                            "existing reconciliation ledger", "no material finding"):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, text)
+
+    def test_consolidation_requires_material_evidence_and_existing_authority(self):
+        text = self.consolidation_text()
+        for requirement in ("duplicated business logic", "stacked workarounds",
+                            "conflicting state ownership", "obsolete implementation paths",
+                            "existing specification requirement", "explicitly authorized maintenance",
+                            "does not authorize", "optional opportunities are not missing required work"):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, text)
+
+    def test_refactoring_preserves_blocker_deferral_and_wip_boundaries(self):
+        text = self.consolidation_text()
+        for requirement in ("current-stage blockers", "named later stage",
+                            "current acceptance does not depend", "one active stage",
+                            "do not use consolidation to escape", "before overall completion"):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, text)
+
+    def test_consolidation_has_bounded_exit_and_workflow_revalidation(self):
+        text = self.consolidation_text()
+        for requirement in ("affected components", "preserved behavior", "observable acceptance",
+                            "affected complete workflows", "stop when its acceptance criteria pass",
+                            "no numerical cadence", "no unrelated full-suite reruns",
+                            "do not validate individual cleanup edits"):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, text)
+
 
 if __name__ == "__main__":
     unittest.main()

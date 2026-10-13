@@ -3,7 +3,7 @@ name: spec-gated-implementation
 description: Use for non-trivial implementation work that must start from a specification, proceed through a compact staged plan, reuse existing user authorization, reconcile every stage against the specification, and close all blockers and tracked deferrals before completion.
 license: MIT
 metadata:
-  version: "0.2.0"
+  version: "0.3.0"
   compatibility: Instruction-only workflow for Codex, Claude, and other agents that can maintain project documents and run verification.
 ---
 
@@ -70,6 +70,7 @@ For every stage:
 6. Update the reconciliation ledger and classify every required gap as a `blocker` or `tracked_deferral`.
 7. Resolve all blockers, rerun verification where needed, and reconcile again before ordinary advancement.
 8. Complete deferrals in their assigned stages, before dependent work needs them.
+9. Perform the stage-closure refactoring assessment below before ordinary advancement; resolve any current-acceptance finding within the current stage.
 
 Do not pass a stage merely because its tasks were checked off. The stage passes only when the specification comparison supports it.
 
@@ -105,6 +106,49 @@ Stage closure, a new report or a commit alone does not invalidate evidence or
 require the full suite. Broaden checks when risk or an explicit requirement
 requires it. Required integration and recovery checks must not be skipped to
 make a patch appear efficient.
+
+### Stage-Closure Refactoring Assessment
+
+After a stage is fully implemented and verified, assess accumulated design debt
+once at its closure boundary, and once at final reconciliation. This is a
+lightweight assessment, not automatic refactoring. Reuse an unchanged assessment
+at final reconciliation; do not repeat an audit or create a new report merely
+because the stage or task is closing. Record evidence and the scheduling decision
+in the existing reconciliation ledger. No material finding means advance normally
+without a consolidation stage.
+
+Limit inspection to the implemented scope and known upcoming dependencies. Look
+for duplicated business logic, stacked workarounds, conflicting state ownership,
+obsolete implementation paths, or complexity demonstrably obstructing a required
+integration. Cite the concrete behavior/code and maintenance burden or dependency
+risk, not merely a preference for cleaner-looking code. Assessment does not authorize
+scope expansion: refactoring must serve an existing specification requirement or
+explicitly authorized maintenance. Optional opportunities are not missing required
+work; do not turn them into mandatory tracked deferrals or silently add requirements.
+
+Fixes necessary for current acceptance remain current-stage blockers: keep the
+stage ACTIVE and resolve/reverify them before completion. Required consolidation
+that current acceptance does not depend on may belong to a named later stage
+under the existing deferral rules, before its dependent work and before overall
+completion. Preserve the one ACTIVE stage limit and actual prerequisites. Do not
+use consolidation to escape unfinished work or casually reopen completed stages
+for cosmetic polishing. A genuine regression still requires affected reconciliation.
+
+Schedule a bounded consolidation stage only when material evidence and existing
+authority justify it. Batch related debt rather than refactoring after every
+stage. Specify the problems, affected components, requirement/authority basis,
+preserved behavior and safety/recovery contracts, observable acceptance criteria,
+and verification of affected complete workflows. Examples of outcomes are one
+authoritative state owner or removal of a proven obsolete path, not a line-count
+or abstraction-count target. Stop when its acceptance criteria pass; do not expand
+into another improvement hunt. No numerical cadence or periodic rewrites. Do not
+add speculative abstractions or new features; performance work requires evidence
+of a relevant bottleneck and existing authorization, or an explicit requirement.
+
+Verify the complete consolidation outcome, not each internal edit. Do not validate
+individual cleanup edits as checkpoints. Revalidate affected complete workflows
+and update invalidated evidence in the ledger; reuse unaffected applicable evidence.
+There are no unrelated full-suite reruns or new approval/delegation requirements.
 
 ## 5. Classify Gaps Correctly
 
@@ -155,7 +199,8 @@ Before claiming the plan complete:
 2. Re-read and reconcile the full specification.
 3. Confirm `blockers = 0` and `tracked_deferrals = 0`.
 4. Inspect end-to-end evidence applicable to the integrated result; run checks where evidence is missing or invalidated or an applicable requirement mandates them.
-5. Report implementation evidence and any explicit user-approved specification revisions.
+5. Perform the final refactoring assessment above, reusing unchanged stage-closure evidence; resolve any required finding under the same blocker/deferral rules, then repeat zero-gap reconciliation and affected verification.
+6. Report implementation evidence and any explicit user-approved specification revisions.
 
 Final completion claims and delivery require this gate. Intermediate commits
 remain allowed when applicable instructions permit them; they do not validate
