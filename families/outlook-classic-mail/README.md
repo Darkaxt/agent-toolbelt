@@ -146,9 +146,19 @@ adds a manual quoted block from the anchor message and reports
 When the sender account cannot be verified, or when `--send-using-account`
 targets a different Outlook store, the local COM client creates the saved draft
 directly in that target store's default Drafts folder and returns
-`draft_placement` metadata. This avoids Outlook saving a Gmail-backed draft
-under a localized anchor folder such as `Borradores` while leaving the sender
-account unset. Generic `apply-action --action create-draft` is for standalone
+`draft_placement` metadata. This controls folder placement only; it does not by
+itself prove the From account. The helper now reopens the saved EntryID/store and
+returns `draft_placement.sender_verification` with requested/actual account,
+status, verified flag, source and sanitized errors. Only `verified: true` from
+`saved_item_readback` proves the local saved sender matches the requested account.
+Assignment diagnostics retain write/read failures and native-template attempts.
+An unverified draft remains saved, with a warning; do not recreate it or substitute
+a GUI/COM workaround. `diagnostics-log` captures sender warnings without bodies,
+account values or message IDs. A log-write error cannot turn a saved draft into
+a failed creation result. `read-message` exposes draft sender observations without
+inventing an expected account, and edits preserve the previously observed sender.
+No server-sync or send-authority guarantee is implied.
+Generic `apply-action --action create-draft` is for standalone
 new drafts only; it also creates in the selected account's Drafts folder but has
 no original thread to quote.
 

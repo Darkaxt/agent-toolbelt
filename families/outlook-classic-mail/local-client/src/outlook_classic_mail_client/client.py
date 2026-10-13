@@ -373,18 +373,21 @@ def mark_com_stage(diagnostics: dict[str, Any] | None, stage: str, status: str) 
         diagnostics.setdefault("com_stages", {})[stage] = status
 
 
-def redact_diagnostic_text(value: str, *, limit: int = 320) -> str:
+def redact_diagnostic_text(value: str, *, limit: int = 320, sensitive_values: tuple[str, ...] = ()) -> str:
     redacted = value
+    for sensitive in sensitive_values:
+        if sensitive:
+            redacted = redacted.replace(sensitive, "<redacted-id>")
     redacted = re.sub(r"\bmsg[-_][A-Za-z0-9_.:-]+\b", "<redacted-message-id>", redacted, flags=re.IGNORECASE)
     redacted = re.sub(r"\b(entry[-_]?id|message[-_]?id|query|subject)=\S+", r"\1=<redacted>", redacted, flags=re.IGNORECASE)
     redacted = re.sub(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", "<redacted-email>", redacted)
     return redacted[:limit]
 
 
-def exception_diagnostics(exc: BaseException) -> dict[str, Any]:
+def exception_diagnostics(exc: BaseException, *, sensitive_values: tuple[str, ...] = ()) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "type": type(exc).__name__,
-        "message": redact_diagnostic_text(str(exc)),
+        "message": redact_diagnostic_text(str(exc), sensitive_values=sensitive_values),
     }
     hresult = getattr(exc, "hresult", None)
     if hresult is not None:
@@ -396,7 +399,7 @@ def exception_diagnostics(exc: BaseException) -> dict[str, Any]:
                 break
     excepinfo = getattr(exc, "excepinfo", None)
     if excepinfo is not None:
-        payload["excepinfo"] = redact_diagnostic_text(str(excepinfo))
+        payload["excepinfo"] = redact_diagnostic_text(str(excepinfo), sensitive_values=sensitive_values)
     return payload
 
 
@@ -2011,11 +2014,18 @@ def read_message(
 ) -> dict[str, Any]:
     account_info = resolve_account(session, account_selector)
     item = resolve_message(session, account_info, message_id)
-    return {
+    result = {
         "account": account_info["smtp_address"],
         "store": account_info["delivery_store"],
         "message": message_detail(item, include_html=include_html),
     }
+    try:
+        drafts = account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
+        if folder_paths_match(safe_get(item, "Parent"), drafts):
+            result["draft_sender"] = {**inspect_sender_account(item), "source": "resolved_message"}
+    except Exception as exc:
+        result["draft_sender_context"] = {"status": "context_read_error", "errors": [exception_diagnostics(exc)]}
+    return result
 
 
 def save_attachments(
@@ -2809,25 +2819,110 @@ def add_unique_warning(warnings: list[str], warning: str) -> None:
         warnings.append(warning)
 
 
+def inspect_sender_account(item: Any, *, expected: str | None = None) -> dict[str, Any]:
+    result = {"requested": expected, "actual": None, "status": "unset",
+              "verified": False if expected else None, "errors": []}
+    stage = "account_read"
+    try:
+        account = item.SendUsingAccount
+        if account is None:
+            return result
+        stage = "smtp_read"
+        actual = str(account.SmtpAddress or "").strip()
+        if not actual:
+            result["status"] = "empty_smtp"
+            return result
+        result["actual"] = actual
+        result["status"] = "observed" if not expected else "verified" if actual.casefold() == expected.strip().casefold() else "mismatch"
+        result["verified"] = actual.casefold() == expected.strip().casefold() if expected else None
+    except Exception as exc:
+        result.update(status="read_error", errors=[{"stage": stage, **exception_diagnostics(exc)}])
+    return result
+
+
 def send_using_account_smtp(item: Any) -> str:
-    account = safe_get(item, "SendUsingAccount")
-    if account is None:
-        return ""
-    return str(safe_get(account, "SmtpAddress", "") or "")
+    return str(inspect_sender_account(item)["actual"] or "")
 
 
-def set_send_using_account(item: Any, account_info: dict[str, Any], warnings: list[str]) -> str:
+def set_send_using_account(item: Any, account_info: dict[str, Any], warnings: list[str], *,
+                           diagnostics: dict[str, Any] | None = None) -> str:
     expected = str(account_info.get("smtp_address") or "").strip().lower()
+    details = {"write_succeeded": False, "errors": []}
     try:
         item.SendUsingAccount = account_info["account"]
-    except Exception:
+        details["write_succeeded"] = True
+    except Exception as exc:
+        details["errors"].append({"stage": "account_write", **exception_diagnostics(exc)})
         add_unique_warning(warnings, "send_using_account_unset")
-    actual = send_using_account_smtp(item)
+    details["readback"] = inspect_sender_account(item, expected=expected)
+    details["readback"]["matches_requested"] = details["readback"].pop("verified")
+    details["readback"]["source"] = "assignment_readback"
+    if details["readback"]["status"] == "verified":
+        details["readback"]["status"] = "match"
+    if diagnostics is not None:
+        diagnostics.update(details)
+    actual = str(details["readback"]["actual"] or "")
     if expected and not actual:
         add_unique_warning(warnings, "send_using_account_unset")
     elif expected and actual.strip().lower() != expected:
         add_unique_warning(warnings, "send_using_account_mismatch")
     return actual
+
+
+def verify_saved_draft_sender(session: Any, draft: Any, account_info: dict[str, Any], *,
+                              expected: str | None = None, compare_account: bool = True,
+                              assignment: dict[str, Any] | None = None) -> dict[str, Any]:
+    requested = str(account_info.get("smtp_address") or "") if compare_account else expected
+    result = {"requested": requested, "actual": None, "status": "reopen_error", "verified": False,
+              "source": "saved_item_readback", "reopened": False, "errors": [], "assignment": assignment}
+    stage = "saved_identity"
+    entry_id, store_id = "", ""
+    try:
+        entry_id = str(draft.EntryID or "")
+        store_id = str(account_info.get("store_id") or "")
+        if not entry_id or not store_id:
+            raise ValueError("Saved EntryID and store binding are required for sender verification")
+        stage = "reopen"
+        if session is None:
+            session = draft.Session
+        saved = session.GetItemFromID(entry_id, store_id)
+        if str(saved.EntryID or "").casefold() != entry_id.casefold():
+            raise ValueError("Reopened item identity differs from the saved draft")
+        actual_store = str(safe_get(safe_get(saved, "Parent"), "StoreID", "") or "")
+        if actual_store and actual_store.casefold() != store_id.casefold():
+            raise ValueError("Reopened item store differs from the saved draft binding")
+        result.update(inspect_sender_account(saved, expected=requested))
+        result["reopened"] = True
+    except Exception as exc:
+        result["errors"] = [{"stage": stage, **exception_diagnostics(exc, sensitive_values=(entry_id, store_id))}]
+    return result
+
+
+def record_sender_diagnostics(result: dict[str, Any], diagnostics: dict[str, Any]) -> None:
+    payload = result.get("result") or {}
+    sender = (payload.get("draft_placement") or {}).get("sender_verification") or payload.get("draft_sender")
+    if not sender:
+        return
+    errors = list(sender.get("errors") or [])
+    assignment = sender.get("assignment") or {}
+    for prefix, details in (("", assignment), ("native_template.", assignment.get("native_template") or {})):
+        for error in list(details.get("errors") or []) + list((details.get("readback") or {}).get("errors") or []):
+            errors.append({**error, "stage": prefix + error["stage"]})
+    errors.extend((sender.get("before_edit") or {}).get("errors") or [])
+    if sender.get("status") in ("verified", "observed") and not errors:
+        return
+    diagnostics["warning_kind"] = "draft_sender_unverified" if sender.get("verified") is not True else "draft_sender_assignment_warning"
+    diagnostics["sender_verification"] = {
+        "status": sender.get("status"), "verified": sender.get("verified"),
+        "source": sender.get("source"), "reopened": sender.get("reopened"),
+        "assignment_write_succeeded": assignment.get("write_succeeded"), "errors": errors,
+    }
+    try:
+        write_diagnostics_event(finish_client_diagnostics(diagnostics), include_success=True)
+    except Exception as exc:
+        # A post-save log failure must not disguise a saved draft as a failed create.
+        result.setdefault("warnings", []).append("sender_diagnostic_log_failed")
+        diagnostics["sender_log_error"] = exception_diagnostics(exc)
 
 
 def copy_draft_fields(source: Any, target: Any) -> None:
@@ -2861,6 +2956,8 @@ def draft_placement_summary(
     target_folder: Any | None,
     draft: Any | None,
     warnings: list[str],
+    session: Any = None,
+    sender_assignment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     target_folder_summary = folder_summary(target_folder) if target_folder is not None else None
     actual_folder = safe_get(draft, "Parent") if draft is not None else None
@@ -2873,13 +2970,17 @@ def draft_placement_summary(
     elif draft is not None and target_path and not actual_path:
         add_unique_warning(warnings, "draft_folder_unverified")
 
+    sender = verify_saved_draft_sender(session, draft, target_account_info, assignment=sender_assignment)
+    if sender["verified"] is not True:
+        add_unique_warning(warnings, "send_using_account_" + ("mismatch" if sender["status"] == "mismatch" else "unverified"))
     return {
         "strategy": strategy,
         "target_store": target_account_info.get("delivery_store"),
         "target_account": target_account_info.get("smtp_address"),
         "target_drafts_folder": target_folder_summary,
         "actual_folder": actual_folder_summary,
-        "actual_send_using_account": send_using_account_smtp(draft) if draft is not None else "",
+        "actual_send_using_account": sender["actual"] or "",
+        "sender_verification": sender,
         "placement_verified": placement_verified,
         "warnings": warnings,
     }
@@ -2894,6 +2995,8 @@ def save_target_store_draft(
     mode: str | None = None,
     initial_warnings: list[str] | None = None,
     draft_attachments: dict[str, Any] | None = None,
+    session: Any = None,
+    initial_assignment: dict[str, Any] | None = None,
 ) -> tuple[Any, str, dict[str, Any], dict[str, Any]]:
     warnings: list[str] = list(initial_warnings or [])
     draft_content = {
@@ -2908,7 +3011,10 @@ def save_target_store_draft(
     target_folder = target_account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
     draft = create_mail_item_in_folder(target_folder)
     copy_draft_fields(template, draft)
-    set_send_using_account(draft, target_account_info, warnings)
+    sender_assignment: dict[str, Any] = {}
+    set_send_using_account(draft, target_account_info, warnings, diagnostics=sender_assignment)
+    if initial_assignment is not None:
+        sender_assignment["native_template"] = initial_assignment
     attach_draft_files(draft, draft_attachments or {})
     draft.Save()
     placement = draft_placement_summary(
@@ -2917,6 +3023,8 @@ def save_target_store_draft(
         target_folder=target_folder,
         draft=draft,
         warnings=warnings,
+        session=session,
+        sender_assignment=sender_assignment,
     )
     return draft, body_format, placement, draft_content
 
@@ -2930,6 +3038,7 @@ def create_target_store_draft(
     cc: str | None = None,
     bcc: str | None = None,
     draft_attachments: dict[str, Any] | None = None,
+    session: Any = None,
 ) -> dict[str, Any]:
     warnings: list[str] = []
     body_warnings = draft_body_input_warnings(body)
@@ -2940,7 +3049,8 @@ def create_target_store_draft(
         draft.Subject = subject
     if body:
         draft.Body = body
-    set_send_using_account(draft, account_info, warnings)
+    sender_assignment: dict[str, Any] = {}
+    set_send_using_account(draft, account_info, warnings, diagnostics=sender_assignment)
     attach_draft_files(draft, draft_attachments or {})
     draft.Save()
     placement = draft_placement_summary(
@@ -2949,6 +3059,8 @@ def create_target_store_draft(
         target_folder=target_folder,
         draft=draft,
         warnings=warnings,
+        session=session,
+        sender_assignment=sender_assignment,
     )
     return {
         "created": True,
@@ -3080,6 +3192,7 @@ def draft_reply(
         if not account_store_matches(account_info, send_account_info):
             reply, body_format, draft_placement, draft_content = save_target_store_draft(
                 template=reply,
+                session=session,
                 target_account_info=send_account_info,
                 suggested_body=suggested_body,
                 source_message=message,
@@ -3088,11 +3201,14 @@ def draft_reply(
             )
         else:
             warnings: list[str] = []
-            actual_sender = set_send_using_account(reply, send_account_info, warnings)
+            sender_assignment: dict[str, Any] = {}
+            actual_sender = set_send_using_account(reply, send_account_info, warnings, diagnostics=sender_assignment)
             if not actual_sender or warnings:
                 fallback_warnings = ["native_send_using_account_unverified"]
                 reply, body_format, draft_placement, draft_content = save_target_store_draft(
                     template=reply,
+                    session=session,
+                    initial_assignment=sender_assignment,
                     target_account_info=send_account_info,
                     suggested_body=suggested_body,
                     source_message=message,
@@ -3109,6 +3225,8 @@ def draft_reply(
                 target_folder = account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
                 draft_placement = draft_placement_summary(
                     strategy="native_reply",
+                    session=session,
+                    sender_assignment=sender_assignment,
                     target_account_info=send_account_info,
                     target_folder=target_folder,
                     draft=reply,
@@ -3199,6 +3317,7 @@ def draft_forward(
         if not account_store_matches(account_info, send_account_info):
             forward, body_format, draft_placement, draft_content = save_target_store_draft(
                 template=forward,
+                session=session,
                 target_account_info=send_account_info,
                 suggested_body=suggested_body,
                 source_message=message,
@@ -3207,11 +3326,14 @@ def draft_forward(
             )
         else:
             warnings: list[str] = []
-            actual_sender = set_send_using_account(forward, send_account_info, warnings)
+            sender_assignment: dict[str, Any] = {}
+            actual_sender = set_send_using_account(forward, send_account_info, warnings, diagnostics=sender_assignment)
             if not actual_sender or warnings:
                 fallback_warnings = ["native_send_using_account_unverified"]
                 forward, body_format, draft_placement, draft_content = save_target_store_draft(
                     template=forward,
+                    session=session,
+                    initial_assignment=sender_assignment,
                     target_account_info=send_account_info,
                     suggested_body=suggested_body,
                     source_message=message,
@@ -3228,6 +3350,8 @@ def draft_forward(
                 target_folder = account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
                 draft_placement = draft_placement_summary(
                     strategy="native_forward",
+                    session=session,
+                    sender_assignment=sender_assignment,
                     target_account_info=send_account_info,
                     target_folder=target_folder,
                     draft=forward,
@@ -3316,6 +3440,7 @@ def create_generic_draft(
     cc: str | None = None,
     bcc: str | None = None,
     attachments: Iterable[str] | None = None,
+    session: Any = None,
 ) -> dict[str, Any]:
     return create_target_store_draft(
         account_info,
@@ -3325,6 +3450,7 @@ def create_generic_draft(
         cc=cc,
         bcc=bcc,
         draft_attachments=prepare_draft_attachments(attachments),
+        session=session,
     )
 
 
@@ -3434,6 +3560,7 @@ def edit_draft(
         raise ValueError("Message is not in the selected account's Drafts folder; refusing to edit it as a draft.")
 
     body_update: dict[str, Any] | None = None
+    original_sender = inspect_sender_account(item)
     if body is not None:
         body_update = set_draft_body(item, body)
     if subject is not None:
@@ -3441,11 +3568,14 @@ def edit_draft(
     recipient_summary = apply_recipient_fields(item, to=to, cc=cc, bcc=bcc)
     attach_draft_files(item, draft_attachments)
     item.Save()
+    sender = verify_saved_draft_sender(session, item, account_info, expected=original_sender["actual"], compare_account=False)
+    sender["before_edit"] = original_sender
     return {
         "account": account_info["smtp_address"],
         "store": account_info["delivery_store"],
         "message": message_summary(item),
         "updated": True,
+        "draft_sender": sender,
         "draft_edit": {
             "body_source": "body" if body is not None else "unchanged",
             "body_format": (body_update or {}).get("body_format", "unchanged"),
@@ -3494,6 +3624,7 @@ def apply_action(
             **create_generic_draft(
                 application,
                 account_info,
+                session=session,
                 subject=subject,
                 to=to,
                 cc=cc,

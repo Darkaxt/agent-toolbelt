@@ -47,6 +47,7 @@ def main(argv: list[str] | None = None) -> int:
                         print(json.dumps(result, indent=2))
                         return 0
                     result = client.dispatch_operation(args, application=application, session=session)
+                    client.record_sender_diagnostics(result, diagnostics)
                     result["queue"] = queue_meta
                     result.setdefault("client_diagnostics", client.finish_client_diagnostics(diagnostics))
                     print(json.dumps(result, indent=2))
