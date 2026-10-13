@@ -97,14 +97,28 @@ def from_handle(opened) -> dict:
     if not kernel.GetFileInformationByHandle(opened, ctypes.byref(info)):
         raise ctypes.WinError(ctypes.get_last_error())
     file_id = FileIdInfo()
+    filesystem = None
     if not kernel.GetFileInformationByHandleEx(opened, 18, ctypes.byref(file_id), ctypes.sizeof(file_id)):
-        raise ctypes.WinError(ctypes.get_last_error())
+        error = ctypes.get_last_error()
+        if error not in (1, 50, 87) or filesystem_from_handle(opened) != 'exFAT':
+            raise ctypes.WinError(error)
+        filesystem = 'exFAT'
+        index = (info.index_high << 32) | info.index_low
+        if not index and not info.attributes & 0x10:
+            raise ValueError('exFAT regular file identity is unavailable')
+        identifier = f'exfat:{info.volume}:{index}:{info.created.dwHighDateTime}:{info.created.dwLowDateTime}'
+        volume = info.volume
+    else:
+        identifier = f'{file_id.volume}:{bytes(file_id.identifier).hex()}:{info.created.dwHighDateTime}:{info.created.dwLowDateTime}'
+        volume = file_id.volume
     return {
-        'identity': f'{file_id.volume}:{bytes(file_id.identifier).hex()}:{info.created.dwHighDateTime}:{info.created.dwLowDateTime}',
+        'identity': identifier,
+        'identity_kind': 'exfat_file_index_64' if filesystem else 'windows_file_id_128',
+        **({'filesystem': filesystem} if filesystem else {}),
         'size': (info.size_high << 32) | info.size_low,
         'mtime': (info.written.dwHighDateTime << 32) | info.written.dwLowDateTime,
         'links': info.links, 'directory': bool(info.attributes & 0x10),
-        'reparse': bool(info.attributes & 0x400), 'volume': file_id.volume,
+        'reparse': bool(info.attributes & 0x400), 'volume': volume,
     }
 
 
@@ -113,13 +127,26 @@ def identity(path: Path, *, allow_leaf_reparse: bool = False) -> dict:
     if os.name == 'nt':
         with handle(path) as opened:
             info = from_handle(opened)
-            info['filesystem'] = filesystem_type(path.anchor)
+            if 'filesystem' not in info:
+                info['filesystem'] = filesystem_type(path.anchor)
             return info
     info = path.lstat()
     return {'identity': f'{info.st_dev}:{info.st_ino}:{info.st_ctime_ns}',
             'size': info.st_size, 'mtime': info.st_mtime_ns, 'links': info.st_nlink,
             'directory': stat.S_ISDIR(info.st_mode), 'reparse': reparse(path),
             'volume': info.st_dev, 'filesystem': 'unsupported_read_only'}
+
+
+def filesystem_from_handle(opened):
+    buffer = ctypes.create_unicode_buffer(64)
+    get_volume = kernel.GetVolumeInformationByHandleW
+    get_volume.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD,
+                          ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+                          wintypes.LPWSTR, wintypes.DWORD]
+    get_volume.restype = wintypes.BOOL
+    if not get_volume(opened, None, 0, None, None, None, buffer, len(buffer)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return buffer.value
 
 
 @lru_cache(maxsize=32)
@@ -152,13 +179,22 @@ def content_snapshot(entry):
         current = from_handle(opened)
         if current['identity'] != entry['identity'] or current['reparse']:
             raise ValueError('Retired file changed during review')
+        if entry.get('filesystem') == 'exFAT' and (
+                current['size'] != entry['size'] or current['mtime'] != entry['mtime']):
+            raise ValueError('exFAT file changed during review')
         return hash_handle(opened)
 
 
 def delete_exact(entry: dict, *, dry_run: bool = False) -> tuple[str, int]:
     """Keep ancestors immovable and dispose the checked object through its open handle."""
     path = canonical(entry['path'])
-    if entry.get('filesystem') not in {'NTFS', 'ReFS'}:
+    if entry.get('filesystem') not in {'NTFS', 'ReFS', 'exFAT'}:
+        return 'protected', 0
+    exfat = entry.get('filesystem') == 'exFAT'
+    if exfat and (entry.get('allow_leaf_reparse') or entry.get('allow_hardlinks')
+                  or entry.get('allow_disposable_repository') or entry.get('git_marker_proof')
+                  or entry.get('retired_repository_root')
+                  or (not entry['directory'] and not entry.get('content_sha256'))):
         return 'protected', 0
     try:
         with ExitStack() as stack:
@@ -177,12 +213,17 @@ def delete_exact(entry: dict, *, dry_run: bool = False) -> tuple[str, int]:
                         return 'replaced_after_scan', 0
             opened = stack.enter_context(handle(path, delete=True))
             current = from_handle(opened)
+            if exfat and current.get('filesystem', '') != 'exFAT':
+                return 'protected', 0
             if current['reparse'] and not entry.get('allow_leaf_reparse'):
                 return 'protected', 0
             if not current['directory'] and current['links'] != 1 and not entry.get('allow_hardlinks'):
                 return 'protected', 0
             if current['identity'] != entry['identity'] or current['directory'] != entry['directory']:
                 return 'replaced_after_scan', 0
+            if exfat and not current['directory'] and (
+                    current['size'] != entry['size'] or current['mtime'] != entry['mtime']):
+                return 'modified_after_review', 0
             if entry.get('content_sha256') and hash_handle(opened) != entry['content_sha256']:
                 return 'modified_after_review', 0
             # A permitted leaf reparse point is the link object itself. Never
