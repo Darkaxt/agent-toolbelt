@@ -32,6 +32,7 @@ npx skills update
 
 | Skill | Compatibility | Local prerequisites | Safety notes |
 | --- | --- | --- | --- |
+| `windows-elevation-gate` | Codex and Claude in an interactive Windows login session | Python with Tkinter; family installer for shared runtime | FIFO explanatory prompts, Accept/Cancel and feedback before native UAC. No policy bypass or automatic retry. |
 | `operational-recordkeeping` | Codex and Claude | Python 3.11+, private local profile, existing text/JSON/XLSX records | Read-only verification; no mail, payment or purchase actions. Declared facts only, not an accounting audit. |
 | `c-drive-maintenance` | Windows on-demand maintenance | Python, transactional-cleanup for deletion, gradle-build-gate for builds | No passive monitor or automatic newest-version upgrades; lifecycle and owner evidence before cleanup. |
 | `d-temp-maintenance` | Windows on-demand agent temporary-output maintenance | Installed transactional-cleanup; Everything and existing task-owner tools where available | End-of-round owner sweeps, exact reviewed targets, retained unique source and no Gradle build-gate use for cleanup. |

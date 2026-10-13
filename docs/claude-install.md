@@ -26,6 +26,11 @@ Each runtime family ships its own self-contained local marketplace with one plug
 
 ## Install flow
 
+Windows Elevation Gate: run `python families/windows-elevation-gate/scripts/install.py`
+to deploy its shared runtime and identical agent-neutral personal skills. Its canonical
+folder is `families/windows-elevation-gate/codex/skills/windows-elevation-gate`;
+no Claude plugin or application settings change is required.
+
 Operational Recordkeeping: copy the same agent-neutral
 `families/operational-recordkeeping/codex/skills/operational-recordkeeping` folder
 to the personal Claude skills directory. It includes its own standard-library

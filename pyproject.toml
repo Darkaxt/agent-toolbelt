@@ -3,6 +3,7 @@ members = [
   "packages/core",
   "families/adb-archive-transfer",
   "families/gradle-build-gate",
+  "families/windows-elevation-gate",
   "families/context-transfer",
   "families/transactional-cleanup",
   "families/c-drive-maintenance",

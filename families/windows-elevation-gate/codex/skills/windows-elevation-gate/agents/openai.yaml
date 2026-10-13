@@ -1,0 +1,4 @@
+interface:
+  display_name: "Windows Elevation Gate"
+  short_description: "Queued administrator prompts with context and feedback"
+  default_prompt: "Use $windows-elevation-gate to queue an authorized Windows administrator action with an explanation, Accept/Cancel, user feedback and native UAC."

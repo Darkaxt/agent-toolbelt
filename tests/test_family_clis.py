@@ -10,6 +10,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 FAMILY_IMPORTS = {
+    "windows-elevation-gate": (
+        REPO_ROOT / "families" / "windows-elevation-gate" / "src",
+        "agent_toolbelt_windows_elevation_gate.cli",
+    ),
     "c-drive-maintenance": (
         REPO_ROOT / "families" / "c-drive-maintenance" / "src",
         "agent_toolbelt_c_drive_maintenance.cli",
@@ -91,6 +95,17 @@ def import_family_cli(name: str):
 
 
 class FamilyCLITests(unittest.TestCase):
+    def test_elevation_status_is_diagnostic_only(self):
+        from unittest.mock import patch
+        cli = import_family_cli("windows-elevation-gate")
+        with patch.object(cli, "Queue") as queue_type:
+            queue_type.return_value.status.return_value = {"ok": True, "read_only": True, "pending": 0}
+            with io.StringIO() as buffer, redirect_stdout(buffer):
+                code = cli.main(["status"])
+                result = json.loads(buffer.getvalue())
+        self.assertEqual(code, 0)
+        self.assertTrue(result["read_only"])
+
     def test_maintenance_inventory_routes_without_deletion(self):
         cli = import_family_cli("c-drive-maintenance")
         original = cli.maintenance.inventory
