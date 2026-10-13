@@ -32,6 +32,7 @@ npx skills update
 
 | Skill | Compatibility | Local prerequisites | Safety notes |
 | --- | --- | --- | --- |
+| `ui-diagnostics-first` | Instruction-only Codex/Claude guidance | Authorized application source or existing UI diagnostics for integration | Real rendered state/actions and scoped measured readiness; no automatic device access, production bridge or enforcement claim. |
 | `windows-elevation-gate` | Codex and Claude in an interactive Windows login session | Python with Tkinter; family installer for shared runtime | FIFO explanatory prompts, Accept/Cancel and feedback before native UAC. No policy bypass or automatic retry. |
 | `operational-recordkeeping` | Codex and Claude | Python 3.11+, private local profile, existing text/JSON/XLSX records | Read-only verification; no mail, payment or purchase actions. Declared facts only, not an accounting audit. |
 | `c-drive-maintenance` | Windows on-demand maintenance | Python, transactional-cleanup for deletion, gradle-build-gate for builds | No passive monitor or automatic newest-version upgrades; lifecycle and owner evidence before cleanup. |

@@ -2,6 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $ExpectedSkills = @(
+  @{ Name = "ui-diagnostics-first"; Path = "families/ui-diagnostics-first/codex/skills/ui-diagnostics-first/SKILL.md" },
   @{ Name = "windows-elevation-gate"; Path = "families/windows-elevation-gate/codex/skills/windows-elevation-gate/SKILL.md" },
   @{ Name = "operational-recordkeeping"; Path = "families/operational-recordkeeping/codex/skills/operational-recordkeeping/SKILL.md" },
   @{ Name = "d-temp-maintenance"; Path = "families/d-temp-maintenance/codex/skills/d-temp-maintenance/SKILL.md" },

@@ -6,6 +6,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 EXPECTED_FAMILIES = {
+    "ui-diagnostics-first": {
+        "runtime": False,
+        "has_claude": False,
+    },
     "windows-elevation-gate": {
         "project_name": "agent-toolbelt-windows-elevation-gate",
         "script_name": "agent-toolbelt-windows-elevation-gate",
@@ -232,6 +236,30 @@ class MonorepoLayoutTests(unittest.TestCase):
         claude_install = (REPO_ROOT / "docs" / "claude-install.md").read_text(encoding="utf-8")
         for text in (readme, codex_install, claude_install):
             self.assertIn("families/spec-gated-implementation", text)
+
+    def test_ui_diagnostics_bundle_has_resolvable_template_and_honest_example(self):
+        import json
+        import re
+
+        family = REPO_ROOT / "families/ui-diagnostics-first"
+        skill = family / "codex/skills/ui-diagnostics-first"
+        text = (skill / "SKILL.md").read_text(encoding="utf-8")
+        links = re.findall(r"\]\(((?:references|templates)/[^)]+)\)", text)
+        self.assertEqual(set(links), {"references/platform-routing.md", "templates/UI_DIAGNOSTICS_CONTRACT.md"})
+        for relative in links:
+            self.assertTrue((skill / relative).resolve().is_relative_to(skill.resolve()))
+            self.assertTrue((skill / relative).is_file())
+        self.assertFalse((skill / "scripts").exists())
+        template = (skill / "templates/UI_DIAGNOSTICS_CONTRACT.md").read_text(encoding="utf-8")
+        example = json.loads(re.search(r"```json\n(.*?)\n```", template, re.DOTALL).group(1))
+        self.assertEqual(example["action"]["after_revision"], example["snapshot"]["revision"])
+        self.assertIsNone(example["timing"]["milestones_ms"]["presented_frame"])
+        self.assertTrue(example["snapshot"]["truncated"])
+        self.assertLess(example["resolution"]["rendered_items"]["expected"], example["resolution"]["dataset"]["expected"])
+        for counts in example["resolution"].values():
+            self.assertEqual(counts["expected"], counts["resolved"] + counts["pending"] + counts["failed"])
+        for document in ("README.md", "docs/codex-install.md", "docs/claude-install.md", "docs/skills-sh.md"):
+            self.assertIn("ui-diagnostics-first", (REPO_ROOT / document).read_text(encoding="utf-8"))
 
     def test_d_temp_skill_has_resolvable_local_resources_without_another_runtime(self):
         import re

@@ -21,6 +21,8 @@ Each runtime family ships its own self-contained local marketplace with one plug
 
 ## Instruction-only skills
 
+- Diagnostics-First UI: `families/ui-diagnostics-first/codex/skills/ui-diagnostics-first`; copy the same canonical folder. No plugin, helper or application changes are installed.
+
 - Specification-Gated Implementation: `families/spec-gated-implementation/codex/skills/spec-gated-implementation`
 - D-Temp Maintenance: `families/d-temp-maintenance/codex/skills/d-temp-maintenance`; use the identical canonical skill with the installed transactional-cleanup helper.
 

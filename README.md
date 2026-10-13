@@ -6,6 +6,7 @@ Start by choosing the one family you actually need:
 
 | Family | Use it for | Folder | Primary CLI |
 | --- | --- | --- | --- |
+| Diagnostics-First UI | app-owned debugging actions, rendered state and measured UI readiness instead of screenshot polling | `families/ui-diagnostics-first` | - |
 | Windows Elevation Gate | FIFO administrator prompts with top-most explanation, Accept/Cancel and user feedback | `families/windows-elevation-gate` | `agent-toolbelt-windows-elevation-gate` |
 | ADB Archive Transfer | endpoint-bound Android file transfer with uncompressed tiny-file bundles, direct large-file transfer, and manifest verification | `families/adb-archive-transfer` | `agent-toolbelt-adb-archive-transfer` |
 | Gradle Build Gate | shared Windows Gradle build serialization and evidence-backed low-memory supervision | `families/gradle-build-gate` | `agent-toolbelt-gradle-build-gate` |
@@ -42,6 +43,8 @@ npx skills add Darkaxt/agent-toolbelt --all
 Public skill names:
 
 - `adb-archive-transfer`
+- `ui-diagnostics-first`
+- `windows-elevation-gate`
 - `gradle-build-gate`
 - `amazon-cli`
 - `skroutz-cli`
@@ -83,4 +86,3 @@ Read [Publishing and installing from skills.sh](docs/skills-sh.md) before instal
 - [Codex install guide](docs/codex-install.md)
 - [Claude install guide](docs/claude-install.md)
 - [skills.sh guide](docs/skills-sh.md)
-- `windows-elevation-gate`
