@@ -6,6 +6,16 @@ Create a lightweight instruction-only skill that makes non-trivial implementatio
 
 The skill must work for both Codex and Claude and remain useful across repositories without requiring a helper process, database, or project-specific file layout.
 
+## Authorized 2026-10-13 Revision
+
+The user approved correcting the skill and local Codex AGENTS.md together, followed
+by a second consistency review, installed parity validation and repository sync.
+Retain exactly two categories for missing required work: advancement blockers and
+tracked deferrals. A blocker does not by itself mean execution is impossible or
+the stage status is BLOCKED. Preserve the standing single-ACTIVE-stage, justified
+parking, authorization, data-protection and delivery boundaries. Change instruction
+text and skill distribution only; do not change application configuration.
+
 ## Requirements
 
 ### SGI-1: Specification First
@@ -28,7 +38,8 @@ If implementation is not already authorized, stop after the specification and pl
 
 After every stage:
 
-1. Run fresh stage verification.
+1. Inspect verification applicable to the current implementation; run affected
+   checks when evidence is absent, invalidated or an applicable rule requires it.
 2. Re-read the authoritative specification, not only the plan.
 3. Compare delivered behavior and evidence with every applicable requirement.
 4. Record satisfied requirements and every remaining gap.
@@ -36,13 +47,25 @@ After every stage:
 
 ### SGI-5: Blocker Closure
 
-A blocker is a missing required feature, failed acceptance criterion, regression, safety failure, or unmet dependency for later work. Resolve all blockers and repeat verification and specification comparison before advancing.
+A blocker is missing required work or a defect that prevents current-stage
+acceptance, required integration or verification, or an assigned dependency from
+passing. It prevents stage completion and ordinary advancement, not further
+implementation within that stage. Implementable gaps keep the stage ACTIVE.
+Reserve BLOCKED status for an identified condition that genuinely prevents further
+progress, with a resolution condition. Respect standing parking/dependency rules;
+parking never satisfies the blocked criteria or permits dependent work to pass.
+Resolve advancement blockers and reconcile before advancing, rerunning only
+verification whose evidence is missing or invalidated.
 
 ### SGI-6: Deferral Is Scheduling Only
 
-A `tracked_deferral` is required work that does not block the current stage. It must have a specific later stage or mandatory final-remediation target.
+A `tracked_deferral` is required work assigned to a specifically named later stage,
+with a reason and verification method, that does not affect current-stage acceptance.
 
-Tracked deferrals must be implemented before a dependent stage or during final remediation. They are not completion exemptions. Completion requires zero blockers and zero tracked deferrals.
+Tracked deferrals must be implemented in their named stage, before a dependent
+stage or final completion. They are not completion exemptions. Completion requires
+zero blockers and zero tracked deferrals. Add a named remediation stage only when
+real remaining work needs one; never require an empty ceremony stage.
 
 If required work cannot be implemented, the plan remains incomplete unless the user explicitly changes or removes that requirement from the specification. Agents may not silently downgrade the specification.
 
@@ -50,17 +73,57 @@ If required work cannot be implemented, the plan remains incomplete unless the u
 
 Before declaring completion:
 
-1. Execute a mandatory final-remediation stage if any deferral remains.
+1. Complete every remaining required item in its assigned stage or a justified,
+   named remediation stage; no empty remediation stage is required.
 2. Re-read and reconcile the full specification.
 3. Confirm zero blockers and zero tracked deferrals.
-4. Run fresh end-to-end verification.
+4. Inspect applicable end-to-end evidence; run required checks if evidence is
+   absent or invalidated. A full-suite rerun is risk/requirement-driven, not automatic.
 5. Report the evidence and any explicit user-approved specification revisions.
 
-Commit, deploy, release, or sync according to the repository and user instructions only after this gate passes.
+Final completion claims and delivery require this gate. Intermediate commits
+remain governed by standing instructions and do not imply feature validation or
+stage closure. Deployment, release and sync require their actual authorization.
 
 ### SGI-8: Lightweight Integration
 
 The skill should compose with existing discovery, brainstorming, planning, debugging, and verification skills. It must not duplicate their detailed methods or require a runtime package.
+
+### SGI-9: Cohesive Stage Closure
+
+Prefer cohesive patches that close a real workflow over isolated component
+edit/test/report cycles. Prove the narrowest required integrated path, then finish
+its remaining criteria. Patch size means coherent scope, not a line quota or
+permission to mix stages. Do not pursue speculative optimizations, abstractions,
+optional edge cases or redundant verification while required integration waits.
+
+User clarification: formal validation applies only to fully implemented features
+as defined by the authoritative specification/current-stage criteria, not to
+micro-implementations. Required wiring, user behavior and integration must exist
+before acceptance validation begins. Diagnostic/test-first feedback during work
+is not feature validation and must not become repeated component build/device/
+report ceremonies. Do not rename an incomplete component a feature or vertical
+slice to bypass this boundary; required verification still follows implementation.
+For non-feature tasks use the complete specified outcome. Implementation complete
+means required paths are present/integrated, not already proven correct; validation
+determines correctness. Failed validation returns the same feature to implementation.
+Interim diagnostics must answer a concrete question, not relabel micro-validation.
+
+### SGI-10: Evidence Reuse And Compact Records
+
+Batch related edits when useful. Preserve meaningful test-first reproductions and
+diagnostics. Reuse inspected current-task results only when relevant code, config,
+environment, dependencies and integration conditions are unchanged and no applicable
+requirement mandates a new run. Otherwise rerun affected checks; do not skip required
+verification. Update one current reconciliation ledger at meaningful checkpoints,
+not a new document or build after each small edit.
+
+### SGI-11: Precedence And Existing Tasks
+
+The skill supplies reconciliation techniques and does not override applicable
+standing instructions, authorize releases or add approvals/delegation. Existing
+tasks must explicitly reread changed guidance before relying on it; file deployment
+alone is not proof that an active task has loaded or followed the new wording.
 
 ## Non-Goals
 
@@ -80,3 +143,6 @@ Keep one canonical public skill under `families/spec-gated-implementation/codex/
 - Local skills.sh discovery lists the skill exactly once.
 - Codex and Claude installations byte-match the canonical skill files.
 - No runtime package, account state, credentials, or machine-specific paths are included.
+- Review the revised skill and local AGENTS.md against each other, including
+  implementable blockers, genuine parking, named deferrals, invalidated evidence,
+  required safety/integration checks and zero-deferral completion.

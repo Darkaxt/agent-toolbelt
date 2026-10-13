@@ -4,6 +4,39 @@ Authoritative specification: `docs/superpowers/specs/2026-08-30-spec-gated-imple
 
 Implementation authorization was already provided when the user asked to implement and deploy the approved skill design. No additional confirmation is required for this scope.
 
+## 2026-10-13 Revision Plan
+
+The original implementation record below is historical. The current authorized
+revision follows the updated specification, SGI-1 through SGI-11.
+
+| Stage | Status | Scope and acceptance | Evidence |
+| --- | --- | --- | --- |
+| R1 | COMPLETE | Correct canonical skill, local AGENTS.md and focused contract tests; keep two gap categories, feature-complete validation and applicable evidence reuse. | Focused instruction contracts, family isolation/layout and canonical structural validation passed. |
+| R2 | COMPLETE | Second consistency review; validate/deploy identical Codex, agents and Claude skill copies; notify ROMs Manager to reread. | Canonical and three installed copies validated and byte-matched; all 43 AGENTS.md sections preserved; local skills.sh discovery lists this skill once; notification sent. |
+
+No required deferrals. The local AGENTS.md is private instruction text, not a
+public source bundle; do not publish it or change application settings.
+
+Required delivery after stage closure: commit and sync through the repository's
+required PR/check/merge path. Verify local main against remote main before the
+overall completion report; a local commit alone does not finish this task.
+
+### Second Consistency Review
+
+- Implementable missing acceptance work blocks advancement but keeps execution ACTIVE.
+- Genuine parking does not pass acceptance or unblock dependent work; one ACTIVE stage remains the limit.
+- A named deferral cannot excuse a current-stage requirement or survive final completion; no empty remediation stage is required.
+- Feature validation follows complete wiring/integration. Correctness is established by validation, not assumed beforehand; failed validation returns the same feature to implementation.
+- Diagnostic feedback cannot be relabeled into micro-validation; acceptance units cannot be shrunk to incomplete components. Complete specified non-feature outcomes remain supported.
+- Applicable inspected evidence may be reused; missing/invalidated or explicitly required checks must run. Required safety/integration/recovery verification remains mandatory.
+- Intermediate commit authority, explicit delivery authorization and instruction precedence remain intact. Configuration hashes stayed unchanged.
+
+Review scope is instruction consistency and distribution. Contract tests verify
+wording, not guaranteed future model compliance. The ROMs Manager notice requests
+an explicit reread; sending it is not proof that the task has followed the update.
+
+## Original Implementation Record
+
 ## Stage 1: Canonical Skill And Contract Tests
 
 Requirements: SGI-1 through SGI-8.
