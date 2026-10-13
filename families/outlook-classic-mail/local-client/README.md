@@ -1,5 +1,16 @@
 # outlook-classic-mail
 
+Saved-draft sender verification is independent from folder placement. Creation
+paths reopen the saved EntryID/store and report
+`draft_placement.sender_verification` with `requested`, `actual`, `status`,
+`verified`, `source`, `reopened`, `errors` and assignment diagnostics. A mismatch,
+unset/empty account, COM read failure or reopen failure never reports verified
+success. `created: true` still means saved, not sender-safe or ready to send.
+Exact Drafts-folder reads expose `draft_sender` observations (`verified: null`
+without an expected account). Edits compare saved readback with the original
+observed sender, without choosing a new account from the store. Sender warnings
+are logged with sanitized stage/error metadata, not account values or message IDs.
+
 Standalone Outlook Classic COM client for local mailbox access on Windows.
 
 ## Scope
