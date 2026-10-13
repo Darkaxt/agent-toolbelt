@@ -86,9 +86,49 @@ class MediaTests(unittest.TestCase):
         self.assertTrue(result["metadata"]["analysis_ready"])
         self.assertEqual(transcript_text, "Welcome\nSecond line\n")
         self.assertEqual(manifest["source"]["id"], "abc123")
+        coverage = result["metadata"]["transcript_coverage"]
+        self.assertEqual(coverage["status"], "unverified")
+        self.assertFalse(coverage["complete"])
+        self.assertEqual(coverage["first_cue_sec"], 0.0)
+        self.assertEqual(coverage["last_cue_sec"], 4.0)
+        self.assertEqual(coverage["video_duration_sec"], 95)
+        self.assertEqual(coverage["characters"], len(transcript_text))
+        self.assertEqual(manifest["transcript_coverage"], coverage)
         self.assertEqual(len(calls), 2)
         self.assertTrue(any("--skip-download" in command for command in calls))
         self.assertFalse(any("-f" in command for command in calls))
+
+    def test_transcript_coverage_missing_and_failed_acquisition(self):
+        missing = media.transcript_coverage("", "", duration=95, acquisition_exit_code=0)
+        self.assertEqual(missing["status"], "missing")
+        self.assertFalse(missing["complete"])
+        failed = media.transcript_coverage(
+            "WEBVTT\n\n00:01.000 --> 00:02.000\nHello\n", "Hello\n",
+            duration=95, acquisition_exit_code=1,
+        )
+        self.assertEqual(failed["status"], "partial")
+        self.assertEqual(failed["first_cue_sec"], 1.0)
+        self.assertEqual(failed["last_cue_sec"], 2.0)
+        self.assertFalse(failed["complete"])
+
+    def test_cue_bounds_do_not_prove_full_transcript_coverage(self):
+        coverage = media.transcript_coverage(
+            "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello\n"
+            "\n00:01:33.000 --> 00:01:35.000\nBye\n",
+            "Hello\nBye\n", duration=95, acquisition_exit_code=0,
+        )
+        self.assertEqual(coverage["status"], "unverified")
+        self.assertFalse(coverage["complete"])
+        self.assertEqual(coverage["last_cue_sec"], 95.0)
+
+    def test_malformed_cue_timestamps_remain_unverified(self):
+        coverage = media.transcript_coverage(
+            "WEBVTT\n\ninvalid --> timestamp\nHello\n", "Hello\n",
+            duration=None, acquisition_exit_code=0,
+        )
+        self.assertIsNone(coverage["first_cue_sec"])
+        self.assertIsNone(coverage["last_cue_sec"])
+        self.assertEqual(coverage["status"], "unverified")
 
     def test_prepare_analysis_visuals_are_height_and_frame_bounded(self):
         calls = []
@@ -155,6 +195,8 @@ class MediaTests(unittest.TestCase):
         self.assertTrue(all(command[command.index("-frames:v") + 1] == "3" for command in ffmpeg_calls))
         self.assertEqual(len(result["metadata"]["evidence"]["interval_frames"]), 1)
         self.assertEqual(len(result["metadata"]["evidence"]["scene_frames"]), 1)
+        self.assertEqual(result["metadata"]["transcript_coverage"]["status"], "missing")
+        self.assertTrue(any("browser" in step for step in result["metadata"]["recommended_next_steps"]))
 
     def test_prepare_analysis_audio_is_explicit_and_manifested(self):
         calls = []
