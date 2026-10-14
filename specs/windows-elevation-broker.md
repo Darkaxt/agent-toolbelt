@@ -39,6 +39,70 @@ No deferrals. Delivery requires commit, PR checks/merge and remote parity. If a
 live human dialog remains pending, retain that managed operation and do not claim
 live verification or repeat the launch. No unrelated settings/projects are changed.
 
+## Lifecycle Independence Correction
+
+Authorized October 14: repair launch ownership, deploy to Codex and Claude, and
+synchronize. The previous broker exited within the old Codex process teardown
+wave during the app update. The precise termination caller was not logged. A
+fresh native query proves the restarted v0.2.0 broker is still in a Windows job,
+while the desktop Explorer process is not. Elevation alone did not detach it.
+
+- L1: Delegate only the fixed protected broker startup to the current desktop
+  Explorer automation object. A detached unelevated bootstrap requests native
+  UAC and waits for actual broker readiness or process exit. No service, startup
+  entry, schedule, arbitrary command dispatcher or UAC-policy change.
+- L2: Preserve UAC cancellation, event/process-driven waits and exact installed
+  identity checks. No direct-launch fallback, forced shutdown, timeout or polling
+  loop. Report startup failure instead of claiming readiness from spawn alone.
+- L3: The session broker must reject job membership and report its own actual
+  job state in status. Client startup must verify the reported state.
+- L4: Verify startup inside an isolated kill-on-close launcher job, then close
+  only that fixture job and prove the installed broker remains responsive outside
+  it. Preserve FIFO, approval, input binding, protected ACLs and installed parity.
+
+| Correction Stage | Status | Acceptance |
+| --- | --- | --- |
+| Desktop-owned session launch | COMPLETE | L1-L4 pass: protected deployment, real fixture teardown, elevated command, installed parity and focused/root verification. |
+
+No correction deferrals. The original B1-B7 acceptance evidence remains historical;
+it did not establish restart independence and does not satisfy L1-L4.
+
+Primary API reference: [Execute in Explorer](https://learn.microsoft.com/en-us/windows/win32/shell/samples-execinexplorer).
+
+### Correction Evidence And Reconciliation
+
+The first live fixture correctly rejected the bootstrap. Desktop Explorer was
+the actual parent, but Windows assigned its child a separate job. A read-only
+native probe found exactly the probe process in that job, with limit flags
+`0x800` (`BREAKAWAY_OK`). Native UAC assigned another job at the elevated boundary;
+the second fixture correctly rejected that broker before any command execution.
+Both findings were launch-adapter defects, not permission or authentication errors.
+
+The fixed protected executable now uses Windows-permitted breakaway at each of
+those two boundaries, verifies the final elevated process's protected image,
+creation identity and no-job state, then verifies actual IPC readiness. It neither
+changes job limits nor accepts a job-attached final broker. This retains L1-L4.
+See [Windows job semantics](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
+
+- Protected deployed broker SHA-256:
+  `3f8d447db82d97f66181b428a793edc46db13fac85e4bbac30288f533132557f`.
+- Installed client release `61af16724dfffc4e`, version 0.2.1.
+- Live fixture: launcher PID 48316 was job-attached; broker PID 75316 was outside
+  all jobs. Closing the fixture's kill-on-close job ended only its launcher. The
+  same broker remained accepting and responsive. Actual Codex was untouched.
+- Subsequent normal approved `whoami /groups` completed with exit 0, High
+  Mandatory Level and enabled Administrators through that same broker, with no
+  per-command native UAC. Request `fabf2c92fa7d4573827c6cf88c773d43`.
+- Focused helper/protocol checks and native self-tests pass. Historical B1-B7
+  evidence below remains explicitly separate from this correction's evidence.
+- Codex, agents and Claude installed skills match canonical instructions and pass
+  structural validation; Claude's installed client reaches the same live broker.
+  Root CLI/isolation/layout checks pass. Reviewed task staging was removed through
+  an exact transactional cleanup ticket after evidence was recorded here.
+
+Correction implementation has no blockers or deferrals. Remote synchronization
+is the remaining delivery step; it is not established by local verification.
+
 ## Design Decisions
 
 Use installed .NET Framework C# compiler and WinForms: a standalone compiled

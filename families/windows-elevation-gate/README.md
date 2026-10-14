@@ -1,5 +1,14 @@
 # Windows Elevation Gate
 
+Session lifecycle: v0.2.1 starts the protected broker through desktop Explorer,
+not inside the calling agent's job. The detached bootstrap still requests native
+UAC; normal command approvals remain broker-owned. Startup rejects job membership
+and reports `in_job: false`. Verify with
+`python scripts/verify_broker_lifecycle.py --output-dir <fresh-task-Temp>/probe`
+after graceful shutdown of any prior broker. The fixture closes only its own
+kill-on-close launcher job and verifies the same installed broker survives;
+it never closes Codex, kills a broker, creates a service or changes UAC policy.
+
 A small stdlib Windows helper for cooperating Codex/Claude tasks. Requests join a
 shared FIFO approval queue. Native UAC starts a compiled elevated broker once;
 its own top-most dialog explains each exact action and returns Accept/Cancel plus
@@ -87,6 +96,21 @@ dialog does not have Windows secure-desktop guarantees. No current application i
 elevated wholesale and Windows security policy remains unchanged.
 
 ## Verify
+
+For the installed broker's lifecycle test, stop it through its normal approved
+interface first, then run:
+
+```powershell
+python -B families/windows-elevation-gate/scripts/verify_broker_lifecycle.py --output-dir D:/Temp/<task>/lifecycle-proof
+```
+
+This starts the installed broker from an isolated kill-on-close launcher job,
+requires native UAC, verifies the actual broker is outside all jobs, then closes
+only the fixture job and checks the same broker remains responsive. It does not
+close Codex or approve commands. Explorer/UAC may create separate jobs; the fixed
+protected bootstrap uses permitted breakaway, never changes job limits, and
+rejects any final job-attached broker. On startup failure the fixture disarms its
+own kill-on-close flag rather than risking an unclassified broker or UAC prompt.
 
 ```powershell
 python -B -m unittest discover -s families/windows-elevation-gate/tests -v

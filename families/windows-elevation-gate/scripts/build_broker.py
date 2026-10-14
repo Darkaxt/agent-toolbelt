@@ -17,7 +17,7 @@ def build(output):
     output.parent.mkdir(parents=True, exist_ok=True)
     command = [str(compiler), '/nologo', '/target:winexe', '/platform:x64', '/optimize+',
                '/warnaserror+', '/r:System.Windows.Forms.dll', '/r:System.Drawing.dll',
-               '/r:System.Web.Extensions.dll', '/out:' + str(output),
+               '/r:System.Web.Extensions.dll', '/r:Microsoft.CSharp.dll', '/out:' + str(output),
                str(FAMILY / 'assets/WindowsElevationBroker.cs')]
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode:

@@ -51,7 +51,7 @@ if (Test-Path -LiteralPath $active) {
     if ((Get-Item -LiteralPath $active).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Redirected active pointer' }
 }
 $pending=Join-Path $root ([Guid]::NewGuid().ToString('N')+'.pending.json')
-@{version='0.2.0';release=$ExpectedSha256.Substring(0,16);sha256=$ExpectedSha256} | ConvertTo-Json | Set-Content -LiteralPath $pending -Encoding UTF8
+@{version='0.2.1';release=$ExpectedSha256.Substring(0,16);sha256=$ExpectedSha256} | ConvertTo-Json | Set-Content -LiteralPath $pending -Encoding UTF8
 Protect-Object $pending
 Move-Item -LiteralPath $pending -Destination $active -Force
 Protect-Object $active
