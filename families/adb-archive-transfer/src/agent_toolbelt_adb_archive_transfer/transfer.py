@@ -998,6 +998,7 @@ def apply_transfer(
     checks_path.write_text(
         "".join(f"{item['sha256']}  {item['relative_path']}\n" for item in manifest["files"]),
         encoding="utf-8",
+        newline="\n",
     )
     remote_checks = posixpath.join(remote_stage, "sha256sums.txt")
     checks_push = adb_command(adb_path, serial, "push", str(checks_path), remote_checks)

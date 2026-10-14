@@ -119,7 +119,7 @@ class AdbDevice:
     def endpoint(self):
         if self.command('get-state').stdout.strip() != b'device':
             raise CleanupError('device_not_ready', 'Selected endpoint is not ready')
-        output = self.shell('getprop\n').stdout.decode('utf-8', errors='strict')
+        output = self.shell('getprop\n').stdout.decode('utf-8', errors='strict').replace('\r\n', '\n')
         props = dict(re.findall(r'^\[([^]]+)\]:\s*\[(.*)\]$', output, re.M))
         identity = {'serial': self.serial, 'android_serial': props.get('ro.serialno') or props.get('ro.boot.serialno'),
                     'fingerprint': props.get('ro.build.fingerprint'), 'model': props.get('ro.product.model')}

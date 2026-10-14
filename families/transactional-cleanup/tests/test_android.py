@@ -267,6 +267,13 @@ class AdbTransportTests(unittest.TestCase):
     def device(self, runner):
         return android.AdbDevice('fixture-serial', adb_path=sys.executable, runner=runner)
 
+    def test_endpoint_accepts_adb_crlf_output(self):
+        def runner(command, **kwargs):
+            output = (b'device\r\n' if command[-1] == 'get-state' else
+                      b'[ro.serialno]: [hardware]\r\n[ro.build.fingerprint]: [build]\r\n[ro.product.model]: [model]\r\n')
+            return subprocess.CompletedProcess(command, 0, output, b'')
+        self.assertEqual(self.device(runner).endpoint()['android_serial'], 'hardware')
+
     def test_exact_serial_identity_and_offline_rejection(self):
         calls = []
         def runner(command, **kwargs):

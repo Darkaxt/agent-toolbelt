@@ -406,12 +406,17 @@ class TransactionTests(unittest.TestCase):
         temp, _root, source, _adb, _seven_zip, manifest_path, runner = fixture
         (source / "created-after-plan.txt").write_text("ignore me", encoding="utf-8")
         runner.commands.clear()
+        def protocol_runner(command, cwd):
+            if "push" in command and command[-1].endswith("sha256sums.txt"):
+                # Android treats CR as part of the filename, not a newline.
+                self.assertNotIn(b"\r", Path(command[-2]).read_bytes())
+            return runner(command, cwd)
         try:
             result = transfer.apply_transfer(
                 manifest_path,
                 confirm_transfer=True,
                 keep_manifest=True,
-                runner=runner,
+                runner=protocol_runner,
             )
         finally:
             temp.cleanup()
