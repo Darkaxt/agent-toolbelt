@@ -9,7 +9,6 @@ from pathlib import Path
 import struct
 import subprocess
 import sys
-import uuid
 if os.name == 'nt':
     import msvcrt
     import winreg
@@ -255,38 +254,38 @@ def status():
 
 
 def start():
-    from .engine import ElevationDenied, ElevationLaunchFailed
     native = Native()
     with Mutex(PREFIX + '.BrokerStartup', native):
         try:
             result = exchange({'op': 'status'})
+        except BrokerUnavailable:
+            result = None
+        if result is not None:
             if not result.get('accepting'):
                 raise BrokerStopping('Broker is not accepting requests; inspect its protected session diagnostic')
+            if result.get('in_job') is not False:
+                raise BrokerUnavailable('Existing broker has no verified independent lifecycle; stop it through its tray before upgrading/restarting')
             return result
-        except BrokerUnavailable:
-            pass
         _, exe = installation()
-        ready_name = PREFIX + '.BrokerReady.' + uuid.uuid4().hex
-        ready = native.event(ready_name)
-        process = None
+        launch = subprocess.run([str(exe), '--launch-from-desktop'], capture_output=True,
+                                text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         try:
-            # ShellExecuteEx is the one native UAC boundary for this broker session.
-            from .engine import shell_launch
-            process = shell_launch(str(exe), ['--ready-event', ready_name], show_window=True)
-            if native.wait(ready, process.handle) == 1:
-                raise BrokerUnavailable('Broker exited before reporting readiness')
-            result = exchange({'op': 'status'})
-            if not result.get('accepting'):
-                raise BrokerStopping('Broker stopped during startup; inspect its protected session diagnostic')
-            return result
-        except ElevationDenied:
-            return {'ok': False, 'operation': 'broker-start', 'failure_kind': 'uac_declined', 'launched': False}
-        except ElevationLaunchFailed as exc:
-            return {'ok': False, 'operation': 'broker-start', 'failure_kind': 'broker_start_failed', 'error': str(exc)}
-        finally:
-            native.close(ready)
-            if process:
-                process.n.close(process.handle)
+            startup = json.loads(launch.stdout)
+        except (ValueError, TypeError) as exc:
+            raise BrokerUnavailable('Desktop launch returned no structured result: ' + launch.stderr[-2000:]) from exc
+        if not isinstance(startup, dict):
+            raise BrokerUnavailable('Desktop launch returned an invalid result')
+        if not startup.get('ok'):
+            return startup
+        if launch.returncode or startup.get('in_job') is not False or startup.get('launch_owner') != 'desktop_explorer':
+            raise BrokerUnavailable('Desktop launcher did not verify independent startup')
+        result = exchange({'op': 'status'})
+        if not result.get('accepting'):
+            raise BrokerStopping('Broker stopped during startup; inspect its protected session diagnostic')
+        if result.get('in_job') is not False:
+            raise BrokerUnavailable('Broker did not verify job-independent lifecycle')
+        result['launch_owner'] = startup['launch_owner']
+        return result
 
 
 def run(request):

@@ -3,7 +3,7 @@ name: windows-elevation-gate
 description: Queue Windows administrator actions through an elevated session broker with broker-owned Accept/Cancel and feedback. One native UAC starts the broker; each command requires its own approval. Use for authorized administrator actions across tasks.
 license: MIT
 metadata:
-  version: "0.2.0"
+  version: "0.2.1"
   compatibility: Windows interactive login session, Python 3.11+, protected .NET Framework broker and installed shared client runtime
 ---
 
@@ -24,6 +24,21 @@ until explicitly disabled/exited or Windows ends the session. There is no startu
 entry, service, schedule or UAC-policy change. Normal `run` uses this broker and
 does NOT request native UAC again for each command. If unavailable, diagnose/start
 it; never silently fall back to another execution method or repeat a submitted action.
+
+Startup delegates the fixed protected executable through the current desktop
+Explorer, outside the agent host's process job. Its detached session bootstrap
+owns the native UAC request and verifies actual readiness.
+Windows may assign separate breakaway-enabled jobs at the Explorer and UAC launch
+boundaries. The fixed protected executable leaves those jobs only when Windows
+explicitly permits it; the final bootstrap and broker must still be job-free.
+There is no forced job modification, job-bound broker fallback or extra native UAC.
+`broker-start` and
+`status` expose `in_job: false`; a job-attached or legacy broker is not proof of
+session independence. Stop an incompatible broker through its normal interface
+before upgrading, rather than launching a duplicate or killing it. Host shutdown
+does not intentionally terminate an independently started broker or its accepted
+commands, but Windows logoff, explicit administrative termination and OS failure
+remain external lifecycle boundaries.
 
 The compiled broker lives under `Program Files/Darka.WindowsElevationGate` with
 administrator ownership and non-administrator read/execute-only permissions.

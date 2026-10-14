@@ -95,10 +95,47 @@ class BrokerProtocolTests(unittest.TestCase):
             with self.assertRaises(broker.BrokerStopping):
                 broker.start()
 
-    def test_interactive_broker_does_not_inherit_hidden_worker_launch(self):
+    def test_desktop_start_never_uses_direct_elevation_fallback(self):
         from agent_toolbelt_windows_elevation_gate import broker
-        import inspect
-        self.assertIn('show_window=True', inspect.getsource(broker.start))
+        startup = {'ok': True, 'in_job': False, 'launch_owner': 'desktop_explorer'}
+        with patch.object(broker, 'Native'), patch.object(broker, 'Mutex'), \
+             patch.object(broker, 'installation', return_value=(Path('C:/protected'), Path('C:/protected/broker.exe'))), \
+             patch.object(broker, 'exchange', side_effect=[broker.BrokerUnavailable('stopped'), {'ok': True, 'accepting': True, 'in_job': False}]), \
+             patch.object(broker.subprocess, 'run', return_value=__import__('subprocess').CompletedProcess([], 0, json.dumps(startup), '')) as run:
+            self.assertEqual(broker.start()['launch_owner'], 'desktop_explorer')
+        self.assertEqual(run.call_args.args[0], ['C:\\protected\\broker.exe', '--launch-from-desktop'])
+
+    def test_existing_job_attached_broker_is_not_relaunched(self):
+        from agent_toolbelt_windows_elevation_gate import broker
+        with patch.object(broker, 'Native'), patch.object(broker, 'Mutex'), \
+             patch.object(broker, 'exchange', return_value={'ok': True, 'accepting': True, 'in_job': True}), \
+             patch.object(broker.subprocess, 'run') as run:
+            with self.assertRaises(broker.BrokerUnavailable):
+                broker.start()
+        run.assert_not_called()
+
+    def test_desktop_uac_decline_is_returned_without_retry(self):
+        from agent_toolbelt_windows_elevation_gate import broker
+        result = {'ok': False, 'launched': False, 'failure_kind': 'uac_declined'}
+        with patch.object(broker, 'Native'), patch.object(broker, 'Mutex'), \
+             patch.object(broker, 'installation', return_value=(Path('C:/protected'), Path('C:/protected/broker.exe'))), \
+             patch.object(broker, 'exchange', side_effect=broker.BrokerUnavailable('stopped')), \
+             patch.object(broker.subprocess, 'run', return_value=__import__('subprocess').CompletedProcess([], 1, json.dumps(result), '')) as run:
+            self.assertEqual(broker.start(), result)
+        run.assert_called_once()
+
+    def test_native_session_launch_rejects_job_membership(self):
+        source = (Path(__file__).resolve().parents[1] / 'assets/WindowsElevationBroker.cs').read_text()
+        self.assertIn('if(SessionLaunch.InJob())throw', source)
+        self.assertIn('shellWindows.FindWindowSW', source)
+        self.assertIn('"--session-bootstrap "+pipeName', source)
+        self.assertIn('Verb="runas"', source)
+        self.assertIn('if((flags & 0x1800)==0)throw', source)
+        self.assertIn('" --detached-session-bootstrap "', source)
+        self.assertIn('SessionLaunch.BreakAway(ready,true)', source)
+        self.assertIn('created!=Convert.ToInt64(identity["ticks"])', source)
+        self.assertIn('false,0x09000000', source)
+        self.assertIn('SessionLaunch.Bootstrap(args[1],false)', source)
 
 
 if __name__ == '__main__':

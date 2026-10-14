@@ -18,6 +18,145 @@ using System.Windows.Forms;
 using Microsoft.Win32.SafeHandles;
 
 namespace DarkaElevation {
+    static class SessionLaunch {
+        [DllImport("kernel32.dll", SetLastError=true)] static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool member);
+        [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+        [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr OpenProcess(uint access,bool inherit,uint pid);
+        [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetProcessTimes(IntPtr process,out long created,out long exited,out long kernel,out long user);
+        [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool QueryFullProcessImageName(IntPtr process,uint flags,StringBuilder path,ref int size);
+        [DllImport("kernel32.dll", SetLastError=true)] static extern bool QueryInformationJobObject(IntPtr job,int kind,IntPtr buffer,uint size,out uint length);
+        [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool CreateProcess(string application,StringBuilder command,IntPtr processSecurity,IntPtr threadSecurity,bool inherit,uint flags,IntPtr environment,string directory,ref StartupInfo startup,out ProcessInfo process);
+        [DllImport("kernel32.dll", SetLastError=true)] static extern uint WaitForSingleObject(IntPtr handle,uint milliseconds);
+        [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr handle,out uint code);
+        [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct StartupInfo {
+            public int Size; public string Reserved,Desktop,Title; public uint X,Y,Width,Height,CharsX,CharsY,Fill,Flags; public ushort Show,ReservedSize; public IntPtr ReservedBytes,Input,Output,Error;
+        }
+        [StructLayout(LayoutKind.Sequential)] struct ProcessInfo { public IntPtr Process,Thread; public uint ProcessId,ThreadId; }
+        [DllImport("kernel32.dll", SetLastError=true)] static extern bool CloseHandle(IntPtr handle);
+        [DllImport("kernel32.dll", SetLastError=true)] static extern uint WaitForMultipleObjects(uint count, IntPtr[] handles, bool all, uint milliseconds);
+        [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern SafePipeHandle CreateFile(string path, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+        [DllImport("user32.dll")] static extern IntPtr GetShellWindow();
+        [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+        [DllImport("shell32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool ShellExecuteEx(ref ShellInfo info);
+        [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct ShellInfo {
+            public int Size; public uint Mask; public IntPtr Window;
+            public string Verb, File, Parameters, Directory; public int Show;
+            public IntPtr Instance, IdList; public string Class; public IntPtr ClassKey;
+            public uint HotKey; public IntPtr Icon, Process;
+        }
+        static string PipePrefix { get { return "Darka.WindowsElevation.Startup."+WindowsIdentity.GetCurrent().User.Value+"."+Process.GetCurrentProcess().SessionId+"."; } }
+        public static bool InJob(IntPtr process) {
+            bool member;
+            if(!IsProcessInJob(process,IntPtr.Zero,out member))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            return member;
+        }
+        public static bool InJob() { return InJob(GetCurrentProcess()); }
+        public static int LaunchFromDesktop() {
+            try {
+                string pipeName=PipePrefix+Guid.NewGuid().ToString("N");
+                var security=Broker.PipePolicy(WindowsIdentity.GetCurrent().User.Value);
+                using(var pipe=new NamedPipeServerStream(pipeName,PipeDirection.InOut,1,PipeTransmissionMode.Byte,PipeOptions.None,4096,4096,security)) {
+                    uint shellPid; IntPtr shellWindow=GetShellWindow();
+                    if(shellWindow==IntPtr.Zero || GetWindowThreadProcessId(shellWindow,out shellPid)==0)throw new IOException("Interactive desktop Explorer is unavailable");
+                    using(var shellProcess=Process.GetProcessById((int)shellPid)) {
+                        string expected=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),"explorer.exe");
+                        if(!String.Equals(shellProcess.MainModule.FileName,expected,StringComparison.OrdinalIgnoreCase) || shellProcess.SessionId!=Process.GetCurrentProcess().SessionId || InJob(shellProcess.Handle))throw new IOException("Desktop shell is not an independent Explorer in this session");
+                    }
+                    object windows=null,desktop=null,application=null;
+                    try {
+                        windows=Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("9BA05972-F6A8-11CF-A442-00A0C90A8F39"),true));
+                        dynamic shellWindows=windows; object location=0,root=0; int desktopWindow;
+                        desktop=shellWindows.FindWindowSW(ref location,ref root,8,out desktopWindow,1);
+                        if(desktop==null || unchecked((uint)desktopWindow)!=unchecked((uint)shellWindow.ToInt64()))throw new IOException("Desktop automation identity mismatch");
+                        application=((dynamic)desktop).Document.Application;
+                        string exe=Process.GetCurrentProcess().MainModule.FileName;
+                        ((dynamic)application).ShellExecute(exe,"--session-bootstrap "+pipeName,Path.GetDirectoryName(exe),"open",1);
+                    } finally {
+                        foreach(object value in new[]{application,desktop,windows})if(value!=null && Marshal.IsComObject(value))Marshal.FinalReleaseComObject(value);
+                    }
+                    pipe.WaitForConnection();
+                    var result=Wire.Receive(pipe);
+                    Console.WriteLine(Wire.Json().Serialize(result));
+                    return result.ContainsKey("ok") && result["ok"] is bool && (bool)result["ok"]?0:1;
+                }
+            } catch(Exception error) {
+                Console.WriteLine(Wire.Json().Serialize(Wire.Failure("desktop_launch_failed",error.Message)));
+                return 1;
+            }
+        }
+        public static int BreakAway(string value,bool elevatedBroker=false) {
+            // Explorer may put each launch in its own explicitly breakaway-enabled job.
+            IntPtr buffer=Marshal.AllocHGlobal(144);
+            try {
+                uint length;
+                if(!QueryInformationJobObject(IntPtr.Zero,9,buffer,144,out length))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+                uint flags=unchecked((uint)Marshal.ReadInt32(buffer,16));
+                if((flags & 0x1800)==0)throw new IOException("Desktop launch job does not permit session bootstrap breakaway");
+            } finally {Marshal.FreeHGlobal(buffer);}
+            string exe=Process.GetCurrentProcess().MainModule.FileName;
+            var startup=new StartupInfo {Size=Marshal.SizeOf(typeof(StartupInfo))}; ProcessInfo process;
+            string mode=elevatedBroker?" --detached-ready-event ":" --detached-session-bootstrap ";
+            if(!CreateProcess(exe,new StringBuilder(Request.Quote(exe)+mode+Request.Quote(value)),IntPtr.Zero,IntPtr.Zero,false,0x09000000,IntPtr.Zero,Path.GetDirectoryName(exe),ref startup,out process))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            try {
+                if(elevatedBroker) {
+                    using(var ready=EventWaitHandle.OpenExisting(value)) {
+                        if(WaitForMultipleObjects(2,new[]{ready.SafeWaitHandle.DangerousGetHandle(),process.Process},false,0xffffffff)!=0)throw new IOException("Detached elevated broker exited before readiness");
+                        if(InJob(process.Process))throw new IOException("Detached elevated broker remains job-attached");
+                        return 0;
+                    }
+                }
+                if(WaitForSingleObject(process.Process,0xffffffff)!=0)throw new IOException("Detached bootstrap wait failed");
+                uint code;if(!GetExitCodeProcess(process.Process,out code))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+                return unchecked((int)code);
+            } finally {CloseHandle(process.Thread);CloseHandle(process.Process);}
+        }
+        public static int Bootstrap(string pipeName,bool allowBreakaway=true) {
+            Guid nonce;
+            if(!pipeName.StartsWith(PipePrefix,StringComparison.Ordinal) || !Guid.TryParseExact(pipeName.Substring(PipePrefix.Length),"N",out nonce))return 2;
+            Exception detachError=null;
+            if(allowBreakaway && InJob()) {
+                try {return BreakAway(pipeName);} catch(Exception error) {detachError=error;}
+            }
+            using(var handle=CreateFile(@"\\.\pipe\"+pipeName,0x100003,0,IntPtr.Zero,3,0x110000,IntPtr.Zero)) {
+                if(handle.IsInvalid)return 2;
+                using(var stream=new NamedPipeClientStream(PipeDirection.InOut,false,true,handle)) {
+                    Dictionary<string,object> result;
+                    try {
+                        if(detachError!=null)throw detachError;
+                        if(InJob())throw new IOException("Desktop bootstrap is unexpectedly job-attached; refusing elevation");
+                        string exe=Process.GetCurrentProcess().MainModule.FileName;
+                        string readyName=@"Local\Darka.WindowsElevation.BrokerReady."+nonce.ToString("N");
+                        using(var ready=new EventWaitHandle(false,EventResetMode.ManualReset,readyName)) {
+                            var info=new ShellInfo {Size=Marshal.SizeOf(typeof(ShellInfo)),Mask=0x140,Verb="runas",File=exe,Parameters="--ready-event "+readyName,Directory=Path.GetDirectoryName(exe),Show=1};
+                            if(!ShellExecuteEx(ref info)) {
+                                int error=Marshal.GetLastWin32Error();
+                                result=Wire.Failure(error==1223?"uac_declined":"broker_start_failed",new System.ComponentModel.Win32Exception(error).Message);
+                            } else {
+                                if(info.Process==IntPtr.Zero)throw new IOException("Native UAC returned no supervised process handle");
+                                try {
+                                    uint state=WaitForMultipleObjects(2,new[]{ready.SafeWaitHandle.DangerousGetHandle(),info.Process},false,0xffffffff);
+                                    if(state!=0)throw new IOException("Broker exited or readiness wait failed before startup verification");
+                                    string record=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),"Darka.WindowsElevationGate","session-"+WindowsIdentity.GetCurrent().User.Value+"-"+Process.GetCurrentProcess().SessionId+".json");
+                                    if(!Program.Protected(record))throw new IOException("Broker identity record is unprotected");
+                                    var identity=Wire.Json().DeserializeObject(File.ReadAllText(record)) as Dictionary<string,object>;
+                                    IntPtr actual=OpenProcess(0x1000,false,Convert.ToUInt32(identity["pid"]));
+                                    if(actual==IntPtr.Zero)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+                                    try {
+                                        long created,exited,kernel,user;var path=new StringBuilder(32768);int length=path.Capacity;
+                                        if(!GetProcessTimes(actual,out created,out exited,out kernel,out user) || !QueryFullProcessImageName(actual,0,path,ref length) || created!=Convert.ToInt64(identity["ticks"]) || !String.Equals(path.ToString(),exe,StringComparison.OrdinalIgnoreCase) || InJob(actual))throw new IOException("Ready broker identity/job verification failed");
+                                    } finally {CloseHandle(actual);}
+                                    result=new Dictionary<string,object>{{"ok",true},{"operation","broker-start"},{"launch_owner","desktop_explorer"},{"in_job",false}};
+                                } finally {CloseHandle(info.Process);}
+                            }
+                        }
+                    } catch(Exception error) {result=Wire.Failure("broker_start_failed",error.Message);}
+                    Wire.Send(stream,result);
+                    return (bool)result["ok"]?0:1;
+                }
+            }
+        }
+    }
+
     static class Wire {
         public static JavaScriptSerializer Json() { return new JavaScriptSerializer { MaxJsonLength = 262144, RecursionLimit = 24 }; }
         public static byte[] Read(Stream stream, int count) {
@@ -235,7 +374,7 @@ namespace DarkaElevation {
                 if(client!=sid || !GetNamedPipeClientProcessId(pipe.SafePipeHandle,out peer) || Process.GetProcessById((int)peer).SessionId!=session) throw new InvalidDataException("Client account/session mismatch");
                 long peerTicks=Process.GetProcessById((int)peer).StartTime.ToUniversalTime().ToFileTimeUtc();
                 var message=Wire.Receive(pipe); string op=message["op"] as string;
-                if(op=="status") { Wire.Only(message,"op"); lock(sync) Wire.Send(pipe,new {ok=true,operation="broker-status",broker_pid=Process.GetCurrentProcess().Id,accepting=!stopping,pending=queue.Count,active=running.Values.ToArray(),history=history.ToArray()}); return; }
+                if(op=="status") { Wire.Only(message,"op"); lock(sync) Wire.Send(pipe,new {ok=true,operation="broker-status",broker_pid=Process.GetCurrentProcess().Id,in_job=SessionLaunch.InJob(),accepting=!stopping,pending=queue.Count,active=running.Values.ToArray(),history=history.ToArray()}); return; }
                 if(op!="submit" && op!="stop") throw new InvalidDataException("Only submit/status/stop are supported; approval is broker-owned");
                 Wire.Only(message,op=="submit" ? new[]{"op","request"} : new[]{"op"});
                 var request=op=="submit" ? new Request((Dictionary<string,object>)message["request"]) : ControlRequest();
@@ -359,12 +498,21 @@ namespace DarkaElevation {
                 if(args.Length==1 && args[0]=="--self-test") {SelfTest();return 0;}
                 if(args.Length==1 && args[0]=="--preview") {Application.EnableVisualStyles();using(var form=new ApprovalForm(Broker.ControlRequest(),true)){Console.WriteLine(Wire.Json().Serialize(new {preview_approved=form.ShowDialog()==DialogResult.OK,launched=false}));}return 0;}
                 var identity=WindowsIdentity.GetCurrent();
-                if(!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator) || Process.GetCurrentProcess().SessionId==0)throw new InvalidOperationException("Elevated interactive broker required");
                 string exe=Process.GetCurrentProcess().MainModule.FileName;
                 string root=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),"Darka.WindowsElevationGate");
                 if(!exe.StartsWith(root+"\\",StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException("Protected installed broker required");
                 for(string path=exe;path.Length>=root.Length;path=Path.GetDirectoryName(path))if((File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0 || !Protected(path))throw new InvalidOperationException("Administrator-owned/write-protected broker required");
-                string ready=args.Length==2 && args[0]=="--ready-event"?args[1]:null;
+                if(args.Length==1 && args[0]=="--launch-from-desktop")return SessionLaunch.LaunchFromDesktop();
+                if(args.Length==2 && args[0]=="--session-bootstrap")return SessionLaunch.Bootstrap(args[1]);
+                if(args.Length==2 && args[0]=="--detached-session-bootstrap")return SessionLaunch.Bootstrap(args[1],false);
+                if(!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator) || Process.GetCurrentProcess().SessionId==0)throw new InvalidOperationException("Elevated interactive broker required");
+                string ready=args.Length==2 && (args[0]=="--ready-event" || args[0]=="--detached-ready-event")?args[1]:null;
+                if(ready!=null) {
+                    const string prefix=@"Local\Darka.WindowsElevation.BrokerReady.";Guid nonce;
+                    if(!ready.StartsWith(prefix,StringComparison.Ordinal) || !Guid.TryParseExact(ready.Substring(prefix.Length),"N",out nonce))throw new InvalidOperationException("Invalid readiness event");
+                    if(args[0]=="--ready-event" && SessionLaunch.InJob())return SessionLaunch.BreakAway(ready,true);
+                }
+                if(SessionLaunch.InJob())throw new InvalidOperationException("Broker is job-attached; use broker-start with desktop session launch");
                 using(var singleton=new Mutex(false,@"Local\Darka.WindowsElevation.BrokerInstance."+identity.User.Value+"."+Process.GetCurrentProcess().SessionId)) {
                     bool acquired;try{acquired=singleton.WaitOne(0);}catch(AbandonedMutexException){acquired=true;}
                     if(!acquired)return 2;
