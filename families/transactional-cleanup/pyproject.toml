@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-toolbelt-transactional-cleanup"
-version = "0.5.2"
-description = "Reviewed snapshot cleanup with Windows file identity and deletion tickets"
+version = "0.6.0"
+description = "Reviewed Windows and device-bound Android task cleanup tickets"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 dependencies = []

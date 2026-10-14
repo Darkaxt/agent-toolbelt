@@ -1,10 +1,10 @@
 ---
 name: transactional-cleanup
-description: Clean generated build, deployment, browser, media and temporary artifacts through reviewed snapshots and exact-file deletion tickets. Use when a task leaves local output to reclaim, including output outside its workspace.
+description: Clean task-generated Windows or Android artifacts through reviewed snapshots and exact-file tickets, including temporary test apps with recorded installation provenance.
 license: MIT
 metadata:
-  version: "0.5.2"
-  compatibility: Windows 10/11, Python 3.11+, NTFS/ReFS or content-bound exFAT. Codex and Claude; installed local helper required.
+  version: "0.6.0"
+  compatibility: Windows 10/11, Python 3.11+, NTFS/ReFS or content-bound exFAT; Android cleanup requires ADB and device shell tools. Codex and Claude.
 ---
 
 # Transactional Cleanup
@@ -12,6 +12,13 @@ metadata:
 Use `scripts/invoke_transactional_cleanup.py` for attributed generated artifacts.
 Read the JSON results and inspect the review before issuing a ticket. An issued
 ticket is a procedural review gate, not a request for another user approval.
+
+For Android test files or temporary test-app removal, read
+[Android Task Cleanup](references/android.md) and use the separate `adb-*`
+commands. Windows-only file identity rules below do not apply to Android.
+App removal requires a pre-install absence baseline and intended APK hashes;
+never invent missing historical provenance. Normal task cleanup authorization
+does not require repeated user approval, but does not cover unrelated device data.
 
 ## Prevent Litter Before Creation
 

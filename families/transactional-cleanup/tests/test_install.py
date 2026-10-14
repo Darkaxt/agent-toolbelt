@@ -76,6 +76,12 @@ class InstalledWorkflowTests(unittest.TestCase):
             env = dict(os.environ, LOCALAPPDATA=str(local), PYTHONDONTWRITEBYTECODE='1')
             env.pop('AGENT_TOOLBELT_HOME', None)
             wrapper = home / '.codex/skills/transactional-cleanup/scripts/invoke_transactional_cleanup.py'
+            help_result = subprocess.run([sys.executable, '-B', str(wrapper), 'adb-ticket', '--help'],
+                                         cwd=root, env=env, capture_output=True, text=True, check=True)
+            self.assertIn('--confirm-test-app-data', help_result.stdout)
+            installed_android = Path(first['active_runtime']) / 'agent_toolbelt_transactional_cleanup/android.py'
+            self.assertEqual(installed_android.read_bytes(),
+                             (FAMILY / 'src/agent_toolbelt_transactional_cleanup/android.py').read_bytes())
             def run(*args):
                 process = subprocess.run([sys.executable, '-B', str(wrapper), *args],
                                          cwd=root, env=env, capture_output=True, text=True)
@@ -212,7 +218,7 @@ raise SystemExit(result)
     def test_bundles_match(self):
         codex = FAMILY / 'codex/skills/transactional-cleanup'
         claude = FAMILY / 'claude/marketplaces/agent-toolbelt-local/plugins/transactional-cleanup/skills/transactional-cleanup'
-        for name in ('SKILL.md', 'scripts/invoke_transactional_cleanup.py', 'references/retirement.md'):
+        for name in ('SKILL.md', 'scripts/invoke_transactional_cleanup.py', 'references/retirement.md', 'references/android.md'):
             self.assertEqual((codex / name).read_bytes(), (claude / name).read_bytes())
 
 

@@ -1,6 +1,6 @@
 {
   "name": "transactional-cleanup",
-  "version": "0.4.3",
-  "description": "Reviewed snapshot cleanup with exact Windows file identity and retryable tickets.",
+  "version": "0.6.0",
+  "description": "Reviewed Windows and device-bound Android task cleanup tickets.",
   "license": "MIT"
 }
