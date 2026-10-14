@@ -5,12 +5,14 @@ import json
 import sqlite3
 
 from .engine import Engine, CleanupError, KINDS
+from . import android
 
 
 def parser():
     result = argparse.ArgumentParser(description='Review generated files and apply exact snapshot cleanup tickets.')
     result.add_argument('--state-root', help='Explicit helper state directory')
     commands = result.add_subparsers(dest='command', required=True)
+    android.add_parsers(commands)
     begin = commands.add_parser('begin')
     begin.add_argument('--workspace', required=True)
     begin.add_argument('--scan-root', action='append', help='Scan only these roots when supplied; otherwise scan only the workspace')
@@ -58,11 +60,17 @@ def parser():
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
+        if args.command.startswith('adb-'):
+            result = android.dispatch(args)
+            print(json.dumps(result, ensure_ascii=True, indent=2))
+            return 0 if result['ok'] else 1
         engine = Engine(args.state_root)
         if args.command == 'status':
             result = engine.status(args.transaction)
         elif args.command == 'state-inventory':
             result = engine.state_inventory()
+            result['android'] = android.AndroidCleanup(host_engine=engine).state_inventory()
+            result['state_bytes'] += result['android']['state_bytes']
         elif args.command == 'discard' and engine.legacy_path(args.transaction).is_file():
             result = engine.discard_legacy(args.transaction, args.reason)
         else:
@@ -105,7 +113,7 @@ def main(argv=None):
                   'errors': ['Helper state database operation failed; inspect saved status before retrying the same valid ticket. No automatic revocation or alternate deletion was performed.'],
                   'warnings': (['Apply may have removed some exact ticket members before the database failure; committed byte counts are not proof of every filesystem change.']
                                if args.command == 'apply' else [])}
-    except (CleanupError, OSError, ValueError, RuntimeError) as exc:
+    except (CleanupError, OSError, ValueError, RuntimeError, KeyError, TypeError, UnicodeError) as exc:
         result = {'ok': False, 'operation': args.command,
                   'failure_kind': getattr(exc, 'kind', type(exc).__name__),
                   'errors': [str(exc)], 'warnings': []}

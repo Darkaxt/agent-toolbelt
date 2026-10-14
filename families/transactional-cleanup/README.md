@@ -1,5 +1,13 @@
 # Transactional Cleanup
 
+Version 0.6 adds a separate device-bound Android backend: exact task-file
+review/inspect/ticket/apply, plus task-installed test-app cleanup with a pre-install
+absence baseline and planned APK hashes. Read [Android Task Cleanup](codex/skills/transactional-cleanup/references/android.md).
+No root access, recursive deletion, automatic device choice or host-only identity
+claims are used. Android stat/hash/unlink checks are not Windows handle-bound
+deletion; stop producers before cleanup. No existing device data is removed by
+installation of this feature.
+
 Empty regular `.git` files and empty `.git` directories in attributable generated
 output can be included in exact-file tickets. This does not exempt real Git
 metadata, tracked files, reparse points, or unproven/pre-existing user data.
