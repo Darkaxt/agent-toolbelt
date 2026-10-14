@@ -99,6 +99,18 @@ elevated wholesale and Windows security policy remains unchanged.
 
 ## Verify
 
+The v0.2.2 approval form implements the approved operator design: a persistent
+thread-identity rail, distinct outcome/target sections, a selectable command panel,
+disclosed full input hashes, feedback and a fixed decision footer. HTML is design
+reference only; no browser engine runs in the elevated process. Visual previews
+use that same native form without submitting an approval or requesting elevation.
+
+`WindowsElevationBroker.exe --verify-ui <task-output>` measures the actual native
+preview controls at normal/small sizes with normal/long content and emits bounded
+layout evidence plus DrawToBitmap images. Those images are not proof of desktop
+presentation (native rich-text pixels need a real window capture); inspect the
+actual preview/live approval too. Verification never accepts an execution request.
+
 For the installed broker's lifecycle test, stop it through its normal approved
 interface first, then run:
 

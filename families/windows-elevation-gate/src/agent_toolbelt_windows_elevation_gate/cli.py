@@ -68,7 +68,7 @@ def main(argv=None):
             result = ({"ok": True, "operation": "preview", "request": request, "launched": False}
                       if args.operation == "preview" else engine.run(request) if args.one_shot else broker.run(request))
             if args.operation == "preview" and args.show_dialog:
-                result["dialog"] = engine.explain(request, preview=True)
+                result["dialog"] = broker.preview(request)
     except broker.CompletionUnknown as exc:
         result = {"ok": False, "operation": args.operation, "failure_kind": "completion_unverified", "error": str(exc), "receipt": exc.receipt}
     except broker.BrokerUnavailable as exc:

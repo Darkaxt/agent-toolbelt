@@ -299,39 +299,101 @@ namespace DarkaElevation {
     }
 
     sealed class ApprovalForm : Form {
-        public readonly TextBox Feedback = new TextBox { Multiline=true, MaxLength=4000, ScrollBars=ScrollBars.Vertical, Height=80, Dock=DockStyle.Top };
-        readonly Color ink = Color.FromArgb(20, 33, 58);
-        Control Card(string title, string value, int height, bool mono=false) {
-            var card = new Panel { Dock=DockStyle.Top, Height=height + 48, Padding=new Padding(14), BackColor=Color.White, Margin=new Padding(0,0,0,12) };
-            var text = new TextBox { Text=value, ReadOnly=true, Multiline=true, ScrollBars=ScrollBars.Both, WordWrap=!mono, BorderStyle=BorderStyle.None, BackColor=Color.White, ForeColor=ink, Dock=DockStyle.Fill, Font=new Font(mono ? "Consolas" : "Segoe UI", mono ? 10 : 11) };
-            var label = new Label { Text=title, Dock=DockStyle.Top, Height=25, ForeColor=Color.FromArgb(20,88,189), Font=new Font("Segoe UI", 10, FontStyle.Bold) };
-            card.Controls.Add(text); card.Controls.Add(label); return card;
+        public readonly TextBox Feedback = new TextBox { Name="feedback", AccessibleName="Optional feedback", Multiline=true, MaxLength=4000, ScrollBars=ScrollBars.Vertical, Height=60, BorderStyle=BorderStyle.FixedSingle };
+        static readonly Color Ink=Color.FromArgb(24,32,43), Muted=Color.FromArgb(75,88,104), Line=Color.FromArgb(216,222,230);
+        static Label TextLabel(string name,string text,float size=11,bool bold=false) {
+            return new Label {Name=name,AccessibleName=name,Text=text,AutoSize=true,UseMnemonic=false,ForeColor=Ink,Font=new Font(bold?"Bahnschrift":"Segoe UI",size,bold?FontStyle.Bold:FontStyle.Regular),Margin=new Padding(0,0,0,10)};
+        }
+        static RichTextBox ReadOnlyText(string name,string text,int height,Color background,Color foreground) {
+            return new RichTextBox {Name=name,AccessibleName=name,Text=text,ReadOnly=true,DetectUrls=false,WordWrap=false,ScrollBars=RichTextBoxScrollBars.Both,BorderStyle=BorderStyle.None,Height=height,BackColor=background,ForeColor=foreground,Font=new Font("Consolas",10),Margin=new Padding(0,0,0,8)};
         }
         public ApprovalForm(Request request, bool preview=false, bool stop=false) {
             Text = (preview ? "Preview - " : "Administrator action - ") + request.ThreadName;
-            TopMost=true; StartPosition=FormStartPosition.CenterScreen; BackColor=Color.FromArgb(241,244,250); Font=new Font("Segoe UI",11); AutoScaleMode=AutoScaleMode.Dpi;
-            var area=Screen.PrimaryScreen.WorkingArea; ClientSize=new Size(Math.Min(860,area.Width-64),Math.Min(870,area.Height-90)); MinimumSize=new Size(580,460);
-            var layout=new TableLayoutPanel { Dock=DockStyle.Fill, ColumnCount=1, RowCount=3, Padding=new Padding(18) };
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute,88)); layout.RowStyles.Add(new RowStyle(SizeType.Percent,100)); layout.RowStyles.Add(new RowStyle(SizeType.Absolute,104));
-            var header=new Label { Text=(preview ? "DESIGN PREVIEW" : "ADMINISTRATOR EXECUTION")+"\r\n"+(preview ? "No approval, elevation or command will run." : "This broker is already elevated. Only your acceptance runs this action."), Dock=DockStyle.Fill, ForeColor=ink, Font=new Font("Segoe UI",13,FontStyle.Bold) };
-            var body=new FlowLayoutPanel { Dock=DockStyle.Fill, FlowDirection=FlowDirection.TopDown, WrapContents=false, AutoScroll=true, Padding=new Padding(0,0,16,0) };
-            var cards=new List<Control> { Card("TASK & THREAD",request.TaskName+"\r\n"+request.ThreadName,64), Card("WHY / EXPECTED CHANGES",request.Reason+"\r\n\r\n"+request.Changes,112), Card("EXACT TARGETS",String.Join("\r\n",request.Targets),70) };
-            if(stop) cards.Add(Card("INTERNAL BROKER CONTROL","Stop accepting requests, cancel pending approvals and drain started commands. No external command is executed.",90));
-            else {
-                cards.Add(Card("EXACT COMMAND / WORKING DIRECTORY",request.CommandText+"\r\n\r\n"+request.Cwd,125,true));
-                cards.Add(Card("BOUND INPUTS / SHA-256",String.Join("\r\n",request.Bindings.Select(b=>b.Key+"\r\n"+b.Value)),100,true));
+            TopMost=true; StartPosition=FormStartPosition.CenterScreen; BackColor=Color.White; Font=new Font("Segoe UI",11); AutoScaleDimensions=new SizeF(96,96); AutoScaleMode=AutoScaleMode.Dpi;
+            var area=Screen.FromPoint(Cursor.Position).WorkingArea; ClientSize=new Size(Math.Min(940,area.Width-64),Math.Min(730,area.Height-90)); MinimumSize=new Size(Math.Min(640,area.Width-32),Math.Min(480,area.Height-32));
+            var layout=new TableLayoutPanel {Name="dialog_layout",Dock=DockStyle.Fill,ColumnCount=1,RowCount=3,Margin=Padding.Empty};
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute,34));layout.RowStyles.Add(new RowStyle(SizeType.Percent,100));layout.RowStyles.Add(new RowStyle(SizeType.Absolute,94));
+            var header=TextLabel("approval_state",preview?"DESIGN PREVIEW / NO EXECUTION":"ADMINISTRATOR BROKER / APPROVAL REQUIRED",9);header.Dock=DockStyle.Fill;header.Padding=new Padding(16,8,8,0);header.Margin=Padding.Empty;header.ForeColor=Muted;
+            var split=new TableLayoutPanel {Name="operator_layout",Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Margin=Padding.Empty};
+            split.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,235));split.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+            var identity=new FlowLayoutPanel {Name="identity_rail",Dock=DockStyle.Fill,BackColor=Ink,FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoScroll=true,Padding=new Padding(22,26,18,20),Margin=Padding.Empty};
+            var threadCaption=TextLabel("thread_caption","REQUESTING THREAD",9,true);threadCaption.ForeColor=Color.FromArgb(166,192,238);
+            var thread=TextLabel("thread_name",request.ThreadName,22,true);thread.ForeColor=Color.White;thread.Margin=new Padding(0,8,0,24);
+            var privilege=TextLabel("privilege_state",preview?"Visual preview only.\r\nNo command or elevation will run.":"Administrator privileges\r\n\r\nExecution waits for your decision.",10);privilege.ForeColor=Color.FromArgb(208,217,233);
+            identity.Controls.AddRange(new Control[]{threadCaption,thread,privilege});
+            var body=new FlowLayoutPanel {Name="request_content",Dock=DockStyle.Fill,FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoScroll=true,Padding=new Padding(25,24,25,20),Margin=Padding.Empty};
+            var task=TextLabel("task_name",request.TaskName,18,true);
+            var reason=TextLabel("reason",request.Reason);reason.ForeColor=Muted;reason.Margin=new Padding(0,0,0,20);
+            var facts=new TableLayoutPanel {Name="request_scope",AutoSize=true,AutoSizeMode=AutoSizeMode.GrowOnly,ColumnCount=2,RowCount=1,Padding=new Padding(0,16,0,16),Margin=new Padding(0,0,0,20)};
+            facts.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));facts.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));
+            var changesArea=new FlowLayoutPanel {AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,FlowDirection=FlowDirection.TopDown,WrapContents=false,Margin=Padding.Empty,Padding=new Padding(0,0,18,0)};
+            var targetArea=new FlowLayoutPanel {AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,FlowDirection=FlowDirection.TopDown,WrapContents=false,Margin=Padding.Empty,Padding=new Padding(18,0,0,0)};
+            var changesTitle=TextLabel("changes_heading","Expected changes",12,true);var changes=TextLabel("expected_changes",request.Changes,10);changes.ForeColor=Muted;
+            var targetsTitle=TextLabel("targets_heading","Exact targets",12,true);var targets=TextLabel("exact_targets",String.Join("\r\n",request.Targets),10);targets.Font=new Font("Consolas",10);targets.BackColor=Color.FromArgb(237,241,246);targets.ForeColor=Color.FromArgb(26,52,85);targets.Padding=new Padding(8);
+            changesArea.Controls.AddRange(new Control[]{changesTitle,changes});targetArea.Controls.AddRange(new Control[]{targetsTitle,targets});facts.Controls.Add(changesArea,0,0);facts.Controls.Add(targetArea,1,0);
+            facts.Paint+=delegate(object sender,PaintEventArgs e){using(var pen=new Pen(Line)){e.Graphics.DrawLine(pen,0,0,facts.Width,0);e.Graphics.DrawLine(pen,0,facts.Height-1,facts.Width,facts.Height-1);e.Graphics.DrawLine(pen,facts.Width/2,16,facts.Width/2,facts.Height-16);}};
+            body.Controls.AddRange(new Control[]{task,reason,facts});
+            RichTextBox command=null;Panel commandSurface=null;Label directory=null;Button disclosure=null;Panel details=null;
+            if(stop) {
+                body.Controls.Add(TextLabel("internal_control_heading","INTERNAL BROKER CONTROL",10,true));
+                body.Controls.Add(TextLabel("internal_control","Stop accepting requests, cancel pending approvals and drain started commands. No external command is executed."));
             }
-            var feedbackPanel=new Panel { Height=124, BackColor=Color.White, Padding=new Padding(14) };
-            feedbackPanel.Controls.Add(Feedback); feedbackPanel.Controls.Add(new Label { Text="OPTIONAL FEEDBACK (returned unchanged; never modifies the command)",Dock=DockStyle.Top,Height=28,ForeColor=ink,Font=new Font("Segoe UI",9) });
-            cards.Add(feedbackPanel); foreach (Control card in cards) body.Controls.Add(card);
-            body.SizeChanged += delegate { foreach (Control card in cards) card.Width=Math.Max(300,body.ClientSize.Width-30); };
-            var footer=new TableLayoutPanel { Dock=DockStyle.Fill, ColumnCount=3, RowCount=1, Padding=new Padding(0,18,0,8) };
-            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,135)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,205));
-            var cancel=new Button { Text=preview ? "Needs changes" : "Cancel", DialogResult=DialogResult.Cancel, Dock=DockStyle.Fill, Margin=new Padding(6), BackColor=Color.White, ForeColor=ink };
-            var accept=new Button { Text=preview ? "Looks good" : stop ? "Disable broker" : "Accept && Execute", DialogResult=DialogResult.OK, Dock=DockStyle.Fill, Margin=new Padding(6), BackColor=Color.FromArgb(20,88,189), ForeColor=Color.White, FlatStyle=FlatStyle.Flat };
-            footer.Controls.Add(new Label { Text=preview ? "Visual preview only." : "Cancel is the default.\r\nNo automatic approval or retry.", Dock=DockStyle.Fill, ForeColor=ink, Font=new Font("Segoe UI",9) },0,0); footer.Controls.Add(cancel,1,0); footer.Controls.Add(accept,2,0);
-            layout.Controls.Add(header,0,0); layout.Controls.Add(body,0,1); layout.Controls.Add(footer,0,2); Controls.Add(layout);
+            else {
+                body.Controls.Add(TextLabel("command_heading","EXACT COMMAND",9,true));
+                command=ReadOnlyText("exact_command",request.CommandText,82,Ink,Color.White);
+                commandSurface=new Panel {Name="command_surface",BackColor=Ink,Height=90,Padding=new Padding(13,10,13,10),Margin=new Padding(0,0,0,8)};command.Dock=DockStyle.Fill;commandSurface.Controls.Add(command);
+                directory=TextLabel("working_directory","Working directory: "+request.Cwd,9);directory.ForeColor=Muted;
+                disclosure=new Button {Name="binding_disclosure",AccessibleName="Inspect bound inputs and safeguards",Text="+ Inspect bound inputs and safeguards",FlatStyle=FlatStyle.Flat,ForeColor=Color.FromArgb(32,60,102),BackColor=Color.White,Height=34,TextAlign=ContentAlignment.MiddleLeft,Margin=new Padding(0,4,0,12)};disclosure.FlatAppearance.BorderSize=0;
+                details=new Panel {Name="bound_inputs",Visible=false,Height=155,Margin=new Padding(0,0,0,16)};
+                var hashes=ReadOnlyText("bound_paths_and_hashes",String.Join("\r\n\r\n",request.Bindings.Select(b=>b.Key+"\r\nSHA-256: "+b.Value)),100,Color.FromArgb(241,243,246),Ink);hashes.Dock=DockStyle.Fill;
+                var safeguards=TextLabel("safeguards","Inputs are rechecked before execution. Thread labels are attribution, not authenticated identity. Feedback never changes the command.",9);safeguards.Dock=DockStyle.Bottom;safeguards.AutoSize=false;safeguards.Height=55;
+                details.Controls.Add(hashes);details.Controls.Add(safeguards);
+                disclosure.Click+=delegate {details.Visible=!details.Visible;disclosure.Text=(details.Visible?"- ":"+ ")+"Inspect bound inputs and safeguards";};
+                body.Controls.AddRange(new Control[]{commandSurface,directory,disclosure,details});
+            }
+            body.Controls.Add(TextLabel("feedback_heading","Optional feedback / returned unchanged to the requesting thread",10));body.Controls.Add(Feedback);
+            Action fit=delegate {
+                int width=Math.Max(160,body.ClientSize.Width-body.Padding.Horizontal-4);
+                foreach(Control item in body.Controls){if(item is Label)item.MaximumSize=new Size(width,0);else item.Width=width;}
+                facts.MinimumSize=new Size(width,0);facts.MaximumSize=new Size(width,0);
+                int half=Math.Max(70,width/2-22);changes.MaximumSize=new Size(half,0);targets.MaximumSize=new Size(half,0);changesTitle.MaximumSize=new Size(half,0);targetsTitle.MaximumSize=new Size(half,0);
+                int rail=Math.Max(80,identity.ClientSize.Width-identity.Padding.Horizontal-4);foreach(Control item in identity.Controls)item.MaximumSize=new Size(rail,0);
+            };
+            body.SizeChanged+=delegate {fit();};identity.SizeChanged+=delegate {fit();};
+            split.Controls.Add(identity,0,0);split.Controls.Add(body,1,0);
+            var footer=new TableLayoutPanel {Name="decision_footer",Dock=DockStyle.Fill,ColumnCount=3,RowCount=1,Padding=new Padding(22,20,22,20),Margin=Padding.Empty,BackColor=Color.FromArgb(250,251,252)};
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,124));footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,184));
+            var cancel=new Button {Name="cancel",Text=preview?"Needs changes":"Cancel",DialogResult=DialogResult.Cancel,Dock=DockStyle.Fill,Margin=new Padding(6,0,6,0),BackColor=Color.White,ForeColor=Ink,FlatStyle=FlatStyle.Flat};cancel.FlatAppearance.BorderColor=Color.FromArgb(173,183,197);
+            var accept=new Button {Name="accept",Text=preview?"Looks good":stop?"Disable broker":"Accept && Execute",DialogResult=DialogResult.OK,Dock=DockStyle.Fill,Margin=new Padding(6,0,0,0),BackColor=Color.FromArgb(32,60,102),ForeColor=Color.White,FlatStyle=FlatStyle.Flat};
+            var decisionNote=TextLabel("decision_note",preview?"Visual preview only.\r\nNo administrator action.":"One request. No automatic approval.\r\nCancel or close to decline.",9);decisionNote.Dock=DockStyle.Fill;
+            footer.Controls.Add(decisionNote,0,0);footer.Controls.Add(cancel,1,0);footer.Controls.Add(accept,2,0);
+            layout.Controls.Add(header,0,0);layout.Controls.Add(split,0,1);layout.Controls.Add(footer,0,2);Controls.Add(layout);
+            Shown+=delegate {fit();};fit();
             CancelButton=cancel; Shown+=delegate { cancel.Focus(); };
+        }
+        public static object VerifyUi(string output) {
+            Directory.CreateDirectory(output);var evidence=new List<object>();
+            foreach(var size in new[]{new Size(940,730),new Size(640,480)})foreach(bool longText in new[]{false,true}) {
+                var original=Broker.ControlRequest();string suffix=longText?String.Concat(Enumerable.Repeat("Long request context with complete values. ",12)):"";
+                var request=new Request(new Dictionary<string,object>{{"schema",1},{"task","Verify administrator identity "+suffix},{"thread_name","Skill Creator "+suffix},{"reason","Read-only token verification. "+suffix},{"changes","None. No settings or files are changed. "+suffix},{"cwd",original.Cwd},{"targets",new object[]{"Current command token "+suffix}},{"command",original.Command.Cast<object>().ToArray()},{"bindings",original.Bindings.ToDictionary(p=>p.Key,p=>(object)p.Value)}});
+                using(var form=new ApprovalForm(request,true)) {
+                    form.StartPosition=FormStartPosition.Manual;form.Location=new Point(-20000,-20000);form.TopMost=false;form.ShowInTaskbar=false;form.ClientSize=size;form.Show();form.PerformLayout();Application.DoEvents();
+                    var cancel=form.Controls.Find("cancel",true).Single();var accept=form.Controls.Find("accept",true).Single();var footer=form.Controls.Find("decision_footer",true).Single();var body=(FlowLayoutPanel)form.Controls.Find("request_content",true).Single();
+                    foreach(var button in new[]{cancel,accept}) {
+                        var bounds=form.RectangleToClient(button.RectangleToScreen(button.ClientRectangle));
+                        if(!form.ClientRectangle.Contains(bounds) || bounds.Height<35 || bounds.Width<100 || !button.Enabled)throw new Exception("Decision button is clipped or unusable");
+                    }
+                    if(form.AcceptButton!=null || form.CancelButton!=cancel || form.ActiveControl!=cancel || body.Contains(footer))throw new Exception("Cancel/default/footer contract failed");
+                    var command=(RichTextBox)form.Controls.Find("exact_command",true).Single();if(command.Text!=request.CommandText || !command.ReadOnly || command.WordWrap || command.DetectUrls)throw new Exception("Exact command display changed");
+                    var details=form.Controls.Find("bound_inputs",true).Single();if(details.Visible)throw new Exception("Details should initially be collapsed");
+                    ((Button)form.Controls.Find("binding_disclosure",true).Single()).PerformClick();Application.DoEvents();if(!details.Visible)throw new Exception("Bound inputs cannot be inspected");
+                    ((Button)form.Controls.Find("binding_disclosure",true).Single()).PerformClick();Application.DoEvents();
+                    string name="operator-"+size.Width+"x"+size.Height+(longText?"-long":"");
+                    using(var bitmap=new Bitmap(form.Width,form.Height)){form.DrawToBitmap(bitmap,new Rectangle(Point.Empty,bitmap.Size));bitmap.Save(Path.Combine(output,name+".png"));}
+                    evidence.Add(new {viewport=new {width=size.Width,height=size.Height},long_content=longText,cancel_default=true,footer_buttons_visible=true,exact_command_preserved=true,disclosure_works=true,content_scrolls=body.VerticalScroll.Visible,thread_name=((Label)form.Controls.Find("thread_name",true).Single()).Text});form.Close();
+                }
+            }
+            var result=new {ok=true,launched=false,renderer="native WinForms measured controls; DrawToBitmap preview",cases=evidence};File.WriteAllText(Path.Combine(output,"ui-verification.json"),Wire.Json().Serialize(result));return result;
         }
     }
 
@@ -521,6 +583,14 @@ namespace DarkaElevation {
         [STAThread] static int Main(string[] args) {
             try {
                 if(args.Length==1 && args[0]=="--self-test") {SelfTest();return 0;}
+                if(args.Length==2 && args[0]=="--verify-ui") {Application.EnableVisualStyles();Console.WriteLine(Wire.Json().Serialize(ApprovalForm.VerifyUi(args[1])));return 0;}
+                if(args.Length==1 && args[0]=="--preview-request") {
+                    var buffer=new char[32001];int used=0,read;
+                    while(used<buffer.Length && (read=Console.In.Read(buffer,used,buffer.Length-used))>0)used+=read;
+                    if(used>32000)throw new InvalidDataException("Preview request exceeds bounded protocol");string text=new string(buffer,0,used);
+                    var request=new Request((Dictionary<string,object>)Wire.Json().DeserializeObject(text));
+                    Application.EnableVisualStyles();using(var form=new ApprovalForm(request,true)){Console.WriteLine(Wire.Json().Serialize(new {ok=true,preview_approved=form.ShowDialog()==DialogResult.OK,feedback=form.Feedback.Text,launched=false}));}return 0;
+                }
                 if(args.Length==1 && args[0]=="--preview") {Application.EnableVisualStyles();using(var form=new ApprovalForm(Broker.ControlRequest(),true)){Console.WriteLine(Wire.Json().Serialize(new {preview_approved=form.ShowDialog()==DialogResult.OK,launched=false}));}return 0;}
                 var identity=WindowsIdentity.GetCurrent();
                 string exe=Process.GetCurrentProcess().MainModule.FileName;
@@ -545,7 +615,7 @@ namespace DarkaElevation {
                 }
                 return 0;
             } catch(Exception error) {
-                if(args.Length==1 && args[0]=="--self-test")Console.Error.WriteLine(error.Message);
+                if((args.Length==1 && (args[0]=="--self-test" || args[0]=="--preview-request")) || (args.Length==2 && args[0]=="--verify-ui"))Console.Error.WriteLine(error.ToString());
                 else MessageBox.Show(error.Message,"Elevation broker stopped safely",MessageBoxButtons.OK,MessageBoxIcon.Error);
                 return 1;
             }

@@ -65,7 +65,7 @@ def install(runtime_root, skill_roots, broker_exe=None, thread_name=None):
             raise RuntimeError("Runtime copy verification failed")
     pending = runtime_root / (uuid.uuid4().hex + ".pending.json")
     try:
-        pending.write_text(json.dumps({"schema": 1, "release": release, "version": "0.2.1"}), encoding="utf-8")
+        pending.write_text(json.dumps({"schema": 1, "release": release, "version": "0.2.2"}), encoding="utf-8")
         os.replace(pending, runtime_root / "active.json")
     finally:
         pending.unlink(missing_ok=True)

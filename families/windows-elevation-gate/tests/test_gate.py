@@ -196,13 +196,13 @@ class ElevationFlowTests(unittest.TestCase):
                 "--reason", "Readability check", "--changes", "None", "--target", "Visual preview",
                 "--cwd", str(self.root), "--", sys.executable, "-c", "print('not executed')"]
         with patch.object(engine, "run", side_effect=AssertionError("Preview attempted execution")):
-            with patch.object(engine, "explain", return_value={"accepted": False, "feedback": "Clearer"}) as dialog:
+            with patch.object(cli.broker, "preview", return_value={"preview_approved": False, "feedback": "Clearer", "launched": False}) as dialog:
                 with contextlib.redirect_stdout(io.StringIO()) as output:
                     self.assertEqual(cli.main(args), 0)
         result = json.loads(output.getvalue())
         self.assertFalse(result["launched"])
         self.assertEqual(result["dialog"]["feedback"], "Clearer")
-        self.assertTrue(dialog.call_args.kwargs["preview"])
+        self.assertEqual(dialog.call_args.args[0]["thread_name"], "Fixture")
         self.assertEqual(self.queue.status()["pending"], 0)
 
     def test_active_owner_cannot_be_recovered(self):
