@@ -1,24 +1,39 @@
 # Windows Elevation Gate
 
 A small stdlib Windows helper for cooperating Codex/Claude tasks. Requests join a
-shared event-driven FIFO queue. A top-most modal explains the exact action and
-returns Accept/Cancel plus optional feedback. Accept opens native UAC; Cancel
-launches nothing. No passwords, policy changes, service or scheduled task.
+shared FIFO approval queue. Native UAC starts a compiled elevated broker once;
+its own top-most dialog explains each exact action and returns Accept/Cancel plus
+feedback. Clients can submit requests but cannot approve them. Cancel launches
+nothing. No passwords, policy changes, service, scheduled task or automatic startup.
 
 ## Install
 
 ```powershell
-python families/windows-elevation-gate/scripts/install.py
+python families/windows-elevation-gate/scripts/build_broker.py --output D:/Temp/<task>/WindowsElevationBroker.exe
+python families/windows-elevation-gate/scripts/install.py --broker-exe D:/Temp/<task>/WindowsElevationBroker.exe --thread-name "Actual conversation title"
 ```
 
-This verifies a content-addressed shared runtime under
+Protected installation uses the existing explained per-action/native-UAC path
+before activating new client files; cancellation preserves the previous activation.
+The broker is installed under `Program Files/Darka.WindowsElevationGate` with
+administrator ownership and non-administrator read/execute-only ACLs. It has no
+Python imports or user-writable code dependencies. The installed .NET Framework
+compiler builds the standalone WinForms executable without downloaded packages.
+The unprivileged client verifies protected installation ACLs/hash and the server's
+actual process identity, not a user-writable active-process hint.
+
+This also verifies a content-addressed shared client runtime under
 `%LOCALAPPDATA%/Tools/windows-elevation-gate` and deploys identical canonical
 `codex/skills/windows-elevation-gate` folders to personal Codex, agents and Claude
 skill roots. No Claude plugin/config changes are necessary. Existing tasks must
 reread the installed instructions. New sessions discover the installed skill.
 
 Read the [skill](codex/skills/windows-elevation-gate/SKILL.md) for exact invocation,
-feedback semantics and interrupted-owner recovery. Use `preview` to inspect a
+feedback semantics and interrupted-owner recovery. Run `broker-start` once, then
+`run` for each action, `status` for the broker queue and `broker-stop` to disable.
+The shield tray icon also provides status and Disable administrator execution.
+Stop cancels pending approvals and drains started commands without killing them.
+Use `preview` to inspect a
 request without a popup or elevation; `status` never grants launch clearance.
 
 `preview --show-dialog` displays a clearly marked non-elevating visual preview.
@@ -30,31 +45,46 @@ long content scrolls at smaller display sizes instead of hiding the actions.
 `run` takes an absolute executable, argument array, working directory, actual
 thread title, specific task, reason, expected changes, explicit targets and
 optional bound input files. No shell expansion or command mutation from feedback.
-Executable and declared input hashes are rechecked after dialog acceptance and
-before elevated execution. Do not put credentials in commands or descriptions.
+The broker independently checks bindings and holds write/delete-excluding input
+and ancestor handles through approval and command completion. Do not put credentials
+in commands or descriptions. This protects declared input bytes, not every runtime
+dependency of an approved command; it is not a sandbox or Windows secure desktop.
 
 ## Queue And Results
 
-`Local\Darka.WindowsElevation.Queue` protects registration metadata;
-`Local\Darka.WindowsElevation.Prompt` covers explanation and UAC. Both are distinct
-from build coordination. FIFO registration uses native ticket events and exact
-PID/start identity, not sleeps, polling, deadlines or stale-file stealing.
+The normal broker owns its FIFO and approval state in memory. Current-account,
+current-session named pipes accept only bounded submit/status/stop JSON, not
+client-supplied consent or arbitrary execution-only operations. Pipe clients get
+data/synchronize rights, not create-instance rights. Protected session PID/start
+records and pipe-server PID checks bind clients to the installed elevated broker.
+`Local\Darka.WindowsElevation.Prompt` serializes dialogs; it is not the Gradle gate.
+Readiness and completion use actual events/processes, not sleeps or kill deadlines.
 
-The prompt slot releases at verified launch, not administrative-job completion.
+The prompt slot releases after its decision, not administrative-job completion.
 The supervisor still waits for its own worker exit and returns bounded output,
-command/worker exit codes, actual elevation evidence and feedback. If concurrent
+command exit code, actual elevation evidence and feedback. `worker_exit_code` is
+null in broker mode because there is no separate per-action elevation worker. If concurrent
 administrative jobs conflict, callers still need their domain-specific resource
 coordination. Nonparticipating elevation launchers are not automatically blocked.
 
-Cancellation returns `user_declined` (CLI exit 3); UAC denial returns `uac_declined`.
-Neither is retried. Dead owners before UAC are reclaimable; ambiguous UAC owner
+Cancellation returns `user_declined` (CLI exit 3); startup UAC denial returns `uac_declined`.
+Neither is retried. Client disconnect before approval cancels the request; response
+loss returns `completion_unverified`, not proof of nonexecution or permission to
+resubmit. Bound output/history and request receipts support diagnosis.
+
+Explicit `run --one-shot` retains the prior per-action popup/UAC path for installation
+or diagnosed recovery; it is never an automatic fallback. `one-shot-status`,
+`recover` and `finalize` inspect that legacy queue. Dead owners before UAC are reclaimable; ambiguous UAC owner
 exit requires explicit user-confirmed recovery. Normal metadata is removed at
 completion; the last 100 compact queue records remain. `finalize --request-id`
 can remove verified finished orphan metadata after supervisor and worker exit.
 Incomplete evidence remains available for diagnosis; never sweep active state.
 
-This is an attribution/coordination aid for trusted same-user agents, NOT a new
-security boundary against malicious modifications or a substitute for native UAC.
+Broker code/ACL protection and broker-owned approval are a privileged authorization
+boundary, not prevention of request submission. Any approved arbitrary command has
+administrator authority and may load its own dependencies. The ordinary desktop
+dialog does not have Windows secure-desktop guarantees. No current application is
+elevated wholesale and Windows security policy remains unchanged.
 
 ## Verify
 

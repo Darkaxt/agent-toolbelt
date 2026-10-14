@@ -10,6 +10,7 @@ if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from agent_toolbelt_windows_elevation_gate import engine
+from agent_toolbelt_windows_elevation_gate import broker
 from agent_toolbelt_windows_elevation_gate.queue import Queue
 
 
@@ -26,7 +27,12 @@ def parser():
         if name == "preview":
             command.add_argument("--show-dialog", action="store_true",
                                  help="Show a non-elevating visual preview; no queue or UAC request")
+        else:
+            command.add_argument("--one-shot", action="store_true", help="Explicit legacy per-action UAC for installation/recovery; never automatic fallback")
     commands.add_parser("status")
+    commands.add_parser("one-shot-status", help="Inspect the legacy per-action UAC queue")
+    for name in ("broker-start", "broker-status", "broker-stop"):
+        commands.add_parser(name)
     finalization = commands.add_parser("finalize")
     finalization.add_argument("--request-id", required=True)
     recovery = commands.add_parser("recover")
@@ -43,8 +49,14 @@ def main(argv=None):
     if args.operation == "worker":
         return engine.worker(args.request, args.sha256)
     try:
-        if args.operation == "status":
+        if args.operation in ("status", "broker-status"):
+            result = broker.status()
+        elif args.operation == "one-shot-status":
             result = Queue().status()
+        elif args.operation == "broker-start":
+            result = broker.start()
+        elif args.operation == "broker-stop":
+            result = broker.stop()
         elif args.operation == "recover":
             result = Queue().recover(args.request_id, args.confirm_old_prompt_settled)
         elif args.operation == "finalize":
@@ -54,10 +66,16 @@ def main(argv=None):
                                      thread_name=args.thread_name, reason=args.reason,
                                      changes=args.changes, targets=args.target, bind_files=args.bind_file)
             result = ({"ok": True, "operation": "preview", "request": request, "launched": False}
-                      if args.operation == "preview" else engine.run(request))
+                      if args.operation == "preview" else engine.run(request) if args.one_shot else broker.run(request))
             if args.operation == "preview" and args.show_dialog:
                 result["dialog"] = engine.explain(request, preview=True)
-    except (OSError, ValueError, RuntimeError) as exc:
+    except broker.CompletionUnknown as exc:
+        result = {"ok": False, "operation": args.operation, "failure_kind": "completion_unverified", "error": str(exc), "receipt": exc.receipt}
+    except broker.BrokerUnavailable as exc:
+        result = {"ok": False, "operation": args.operation, "failure_kind": "broker_unavailable", "error": str(exc), "launched": False}
+    except broker.BrokerStopping as exc:
+        result = {"ok": False, "operation": args.operation, "failure_kind": "broker_stopping", "error": str(exc), "launched": False}
+    except (OSError, ValueError, RuntimeError, EOFError) as exc:
         result = {"ok": False, "operation": args.operation, "failure_kind": "request_failed", "error": str(exc)}
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["ok"] else 3 if result.get("failure_kind") == "user_declined" else 1
