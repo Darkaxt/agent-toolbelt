@@ -98,8 +98,8 @@ class FamilyCLITests(unittest.TestCase):
     def test_elevation_status_is_diagnostic_only(self):
         from unittest.mock import patch
         cli = import_family_cli("windows-elevation-gate")
-        with patch.object(cli, "Queue") as queue_type:
-            queue_type.return_value.status.return_value = {"ok": True, "read_only": True, "pending": 0}
+        with patch.object(cli.broker, "status", return_value={"ok": True, "read_only": True, "pending": 0}), \
+                patch.object(cli.broker, "start", side_effect=AssertionError("Status must not elevate")):
             with io.StringIO() as buffer, redirect_stdout(buffer):
                 code = cli.main(["status"])
                 result = json.loads(buffer.getvalue())

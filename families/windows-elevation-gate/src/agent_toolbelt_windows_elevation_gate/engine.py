@@ -54,7 +54,7 @@ def prepare(command, *, cwd, task, thread_name, reason, changes, targets, bind_f
     for index, value in enumerate(command[1:], 1):
         if value.lower() in ("-file", "-f", "--file") and index + 1 < len(command):
             inputs.append(command[index + 1])
-        elif value.lower().endswith((".ps1", ".py")):
+        elif value.lower().endswith((".ps1", ".py", ".cmd", ".bat")):
             inputs.append(value)
     for value in inputs:
         path = Path(value).expanduser()
@@ -100,7 +100,7 @@ class ElevatedProcess:
             self.n.close(self.handle)
 
 
-def elevate(request_path, digest, host):
+def shell_launch(host, args, *, show_window=False):
     class ShellInfo(ctypes.Structure):
         _fields_ = [("cbSize", w.DWORD), ("fMask", w.ULONG), ("hwnd", w.HWND),
                     ("lpVerb", w.LPCWSTR), ("lpFile", w.LPCWSTR), ("lpParameters", w.LPCWSTR),
@@ -111,12 +111,11 @@ def elevate(request_path, digest, host):
     n = Native()
     shell = ctypes.WinDLL("shell32", use_last_error=True)
     shell.ShellExecuteExW.argtypes, shell.ShellExecuteExW.restype = [ctypes.POINTER(ShellInfo)], w.BOOL
-    cli = Path(__file__).with_name("cli.py").resolve()
-    args = ["-I", "-B", str(cli), "worker", "--request", str(request_path), "--sha256", digest]
     info = ShellInfo()
     info.cbSize, info.fMask = ctypes.sizeof(info), 0x40 | 0x100  # process handle + synchronous launch
     info.lpVerb, info.lpFile = "runas", host
-    info.lpParameters, info.lpDirectory, info.nShow = subprocess.list2cmdline(args), str(cli.parent), 0
+    info.lpParameters, info.lpDirectory = subprocess.list2cmdline(args), str(Path(host).parent)
+    info.nShow = 1 if show_window else 0
     if not shell.ShellExecuteExW(ctypes.byref(info)):
         error = ctypes.get_last_error()
         if error == 1223:
@@ -125,6 +124,11 @@ def elevate(request_path, digest, host):
     if not info.hProcess:
         raise RuntimeError("launch_ambiguous: no supervised worker handle; inspect before recovery")
     return ElevatedProcess(info.hProcess, n)
+
+
+def elevate(request_path, digest, host):
+    cli = Path(__file__).with_name("cli.py").resolve()
+    return shell_launch(host, ["-I", "-B", str(cli), "worker", "--request", str(request_path), "--sha256", digest])
 
 
 def execute(command, cwd):
