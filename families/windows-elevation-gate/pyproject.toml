@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-toolbelt-windows-elevation-gate"
-version = "0.2.1"
+version = "0.2.2"
 description = "Explained, feedback-aware Windows elevation through a session FIFO prompt gate."
 readme = "README.md"
 requires-python = ">=3.11"

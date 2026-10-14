@@ -288,6 +288,19 @@ def start():
         return result
 
 
+def preview(request):
+    _, exe = installation()
+    result = subprocess.run([str(exe), '--preview-request'], input=json.dumps(request),
+                            capture_output=True, text=True,
+                            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    if result.returncode:
+        raise BrokerUnavailable('Native preview failed: ' + result.stderr[-2000:])
+    value = json.loads(result.stdout)
+    if not isinstance(value, dict) or value.get('launched') is not False:
+        raise BrokerUnavailable('Invalid native preview result')
+    return value
+
+
 def run(request):
     return exchange({'op': 'submit', 'request': request})
 

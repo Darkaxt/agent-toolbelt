@@ -3,7 +3,7 @@ name: windows-elevation-gate
 description: Queue Windows administrator actions through an elevated session broker with broker-owned Accept/Cancel and feedback. One native UAC starts the broker; each command requires its own approval. Use for authorized administrator actions across tasks.
 license: MIT
 metadata:
-  version: "0.2.1"
+  version: "0.2.2"
   compatibility: Windows interactive login session, Python 3.11+, protected .NET Framework broker and installed shared client runtime
 ---
 
@@ -111,6 +111,13 @@ labels trustworthy, or turn the popup into Windows' secure desktop. Only approve
 commands and dependency provenance appropriate to the requested administrative scope.
 
 ## Visual Preview
+
+The native operator layout puts the full thread name in a dedicated identity rail,
+the task/reason in the main area, and separates Expected changes from Exact targets.
+The exact command is selectable and scrollable; working directory stays explicit.
+Use **Inspect bound inputs and safeguards** to expand full paths/digests. Details
+being collapsed does not remove input checks. The fixed footer stays outside the
+scrolling content, with initial Cancel focus and no automatic Enter acceptance.
 
 For a visual-only check, add `--show-dialog` to `preview` before `--`. It is
 clearly marked DESIGN PREVIEW, has working Looks Good / Needs Changes buttons and

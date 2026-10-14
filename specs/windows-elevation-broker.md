@@ -7,6 +7,52 @@ requests is intended; execution without broker-owned approval is forbidden.
 
 ## Requirements
 
+### Approved Operator Dialog Redesign
+
+Authorized October 14 after three HTML alternatives and a refinement: implement
+direction B from `D:/Downloads/Public/administrator-broker-design/index.html`.
+HTML is a design reference only, not an elevated renderer or execution endpoint.
+
+- U1: Native left identity rail with prominent complete thread name, distinct
+  task heading, reason and clear privilege/preview state. No repeated text-box cards.
+- U2: Separate Expected changes and Exact targets reading areas, stronger headings,
+  prose outcome and contrasting monospace target values. Preserve full values.
+- U3: Always-visible exact-command section and working directory; selectable,
+  scrollable full command. Bound paths/digests remain inspectable via explicit
+  disclosure; feedback remains a separate editable field returned unchanged.
+- U4: Footer actions outside the content scroll area, legible contrast, keyboard
+  access, Cancel initial focus, close/Escape decline, no Enter-to-auto-accept.
+  Small-window and long-content layouts must remain usable.
+- U5: Preserve B1-B7 and L1-L4: native approval ownership, immutable inputs, FIFO,
+  white shield, no browser engine, policy/provider changes or automatic consent.
+- U6: Verify measured native layout and render, focused regression checks, then
+  protected deployment/installed parity, live human-approved read-only action,
+  and cleanup. Commit and permitted GitHub synchronization are required delivery
+  steps after installed-feature acceptance, not another implementation stage.
+
+| UI Stage | Status | Reconciliation |
+| --- | --- | --- |
+| Approved native operator dialog | COMPLETE | U1-U6 pass: native layout/render, safety regression, protected install, live action and exact cleanup. |
+
+UI evidence (v0.2.2): measured native controls at 940x730 and 640x480, both with
+normal and long content; fixed usable footer buttons, initial Cancel focus, no
+default AcceptButton, exact read-only command text and working disclosure all pass.
+Native desktop capture confirmed rich-text rendering (unlike DrawToBitmap, which
+does not paint the native rich-text content). Preview was acknowledged without
+execution; the installed normal action then completed `whoami /groups` with exit
+0 and High Mandatory Level, request `8dd0e8000256460a975082b53cedd976`.
+
+Protected SHA-256: `80705e245d2c5f5096e0a86c98b753144833d1b9c82fdd7ffcf56ef6ae30139c`.
+Installed client release: `b0a3d8be4f6f3e98`. Codex, agents and Claude skill copies
+match canonical instructions and validate. The installed broker PID 8740 stayed
+outside all jobs and responsive after fixture launcher PID 113520's job closed.
+Focused helper/native and root CLI/isolation/layout verification pass. Final
+scope/refactoring assessment: no required design debt, blockers or deferrals;
+no browser engine, IPC execution or consent semantics were added/changed.
+Task staging was removed through the reviewed cleanup ticket; the design source
+is retained, and its task-owned preview server has exited. Commit and verified
+GitHub synchronization remain delivery obligations, not inferred from this ledger.
+
 - B1: A compiled standalone Windows broker in an administrator-owned/write-protected
   installation replaces per-command elevation for normal run. One native UAC
   starts an interactive-session broker; no service, schedule or application-wide

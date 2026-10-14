@@ -79,8 +79,43 @@ class BrokerProtocolTests(unittest.TestCase):
 
     def test_stop_dialog_describes_internal_control_not_placeholder_command(self):
         source = (Path(__file__).resolve().parents[1] / 'assets/WindowsElevationBroker.cs').read_text()
-        self.assertIn('if(stop) cards.Add(Card("INTERNAL BROKER CONTROL"', source)
+        self.assertIn('TextLabel("internal_control_heading","INTERNAL BROKER CONTROL"', source)
         self.assertIn('No external command is executed.', source)
+
+    def test_operator_dialog_preserves_native_decision_and_evidence(self):
+        source = (Path(__file__).resolve().parents[1] / 'assets/WindowsElevationBroker.cs').read_text()
+        self.assertIn('Name="identity_rail"', source)
+        self.assertIn('TextLabel("thread_name",request.ThreadName,22,true)', source)
+        self.assertIn('TextLabel("changes_heading","Expected changes",12,true)', source)
+        self.assertIn('TextLabel("targets_heading","Exact targets",12,true)', source)
+        self.assertIn('Name="decision_footer"', source)
+        self.assertIn('ReadOnlyText("exact_command",request.CommandText', source)
+        self.assertIn('ReadOnly=true,DetectUrls=false,WordWrap=false', source)
+        self.assertIn('CancelButton=cancel; Shown+=delegate { cancel.Focus(); }', source)
+        self.assertNotIn('new WebBrowser', source)
+        self.assertNotIn('Control Card(', source)
+
+    def test_visual_preview_uses_native_form_without_queue_or_uac(self):
+        from agent_toolbelt_windows_elevation_gate import cli
+        argv=['preview','--show-dialog','--owner-task','Fixture','--thread-name','Fixture',
+              '--reason','Read token','--changes','None','--target','Token','--cwd','D:/Temp',
+              '--','C:/Windows/System32/whoami.exe']
+        with patch.object(cli.engine,'prepare',return_value={'sample':'request'}), \
+             patch.object(cli.engine,'explain',side_effect=AssertionError('Legacy preview')), \
+             patch.object(cli.broker,'run',side_effect=AssertionError('Execution submitted')), \
+             patch.object(cli.broker,'preview',return_value={'launched':False}) as preview, \
+             patch('sys.stdout',io.StringIO()):
+            self.assertEqual(cli.main(argv),0)
+        preview.assert_called_once_with({'sample':'request'})
+
+    def test_native_preview_passes_original_values_on_stdin(self):
+        from agent_toolbelt_windows_elevation_gate import broker
+        request={'thread_name':'A <tag> & B','reason':'Literal text, not HTML'}
+        with patch.object(broker,'installation',return_value=(Path('C:/protected'),Path('C:/protected/broker.exe'))), \
+             patch.object(broker.subprocess,'run',return_value=__import__('subprocess').CompletedProcess([],0,'{"ok":true,"launched":false}','')) as run:
+            self.assertFalse(broker.preview(request)['launched'])
+        self.assertEqual(run.call_args.args[0][-1],'--preview-request')
+        self.assertEqual(json.loads(run.call_args.kwargs['input']),request)
 
     def test_listener_retains_failure_and_restricts_server_instance_creation(self):
         source = (Path(__file__).resolve().parents[1] / 'assets/WindowsElevationBroker.cs').read_text()
