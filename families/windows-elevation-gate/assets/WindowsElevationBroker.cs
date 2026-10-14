@@ -18,6 +18,30 @@ using System.Windows.Forms;
 using Microsoft.Win32.SafeHandles;
 
 namespace DarkaElevation {
+    static class TrayArtwork {
+        [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr icon);
+        public static Icon WhiteShield() {
+            using(var bitmap=new Bitmap(32,32)) {
+                using(var graphics=Graphics.FromImage(bitmap)) {
+                    graphics.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                    using(var shape=new System.Drawing.Drawing2D.GraphicsPath()) {
+                        shape.AddPolygon(new[]{new PointF(16,2),new PointF(28,6),new PointF(27,18),new PointF(23,25),new PointF(16,30),new PointF(9,25),new PointF(5,18),new PointF(4,6)});
+                        graphics.FillPath(Brushes.White,shape);
+                    }
+                    // Transparent quadrant seams keep the small shield recognizable.
+                    graphics.CompositingMode=System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+                    using(var gap=new Pen(Color.Transparent,2)) {
+                        graphics.DrawLine(gap,16,2,16,30);
+                        graphics.DrawLine(gap,5,15,27,15);
+                    }
+                }
+                IntPtr handle=bitmap.GetHicon();
+                try {using(var borrowed=Icon.FromHandle(handle))return (Icon)borrowed.Clone();}
+                finally {DestroyIcon(handle);}
+            }
+        }
+    }
+
     static class SessionLaunch {
         [DllImport("kernel32.dll", SetLastError=true)] static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool member);
         [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
@@ -323,6 +347,7 @@ namespace DarkaElevation {
         readonly object sync=new object(); readonly Queue<Work> queue=new Queue<Work>();
         readonly List<object> history=new List<object>(); readonly Dictionary<string,object> running=new Dictionary<string,object>();
         readonly Form dispatcher=new Form { ShowInTaskbar=false }; readonly NotifyIcon tray;
+        readonly Icon trayIcon=TrayArtwork.WhiteShield();
         readonly EventWaitHandle availability;
         volatile bool stopping; bool showing; int sequence, connections; NamedPipeServerStream listening; Work currentApproval; string listenerError;
         public string PipeName { get { return "Darka.WindowsElevation.Broker."+sid+"."+session; } }
@@ -333,7 +358,7 @@ namespace DarkaElevation {
             availability=new EventWaitHandle(false,EventResetMode.ManualReset,@"Local\"+PipeName+".Available");
             Program.WriteRecord(sid,session,true);
             var menu=new ContextMenuStrip(); menu.Items.Add("Show queue and current tasks",null,delegate { ShowStatus(); }); menu.Items.Add("Disable administrator execution",null,delegate { Stop(); });
-            tray=new NotifyIcon { Icon=SystemIcons.Shield, Text="Administrator broker enabled", ContextMenuStrip=menu, Visible=true };
+            tray=new NotifyIcon { Icon=trayIcon, Text="Administrator broker enabled", ContextMenuStrip=menu, Visible=true };
             tray.DoubleClick+=delegate { ShowStatus(); };
             new Thread(()=> { Listen(ready); }) { IsBackground=true }.Start();
         }
@@ -467,7 +492,7 @@ namespace DarkaElevation {
             foreach(var work in pending) Complete(work,Wire.Failure("broker_stopping","Broker disabled before approval"));
             tray.Text="Administrator broker draining active commands"; FinishStop();
         }
-        void FinishStop() {lock(sync)if(running.Count!=0 || showing)return;tray.Visible=false;tray.Dispose();availability.Dispose();dispatcher.Dispose();ExitThread();}
+        void FinishStop() {lock(sync)if(running.Count!=0 || showing)return;tray.Visible=false;tray.Dispose();trayIcon.Dispose();availability.Dispose();dispatcher.Dispose();ExitThread();}
     }
 
     static class Program {
@@ -519,10 +544,27 @@ namespace DarkaElevation {
                     try {Application.EnableVisualStyles();Application.Run(new Broker(ready));}finally{singleton.ReleaseMutex();}
                 }
                 return 0;
-            } catch(Exception error) {MessageBox.Show(error.Message,"Elevation broker stopped safely",MessageBoxButtons.OK,MessageBoxIcon.Error);return 1;}
+            } catch(Exception error) {
+                if(args.Length==1 && args[0]=="--self-test")Console.Error.WriteLine(error.Message);
+                else MessageBox.Show(error.Message,"Elevation broker stopped safely",MessageBoxButtons.OK,MessageBoxIcon.Error);
+                return 1;
+            }
         }
         static void SelfTest() {
             int checks=0;
+            using(var icon=TrayArtwork.WhiteShield())using(var bitmap=icon.ToBitmap()) {
+                bool opaque=false,transparent=false;
+                for(int y=0;y<bitmap.Height;y++)for(int x=0;x<bitmap.Width;x++) {
+                    var pixel=bitmap.GetPixel(x,y);
+                    if(pixel.A==0)transparent=true;
+                    else {
+                        // Native icon conversion premultiplies antialiased edge pixels.
+                        if(pixel.R!=pixel.G || pixel.G!=pixel.B || (pixel.A==255 && pixel.R!=255))throw new Exception("Tray shield is not monochrome white");
+                        if(pixel.A==255)opaque=true;
+                    }
+                }
+                if(!opaque || !transparent)throw new Exception("Tray shield lacks artwork or transparency");++checks;
+            }
             string userSid=WindowsIdentity.GetCurrent().User.Value;
             var pipeRules=Broker.PipePolicy(userSid).GetAccessRules(true,true,typeof(SecurityIdentifier)).Cast<PipeAccessRule>().ToArray();
             if(!pipeRules.Any(r=>r.IdentityReference.Value=="S-1-5-32-544" && r.AccessControlType==AccessControlType.Allow && r.PipeAccessRights==PipeAccessRights.FullControl))throw new Exception("Elevated listener cannot create subsequent pipe instances");
