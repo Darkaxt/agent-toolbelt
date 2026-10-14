@@ -100,4 +100,3 @@ invent one retrospectively or claim task attribution from a package name alone.
 Report the missing provenance and obtain a separately scoped removal decision
 when the original task evidence cannot establish it. Do not erase an original
 installation or upgrade to make a new baseline possible.
-

@@ -40,12 +40,11 @@ This task does not authorize cleaning a connected device or uninstalling an app.
    device transport, safeguards, tests and guidance. Acceptance: changed/new files,
    device substitution, linked paths, package replacement, tampering and retries
    are exercised; exact reviewed outputs alone are removed.
-2. Delivery (A8): ACTIVE. Run focused family/root checks, structural validation,
+2. Delivery (A8): COMPLETE. Run focused family/root checks, structural validation,
    installer and installed-runtime smoke checks, then commit and sync. No device
    mutation is needed for delivery verification.
 
-Blockers: remote delivery evidence pending in Stage 2.
-Tracked deferrals: none.
+Blockers: none. Tracked deferrals: none.
 
 Stage 1 evidence: focused Android checks passed (20, one POSIX symlink check
 skipped on Windows); real generated shell scripts exercised using Git Bash over
@@ -59,7 +58,7 @@ Stage-closure assessment: the backend reuses existing authenticated state key an
 root coordination; no speculative refactoring or consolidation stage is needed.
 
 Stage 2 evidence: installer activated v0.6.0 in runtime release
-743e97a77886bd26a824a799efe7e286. Codex, agents and Claude installed skill files
+626f9572619be3a03bc0fab21bd17fe8. Codex, agents and Claude installed skill files
 and all active runtime Python files match the repository byte-for-byte. All three
 installed skills passed structural validation and expose the new package baseline
 flags. Installed Claude wrapper rejects a protected Android root before any device
@@ -67,7 +66,15 @@ access. All 20 Android checks were executed against the activated runtime (one
 POSIX symlink case skipped on Windows). Existing legacy transactions were retained
 by the installer with their previous recovery runtime. No deployment residuals.
 Source diff/whitespace checks passed; scoped credential-pattern scan had no hits.
-Commit and remote synchronization remain the final delivery gate.
+Implementation commit c7f3dd7 was pushed and independently read back from
+origin/codex/android-cleanup-tickets. GitHub main requires pull-request integration;
+do not treat the rejected direct main push as synchronization to main. Final
+publication must merge the delivery branch and verify the remote main ancestry.
+Two reference-file EOF whitespace warnings found at staging were corrected and
+the installed bundles refreshed; all three installed structural/parity checks and
+the current active runtime hashes were rechecked. No implementation changes
+invalidated the inspected behavioral evidence. Final reconciliation covers A1-A8
+with no required deferrals; the final user report must state actual PR/main status.
 
 ## Discovery
 
