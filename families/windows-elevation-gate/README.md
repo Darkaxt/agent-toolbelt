@@ -41,6 +41,8 @@ Read the [skill](codex/skills/windows-elevation-gate/SKILL.md) for exact invocat
 feedback semantics and interrupted-owner recovery. Run `broker-start` once, then
 `run` for each action, `status` for the broker queue and `broker-stop` to disable.
 The shield tray icon also provides status and Disable administrator execution.
+The tray uses a local monochrome white, transparent Defender-style shield, not
+the multicolor default UAC icon or Windows Security branding/status.
 Stop cancels pending approvals and drains started commands without killing them.
 Use `preview` to inspect a
 request without a popup or elevation; `status` never grants launch clearance.
