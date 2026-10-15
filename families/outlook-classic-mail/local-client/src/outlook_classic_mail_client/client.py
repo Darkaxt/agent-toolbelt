@@ -2847,9 +2847,19 @@ def send_using_account_smtp(item: Any) -> str:
 def set_send_using_account(item: Any, account_info: dict[str, Any], warnings: list[str], *,
                            diagnostics: dict[str, Any] | None = None) -> str:
     expected = str(account_info.get("smtp_address") or "").strip().lower()
-    details = {"write_succeeded": False, "errors": []}
+    details = {"write_succeeded": False, "method": "attribute_set", "errors": []}
     try:
-        item.SendUsingAccount = account_info["account"]
+        ole_object = getattr(item, "_oleobj_", None)
+        if ole_object is not None:
+            import pythoncom
+
+            details["method"] = "dispatch_property_putref"
+            member = ole_object.GetIDsOfNames("SendUsingAccount")
+            # Outlook's Account is an object reference; PROPERTYPUT can silently
+            # leave it unset even when Python attribute assignment succeeds.
+            ole_object.Invoke(member, 0, pythoncom.DISPATCH_PROPERTYPUTREF, 0, account_info["account"])
+        else:
+            item.SendUsingAccount = account_info["account"]
         details["write_succeeded"] = True
     except Exception as exc:
         details["errors"].append({"stage": "account_write", **exception_diagnostics(exc)})
@@ -2916,6 +2926,7 @@ def record_sender_diagnostics(result: dict[str, Any], diagnostics: dict[str, Any
         "status": sender.get("status"), "verified": sender.get("verified"),
         "source": sender.get("source"), "reopened": sender.get("reopened"),
         "assignment_write_succeeded": assignment.get("write_succeeded"), "errors": errors,
+        "assignment_method": assignment.get("method"),
     }
     try:
         write_diagnostics_event(finish_client_diagnostics(diagnostics), include_success=True)

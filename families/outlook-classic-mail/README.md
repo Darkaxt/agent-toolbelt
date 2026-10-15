@@ -157,6 +157,11 @@ a GUI/COM workaround. `diagnostics-log` captures sender warnings without bodies,
 account values or message IDs. A log-write error cannot turn a saved draft into
 a failed creation result. `read-message` exposes draft sender observations without
 inventing an expected account, and edits preserve the previously observed sender.
+The client assigns the selected Outlook Account with COM object-reference
+semantics (`DISPATCH_PROPERTYPUTREF`), resolving the property by name. Ordinary
+Python property assignment can silently leave the account unset. Inspect
+`sender_verification.assignment.method` alongside saved readback; assignment
+success alone is not proof of persistence.
 No server-sync or send-authority guarantee is implied.
 Generic `apply-action --action create-draft` is for standalone
 new drafts only; it also creates in the selected account's Drafts folder but has

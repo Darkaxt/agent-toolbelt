@@ -6,6 +6,11 @@ paths reopen the saved EntryID/store and report
 `verified`, `source`, `reopened`, `errors` and assignment diagnostics. A mismatch,
 unset/empty account, COM read failure or reopen failure never reports verified
 success. `created: true` still means saved, not sender-safe or ready to send.
+Actual Outlook objects use COM `DISPATCH_PROPERTYPUTREF` to assign the Account
+reference, resolving `SendUsingAccount` by name. Ordinary property assignment can
+silently leave this property unset. Assignment diagnostics include `method`;
+a reference-assignment error is retained without reverting to the ineffective
+value setter. Persisted readback remains mandatory regardless of assignment method.
 Exact Drafts-folder reads expose `draft_sender` observations (`verified: null`
 without an expected account). Edits compare saved readback with the original
 observed sender, without choosing a new account from the store. Sender warnings

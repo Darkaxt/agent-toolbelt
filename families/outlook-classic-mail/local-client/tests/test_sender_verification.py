@@ -9,6 +9,30 @@ from outlook_classic_mail_client import client
 from tests.test_client import FakeReply, make_session
 
 
+class ReferenceOnlyDraft:
+    """Model Outlook accepting PROPERTYPUT without assigning an Account reference."""
+
+    def __init__(self):
+        self.account = None
+        self.attribute_writes = 0
+        self._oleobj_ = SimpleNamespace(
+            GetIDsOfNames=Mock(return_value=64209), Invoke=Mock(side_effect=self.put_reference)
+        )
+
+    @property
+    def SendUsingAccount(self):
+        return self.account
+
+    @SendUsingAccount.setter
+    def SendUsingAccount(self, account):
+        self.attribute_writes += 1
+
+    def put_reference(self, member, locale, flags, result_wanted, account):
+        if flags != 8:
+            raise ValueError("Account requires reference assignment")
+        self.account = account
+
+
 class SenderVerificationTests(unittest.TestCase):
     def setUp(self):
         self.session = make_session()
@@ -82,6 +106,42 @@ class SenderVerificationTests(unittest.TestCase):
         self.assertNotIn("verified", details["readback"])
         self.assertEqual(details["readback"]["source"], "assignment_readback")
         self.assertTrue(details["readback"]["matches_requested"])
+
+    def test_com_sender_assignment_uses_property_reference_and_resolved_member(self):
+        draft = ReferenceOnlyDraft()
+        details, warnings = {}, []
+        with patch.dict(sys.modules, {"pythoncom": SimpleNamespace(DISPATCH_PROPERTYPUTREF=8)}):
+            actual = client.set_send_using_account(draft, self.account, warnings, diagnostics=details)
+        self.assertEqual(actual, "demo@example.com")
+        self.assertEqual(draft.attribute_writes, 0)
+        draft._oleobj_.GetIDsOfNames.assert_called_once_with("SendUsingAccount")
+        draft._oleobj_.Invoke.assert_called_once_with(64209, 0, 8, 0, self.account["account"])
+        self.assertEqual(details["method"], "dispatch_property_putref")
+        self.assertTrue(details["readback"]["matches_requested"])
+        self.assertEqual(warnings, [])
+
+    def test_com_reference_failure_is_reported_without_attribute_fallback(self):
+        draft = ReferenceOnlyDraft()
+        draft._oleobj_.Invoke.side_effect = RuntimeError("Denied for private@example.com")
+        details, warnings = {}, []
+        with patch.dict(sys.modules, {"pythoncom": SimpleNamespace(DISPATCH_PROPERTYPUTREF=8)}):
+            actual = client.set_send_using_account(draft, self.account, warnings, diagnostics=details)
+        self.assertEqual(actual, "")
+        self.assertEqual(draft.attribute_writes, 0)
+        self.assertFalse(details["write_succeeded"])
+        self.assertEqual(details["errors"][0]["stage"], "account_write")
+        self.assertNotIn("private@example.com", str(details))
+        self.assertIn("send_using_account_unset", warnings)
+
+    def test_com_member_resolution_failure_does_not_guess_dispatch_id(self):
+        draft = ReferenceOnlyDraft()
+        draft._oleobj_.GetIDsOfNames.side_effect = RuntimeError("Unknown member")
+        details = {}
+        with patch.dict(sys.modules, {"pythoncom": SimpleNamespace(DISPATCH_PROPERTYPUTREF=8)}):
+            client.set_send_using_account(draft, self.account, [], diagnostics=details)
+        draft._oleobj_.Invoke.assert_not_called()
+        self.assertEqual(draft.attribute_writes, 0)
+        self.assertFalse(details["write_succeeded"])
 
     def test_missing_saved_identity_fails_closed_without_reopening(self):
         result = client.verify_saved_draft_sender(self.session, SimpleNamespace(EntryID=None), self.account)
