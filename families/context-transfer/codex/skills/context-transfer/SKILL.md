@@ -1,10 +1,10 @@
 ---
 name: context-transfer
-description: Transfer one Codex chat or consolidate several selected chats about one activity into an independent destination, with traceable context, verified rollout/database recovery archives and separately authorized retirement. Also use to restore an offloaded task.
+description: Take over one Codex chat or consolidate selected chats into an independent sole active owner, with traceable context, verified recovery and original-source retirement. Also use for explicitly preservation-only transfers or restoring an offloaded task.
 license: MIT
 metadata:
   compatibility: Codex only. Requires local Codex state and rollout access, 7-Zip, and a non-C recovery drive.
-  version: "0.3.0"
+  version: "0.3.1"
 ---
 
 # Context Transfer
@@ -24,13 +24,46 @@ that should become one working context, read
 It coordinates the same per-source commands with a shared handoff and a complete
 group acceptance gate; there is no aggregate CLI command or live database merge.
 The destination must be independent of every selected tree and inherited owner.
-Neither mode authorizes retiring a chat or deleting retained recovery archives
-merely because its context has been accepted.
+Use the completion contract below for both modes. A takeover request already
+authorizes normal retirement of its selected originals; archive acceptance is a
+safety gate within that workflow, not the point to ask for retirement again.
 
 For either mode, read [Schedule Reconciliation](references/schedules.md) when
 inventorying the sources. Account for associated automations before acceptance
 and resolve any source-target dependency before retirement. Editing this skill
-or accepting a handoff does not itself authorize changing live schedules.
+alone authorizes no live schedule change. A source-specific takeover does cover
+necessary same-scope schedule rebinding as described in that reference.
+
+## Takeover Completion Contract
+
+"Take over", "migrate/offload this chat" and "consolidate these selected chats"
+mean transfer responsibility to the independent destination as the sole active
+owner. They include preserving and accepting usable context, reconciling
+associated schedules, archiving the selected originals and reclaiming their exact
+reviewed local rollout files after verified recovery. Treat the user's selected
+takeover request as source-specific retirement authority; do not require them to
+repeat "retire" or "delete" to complete the normal archive/offload endpoint.
+
+Do not stop after creating an E: archive, report preservation as completed
+takeover, or leave the selected originals active as co-owners. If permanent
+conversation/database deletion was also requested, finish it through the
+installed thread-cleanup skill within the same workflow; do not request another
+approval for that already-covered scope or offload the same files twice.
+
+Only an explicit restriction such as "copy context only", "preserve only" or
+"keep the original chat" changes this default. Record that restricted endpoint
+and do not describe it as full takeover. Generic backup/export requests alone
+do not authorize source retirement. Acceptance records and quoted recommendations
+are not new user consent, and discovering an ancestor/dependent is not selection.
+Retained E: recovery archives remain intact unless their removal is separately
+authorized; taking responsibility is distinct from erasing recovery evidence.
+
+Keep the existing inactivity, lineage, schedule, archive, acceptance and reviewed
+deletion gates. If one cannot pass, name the exact blocked requirement and next
+action and report takeover as incomplete. Do not invent a new authorization
+blocker when the selected takeover request already supplies it. For the normal
+endpoint, verify original archived state and zero manifest-bound rollout residuals;
+for requested permanent deletion also verify application/database/recall residuals.
 
 ## Non-Negotiable Boundaries
 
@@ -43,7 +76,9 @@ or accepting a handoff does not itself authorize changing live schedules.
 - Do not load or paste the complete rollout tree into model context.
 - Do not create a permanent second full-text rollout index.
 - Do not archive or delete a live source until handoff acceptance and archive verification pass.
-- Require explicit live-retirement authorization before invoking set_thread_archived, issuing a deletion ticket, or applying deletion to a real source.
+- Require source-specific user authority before live retirement. A selected
+  takeover request is explicit live-retirement authorization for its normal
+  archive/offload endpoint; record and reuse it rather than asking again.
 - Never delete by wildcard, age, title, cwd, repository, broad directory, or inferred ownership.
 - Do not include source repositories, worktrees, shared caches, cookies, or unrelated Codex state in the archive.
 
@@ -185,11 +220,13 @@ not a full backup of unrelated conversations or a permanent second search index.
 
 ## Phase 5: Archive And Retire
 
-This phase always requires explicit live-retirement authorization for the selected real task.
+This phase is required for a selected takeover unless the user explicitly limited
+the operation to preservation. Reuse the takeover request's live-retirement
+authorization; do not introduce a second approval checkpoint here.
 
 Before archiving/retiring the source, reconcile its schedule ledger. An unresolved
 automation that still targets or needs the source blocks that source's retirement.
-Verify any separately authorized schedule change through supported tools before
+Verify the covered schedule rebinding or any additionally authorized change before
 deletion; keep independent schedules intact and do not silently duplicate them.
 
 1. Use set_thread_archived on the source root.
@@ -202,8 +239,10 @@ deletion; keep independent schedules intact and do not silently duplicate them.
 
 Do not claim disk reclamation from Codex archival alone.
 Rollout offload does not delete database history or reclaim its SQLite pages.
-Use the separate explicitly authorized `thread-cleanup` workflow for permanent
-application deletion; never label rollout retirement as total thread removal.
+When permanent application deletion is in the requested scope, use the installed
+`thread-cleanup` workflow with that existing authority instead of doing duplicate
+rollout offload. Its reviewed plan/hash is a technical gate, not another user
+approval. Never label rollout retirement as total thread removal.
 
 ## Restore
 

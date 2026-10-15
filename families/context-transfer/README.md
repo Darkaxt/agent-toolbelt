@@ -9,7 +9,12 @@ requirements, shared handoff and complete group acceptance. It coordinates the
 existing single-source CLI with source-specific acceptance files; it does not
 merge live databases or add an aggregate CLI command. Shared ancestors retain
 verified recovery coverage and unselected dependents remain protected. Archive
-expiry and retirement still require their own explicit authority.
+expiry still requires separate authority. Skill version 0.3.1 makes takeover's
+endpoint explicit: the selected request authorizes verified context acceptance,
+necessary same-scope schedule rebinding, original archival and exact rollout
+offload. Do not stop at preservation or ask for retirement again. Only an explicit
+preservation-only restriction keeps the originals as working chats; requested
+permanent database/conversation deletion uses thread-cleanup in that same workflow.
 
 Both transfer modes now reconcile associated schedules through the skill's
 `references/schedules.md`. Definitions and exact source bindings are preserved

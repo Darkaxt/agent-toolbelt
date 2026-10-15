@@ -6,10 +6,18 @@ The user authorized improving context-transfer so several selected chats with
 different purposes within one activity can become one independent working chat.
 This is a skill workflow extension using the existing single-source CLI; it does
 not merge live databases or create a new migration subsystem. Existing permission,
-activity, preservation and retirement gates remain unchanged. No live migration,
+activity and evidence gates remain unchanged; the later user clarification below
+changes how takeover supplies retirement authority. No live migration,
 thread deletion, archive expiry or live schedule change is part of implementing
 this update. The user's subsequent explicit answer authorizes adding schedule
 inventory/reconciliation guidance to this skill update for both transfer modes.
+The user's subsequent correction explicitly defines takeover as exclusive
+responsibility transfer: leaving the original active is incomplete. A selected
+source-specific takeover supplies normal archive/offload retirement authority;
+preservation-only requires an explicit restriction. Necessary same-scope schedule
+rebinding follows responsibility transfer. Permanent application/history purge
+continues to follow the requested deletion scope, and recovery archive expiry
+remains separate. This changes the earlier separately-authorized default wording.
 Skill deployment and repository synchronization follow this repository's existing
 delivery path. No new third-party skill is installed.
 
@@ -41,7 +49,8 @@ delivery path. No new third-party skill is installed.
   authority, leaf-first with fresh status and re-planning after each deletion.
   Preservation-only archives never become deletion tickets. Partial failure
   leaves a precise resumable ledger and protects every not-yet-eligible source;
-  migration or skill-edit authority alone cannot authorize deletion/expiry.
+  a selected takeover request authorizes its normal source archive/offload;
+  skill editing alone authorizes no live retirement or archive expiry.
 - A6: Demonstrate the documented workflow on isolated real archive/database
   fixtures with two differently purposed roots, a child and shared ancestor,
   while preserving an unselected dependent. Exercise common-handoff acceptance,
@@ -56,25 +65,40 @@ delivery path. No new third-party skill is installed.
   status and notification policy with an explicit keep/retarget/pause/delete
   disposition and authority. Preserve private schedule evidence in the handoff's
   recovery records. Unresolved source-target dependencies block retirement.
-  Use supported automation tooling for separately authorized changes and verify
+  Use supported automation tooling for covered ownership rebinding and any
+  additionally authorized changes, and verify
   read-back; skill editing itself changes no schedules, target bindings or prompts.
+- A8: Takeover means one active owner. For selected sources, continue through
+  verified recovery/acceptance, necessary same-scope schedule rebinding, original
+  archival and exact rollout offload without another retirement-approval request.
+  A verified E: archive alone is preservation, not completed takeover. Explicit
+  copy/preservation-only requests may leave sources intact. Requested permanent
+  deletion uses thread-cleanup within the same authorized workflow. Dependencies,
+  activity, archive/acceptance and exact-file gates remain binding; a genuine
+  blocker leaves takeover incomplete. Do not broaden to unselected chats or purge
+  recovery archives. Apply this endpoint consistently across single and aggregate
+  guidance, schedule authority, discovery metadata and README.
 
 ## Execution and reconciliation
 
 Single implementation stage: Aggregate migration skill upgrade — COMPLETE.
-Mapped requirements: A1–A7. Stage acceptance covers the integrated instructions,
+The user's takeover-completion correction (A8) is implemented and verified;
+prior aggregate workflow evidence remains applicable to unchanged runtime and
+fixture code.
+Mapped requirements: A1–A8. Stage acceptance covers the integrated instructions,
 fixture workflow, focused verification, installed parity and scratch cleanup.
 Commit and remote synchronization are the required final delivery actions after
 verified stage closure; their exact result is reported at delivery.
 
 Reconciliation:
-- A1: v0.3.0 entrypoint/UI and family/root discovery documentation expose the
+- A1: v0.3 entrypoint/UI and family/root discovery documentation expose the
   aggregate mode; detailed procedures are linked references. Single-source CLI
   behavior and package source are unchanged.
 - A2–A5: Aggregate guidance specifies exact group selection, owner overlap,
   independent destination, requirement/provenance mapping, semantic conflict
   resolution, one ACTIVE stage, common handoff hash, every-source acceptance,
-  archive/database coverage and separately authorized dependency-ordered retirement.
+  archive/database coverage and dependency-ordered retirement under the actual
+  source-specific request, including the later A8 takeover interpretation.
   No acceptance/deletion claim follows solely from CLI success.
 - A6: The real CLI fixture passed against both the repository wrapper and the
   deployed Codex wrapper/selected private runtime. It preserves two source
@@ -96,10 +120,25 @@ Reconciliation:
   or live retargeting represented as tested. A bounded metadata check found no
   direct Codex automation targets for the three previously retired source IDs;
   this was not a claim about every scheduler/contextual reference.
+- A8: v0.3.1 completion contract explicitly reuses a selected takeover request
+  as normal archival/offload authority, requires one active owner and prohibits
+  stopping at E: preservation. Single/aggregate, schedule and discovery guidance
+  agree. Necessary same-scope schedule rebinding is covered by takeover; permanent
+  history purge follows the requested deletion scope and recovery expiry remains
+  separate. Scenario review covered ordinary takeover without repeated consent,
+  explicit preservation-only restriction, takeover plus permanent deletion,
+  blocked unselected dependencies and unchanged-scope heartbeat rebinding.
+  Focused handoff/skill/retirement checks passed. Both installed bundles match the
+  revised source, official validators and reference resolution pass, and the
+  updated installed instructions were reread. No real source chat or schedule
+  was changed by this correction.
 
 Scratch cleanup completed through reviewed transactional-cleanup; the exact
 task-owned scratch root is absent. Retained source and installed skills are
-intentional outputs. No blockers or required deferrals remain in the stage.
+intentional outputs. The former v0.3.0 completion/authorization interpretation
+defect is resolved across the source and installed guidance. Correction scratch
+cleanup also completed through a reviewed transaction; its exact root is absent.
+No advancement blockers or required deferrals remain.
 Stage/final refactoring assessment: existing single-source commands already
 support the verified workflow; a new multi-root database subsystem would add
 unnecessary machinery. No required consolidation/refactoring was identified.

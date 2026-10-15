@@ -30,7 +30,7 @@ Maintain one owner map alongside the source map:
 
 | Map | Required information |
 | --- | --- |
-| Selected source | Exact ID, former purpose, inspected manifest/hash, evidence/catalog references, remaining objectives and retirement authority |
+| Selected source | Exact ID, former purpose, inspected manifest/hash, evidence/catalog references, remaining objectives, takeover authority and any explicit preservation-only restriction |
 | History owner | Exact ID, sources relying on it, all segment identities/hashes, database table/ID scope, verified archive and receipt references |
 | Protected dependent | Exact unselected ID and which owner it still needs; unknown activity/lineage remains unresolved |
 
@@ -164,9 +164,13 @@ and archive handoff bindings before retirement; do not mix hashes from revisions
 
 ## Retire Only Eligible Selected Chats
 
-Require complete group acceptance before starting group retirement. Acceptance
-does not grant deletion authority; reuse existing source-specific user authority
-and never extend it to a newly discovered ancestor, child or unselected dependent.
+Require complete group acceptance before starting group retirement, then continue
+until the selected originals are retired and the destination is the sole active
+owner. The request to take over/consolidate the selected sources already supplies
+their normal archive/offload authority under SKILL.md's completion contract.
+Do not stop at the archive or demand a second retirement instruction. Only an
+explicit preservation-only restriction changes that endpoint. Never extend the
+selected source set to a newly discovered ancestor, child or unselected dependent.
 Use SKILL.md's archive/ticket lifecycle for rollout offload, or thread-cleanup's
 supported application deletion when permanent conversation retirement is requested.
 Do not perform both as duplicate removal or treat rollout offload as database purge.
@@ -184,7 +188,9 @@ remaining dependency plan. On partial failure, preserve completed receipts and
 the precise remaining source IDs, blocker and next action. Do not rerun completed
 deletions, start a replacement operation while the original runs, or label the
 whole group retired while required selected sources remain. Group handoff
-acceptance and retirement completion are separate recorded outcomes.
+acceptance and retirement completion are separate verification milestones within
+the same takeover. Report full takeover complete only after both have passed;
+an accepted handoff with unresolved retirement is still an incomplete takeover.
 
 Retained recovery archives and exports remain governed by their explicit retention
 authority. This mode adds no age-based purge, schedule or automatic archive expiry.

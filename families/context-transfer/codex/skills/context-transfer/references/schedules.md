@@ -56,12 +56,19 @@ Assign every associated automation one explicit disposition:
 | Delete | Exact automation retirement is authorized, its removal is verified, and no owned execution still needs the source |
 
 Record the user instruction providing authority and the concrete intended result.
-Thread-context acceptance, source deletion authority or a request to improve this
-skill does not automatically authorize schedule creation, retargeting, disabling,
-merging or deletion. Reuse any existing applicable authorization. When a necessary
-schedule change lacks authority, prepare the exact reviewed change first and ask
-only for that missing decision; retain the source until resolved. Archiving the
-chat is not a substitute for reconciling the job.
+A selected takeover includes necessary rebinding of an existing source-targeted
+automation to the independent destination for the same activity, preserving its
+timing, task scope, status and notification settings. Routine target/reference
+updates that preserve that meaning are part of responsibility transfer, not a
+new approval checkpoint. Acceptance alone or editing this skill is not authority
+to perform live changes. Reuse the actual takeover instruction in the ledger.
+
+Creating, disabling, merging or deleting jobs, changing their purpose/timing or
+altering unrelated fields still needs applicable authority. When such an additional
+decision is essential, prepare the exact reviewed change first and ask only for
+that missing decision; retain the source until resolved. Unsupported ordinary
+retargeting is a technical blocker, not missing user approval or permission to
+rewrite storage. Archiving the chat cannot replace schedule reconciliation.
 
 Several chats may refer to one automation: keep one identity record with every
 source link. Several automations may have different responsibilities after their

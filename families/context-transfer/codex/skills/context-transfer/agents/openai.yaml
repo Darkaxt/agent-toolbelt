@@ -1,6 +1,6 @@
 interface:
   display_name: "Context Transfer"
-  short_description: "Transfer or consolidate Codex chats with verified recovery."
-  default_prompt: "Use $context-transfer from an independent destination to transfer one chat or consolidate selected chats about one activity into a traceable shared handoff, preserve their rollout/database evidence, and retire only explicitly authorized sources after complete acceptance."
+  short_description: "Take over Codex chats with verified recovery and retirement."
+  default_prompt: "Use $context-transfer to take over the selected chats in an independent sole active owner: preserve and accept their context, reconcile schedules, then retire the originals after verification unless I explicitly request preservation only."
 policy:
   allow_implicit_invocation: true
