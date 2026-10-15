@@ -25,7 +25,7 @@ Each runtime family ships its own self-contained local marketplace with one plug
 
 - Specification-Gated Implementation: `families/spec-gated-implementation/codex/skills/spec-gated-implementation`
 - D-Temp Maintenance: `families/d-temp-maintenance/codex/skills/d-temp-maintenance`; use the identical canonical skill with the installed transactional-cleanup helper.
-- Approach Recovery Ledger: `families/approach-recovery-ledger/codex/skills/approach-recovery-ledger`; identical self-contained Python bundle, not a marketplace plugin. v0.1.0 remains source-only pending recovery integration.
+- Approach Recovery Ledger: `families/approach-recovery-ledger/codex/skills/approach-recovery-ledger`; copy the identical self-contained Python bundle to the personal Claude skill root, not a marketplace plugin. Installation does not connect a live recovery controller.
 
 ## Install flow
 
