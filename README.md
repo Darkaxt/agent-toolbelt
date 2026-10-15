@@ -29,6 +29,7 @@ Start by choosing the one family you actually need:
 | Skills.sh Scout | public skill alternative discovery before creating or expanding skills | `families/skills-sh-scout` | `agent-toolbelt-skills-sh-scout` |
 | Specification-Gated Implementation | staged implementation with repeated specification reconciliation and zero unresolved deferrals at completion | `families/spec-gated-implementation` | - |
 | Operational Recordkeeping | event-scoped reconciliation of existing bills, correspondence, decisions and purchases | `families/operational-recordkeeping` | bundled Python helper |
+| Approach Recovery Ledger | shared dated execution plans, interruption evidence and preserved acceptance criteria | `families/approach-recovery-ledger` | bundled Python helper |
 
 ## Install skills
 
@@ -65,6 +66,7 @@ Public skill names:
 - `skills-sh-scout`
 - `spec-gated-implementation`
 - `operational-recordkeeping`
+- `approach-recovery-ledger`
 
 Read [Publishing and installing from skills.sh](docs/skills-sh.md) before installing account-backed or local-machine skills. Several skills require Windows desktop apps, local CLIs, or explicit user confirmation before visible actions.
 

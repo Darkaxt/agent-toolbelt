@@ -28,6 +28,7 @@ Each runtime family ships its own Codex skill bundle. Instruction-only skills us
 - AliExpress CLI: `families/aliexpress-cli/codex/skills/aliexpress-cli`
 - Specification-Gated Implementation: `families/spec-gated-implementation/codex/skills/spec-gated-implementation`
 - D-Temp Maintenance: `families/d-temp-maintenance/codex/skills/d-temp-maintenance`; copy the same canonical folder to Codex, agents or Claude personal roots. Uses installed transactional-cleanup, not a new runtime.
+- Approach Recovery Ledger: `families/approach-recovery-ledger/codex/skills/approach-recovery-ledger`; self-contained cross-agent bundle with a Python helper. v0.1.0 is source-only pending recovery integration; no active installation was performed.
 
 ## Install flow
 

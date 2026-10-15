@@ -6,6 +6,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 EXPECTED_FAMILIES = {
+    "approach-recovery-ledger": {
+        "runtime": False,
+        "has_claude": False,
+    },
     "ui-diagnostics-first": {
         "runtime": False,
         "has_claude": False,

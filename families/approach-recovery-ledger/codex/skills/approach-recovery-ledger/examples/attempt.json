@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "attempt_id": "fictional-parser-reference-001",
+  "thread_id": "fictional-thread-alpha",
+  "attempted_at": "2026-10-14T10:00:00Z",
+  "attempt_time_source": "event",
+  "interrupted_at": "2026-10-14T10:02:00Z",
+  "context": {
+    "client": "codex",
+    "model": "example-model",
+    "cyber_access_program": "unknown",
+    "raw_cyber_access_program": null,
+    "program_source": "unknown",
+    "program_evidence": null
+  },
+  "plan": {
+    "objective": "Validate parser behavior against a local reference fixture",
+    "scope": "Fictional parser project, local fixture comparison only",
+    "method": "Read generated records and compare their fields with the reference fixture",
+    "steps": ["Read the generated records", "Compare all required reference fields", "Record the comparison result"],
+    "intended_next_action": "Compare the reference fields after the successful read",
+    "acceptance_criteria": ["generated records read", "reference fields match"]
+  },
+  "execution": {
+    "tool_outcome": "completed",
+    "summary": "The read completed; subsequent model generation was interrupted before comparison",
+    "evidence": ["fictional-evidence://alpha/tool-read", "fictional-evidence://alpha/interruption"]
+  },
+  "outcome": "interrupted",
+  "interruption": {
+    "kind": "unknown",
+    "code": null,
+    "message": "Fictional interruption fixture; not an actual rejection",
+    "cause_confidence": "unknown",
+    "cause": null
+  },
+  "satisfied_criteria": ["generated records read"],
+  "outstanding_criteria": ["reference fields match"],
+  "lesson": "The successful read does not prove the unfinished comparison, and the interruption does not establish a rejected tool call",
+  "applies_when": "A model response is interrupted after a completed read-only tool call",
+  "next_decision": {
+    "action": "pause",
+    "rationale": "No independently justified alternative has been established in this fictional fixture",
+    "next_step": "Retain the comparison criterion and review the interruption evidence"
+  }
+}
