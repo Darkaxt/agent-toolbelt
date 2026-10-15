@@ -8,6 +8,8 @@ from pathlib import Path
 import sqlite3
 import subprocess
 
+from .rollout_io import open_rollout, resolve_rollout
+
 
 DATABASES = ("state_5.sqlite", "thread_history_1.sqlite", "goals_1.sqlite",
              "queue_1.sqlite", "memories_1.sqlite")
@@ -21,17 +23,19 @@ def fork_references(home, ids):
         return result
     with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
         for tid, rollout in conn.execute("SELECT id,rollout_path FROM threads"):
-            p = Path(rollout)
-            if not p.is_file() or p.suffix == ".zst":
+            p = resolve_rollout(rollout)
+            if not p.is_file():
                 continue
             try:
-                with p.open("rb") as stream:
+                with open_rollout(p) as stream:
                     meta = json.loads(stream.readline(65536)).get("payload", {})
                 source = meta.get("forked_from_id")
                 if source in ids and tid not in ids:
                     result.append({"source_thread_id": source, "dependent_thread_id": tid,
                                    "fork_boundary": meta.get("forked_from_ordinal_exclusive")})
             except (OSError, ValueError):
+                if p.name.endswith('.jsonl.zst'):
+                    raise
                 continue
     return result
 
@@ -42,12 +46,17 @@ def history_ancestors(home, thread_id):
     with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
         while True:
             row = conn.execute("SELECT rollout_path FROM threads WHERE id=?", (thread_id,)).fetchone()
-            if not row or not Path(row[0]).is_file() or Path(row[0]).suffix == ".zst":
+            if not row:
+                break
+            p = resolve_rollout(row[0])
+            if not p.is_file():
                 break
             try:
-                with Path(row[0]).open("rb") as stream:
+                with open_rollout(p) as stream:
                     meta = json.loads(stream.readline(65536)).get("payload", {})
             except (OSError, ValueError):
+                if p.name.endswith('.jsonl.zst'):
+                    raise
                 break
             parent = meta.get("forked_from_id")
             if not parent:

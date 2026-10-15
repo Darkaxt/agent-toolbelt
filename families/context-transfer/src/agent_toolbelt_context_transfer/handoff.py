@@ -124,7 +124,8 @@ def _catalog_thread(
     substantive = 0
     milestone_matches = 0
     line_number = 0
-    with path.open("rb") as handle:
+    from .rollout_io import open_rollout
+    with open_rollout(path) as handle:
         while True:
             byte_start = handle.tell()
             raw_line = handle.readline()
@@ -150,6 +151,7 @@ def _catalog_thread(
                 "rollout_line": line_number,
                 "byte_start": byte_start,
                 "byte_end": byte_end,
+                "byte_offset_space": "decompressed" if path.name.endswith('.jsonl.zst') else "stored",
                 "timestamp": parsed.get("timestamp"),
                 "role": role,
                 "entry_type": type_key,

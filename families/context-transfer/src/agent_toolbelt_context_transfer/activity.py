@@ -53,7 +53,7 @@ def validate_current_state(inventory: dict[str, Any]) -> None:
             row = ct._thread_row(connection, thread_id)
             if row is None:
                 raise ct.ContextTransferError("activity_state_changed", "Task-tree metadata is unavailable.")
-            records.append({"thread_id": thread_id, "rollout_path": str(ct._native_windows_path(row["rollout_path"])),
+            records.append({"thread_id": thread_id, "rollout_path": str(ct.resolve_rollout(ct._native_windows_path(row["rollout_path"]))),
                             "metadata": ct._metadata_from_row(row)})
         if cycles or tree_fingerprint(records, edges) != inventory.get("tree_state_sha256"):
             raise ct.ContextTransferError("activity_state_changed", "Task tree changed; inspect and capture status again.")

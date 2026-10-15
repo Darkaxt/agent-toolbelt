@@ -10,6 +10,8 @@ import sqlite3
 from uuid import UUID
 from typing import Any
 
+from .rollout_io import open_rollout, resolve_rollout
+
 
 TERMINAL_CHILD_STATUSES = frozenset(
     {"closed", "completed", "failed", "cancelled", "canceled"}
@@ -224,9 +226,10 @@ def _discover_segments(roots: tuple[Path, ...], thread_ids: list[str]):
                     subdirs.remove(name)
                     errors.append(str(candidate))
             for name in files:
-                if not name.startswith("rollout-") or not name.endswith(".jsonl"):
+                logical_name = name[:-4] if name.endswith(".jsonl.zst") else name
+                if not logical_name.startswith("rollout-") or not logical_name.endswith(".jsonl"):
                     continue
-                base, separator, resume_id = name[:-6].partition("_")
+                base, separator, resume_id = logical_name[:-6].partition("_")
                 if separator:
                     try:
                         if str(UUID(resume_id)) != resume_id.casefold():
@@ -241,7 +244,7 @@ def _discover_segments(roots: tuple[Path, ...], thread_ids: list[str]):
 
 def _segment_identity(path: Path, thread_id: str) -> bool:
     try:
-        with path.open("rb") as handle:
+        with open_rollout(path) as handle:
             # Only the session header is needed, never arbitrary transcript content.
             header = json.loads(handle.readline(1024 * 1024).decode("utf-8-sig"))
         return (isinstance(header, dict) and header.get("type") == "session_meta"
@@ -294,9 +297,13 @@ def inventory_thread_tree(
             if row is None:
                 missing_thread_ids.append(thread_id)
                 continue
-            rollout = _inspect_rollout(str(row["rollout_path"]), allowed_roots)
+            actual_path = resolve_rollout(_native_windows_path(str(row["rollout_path"])))
+            rollout = _inspect_rollout(str(actual_path), allowed_roots)
+            if (actual_path.name.endswith('.jsonl.zst') and rollout['file_state'] == 'readable'
+                    and not _segment_identity(actual_path, thread_id)):
+                rollout['file_state'] = 'unverified_identity'
             segments = [rollout]
-            seen = {_normalized_path(_native_windows_path(str(row["rollout_path"])))}
+            seen = {_normalized_path(actual_path)}
             for path in sorted(discovered.get(thread_id, [])):
                 if _normalized_path(path) in seen:
                     continue
