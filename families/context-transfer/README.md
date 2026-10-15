@@ -16,6 +16,11 @@ offload. Do not stop at preservation or ask for retirement again. Only an explic
 preservation-only restriction keeps the originals as working chats; requested
 permanent database/conversation deletion uses thread-cleanup in that same workflow.
 
+Skill version 0.3.2 also carries over the source chat's exact UI title (or the
+user's chosen replacement name). Aggregate transfers use the shared-activity
+title rule. Apply the destination name with the supported task tool and verify
+its read-back before declaring takeover complete.
+
 Both transfer modes now reconcile associated schedules through the skill's
 `references/schedules.md`. Definitions and exact source bindings are preserved
 separately from rollout/database archives; unresolved dependencies block source

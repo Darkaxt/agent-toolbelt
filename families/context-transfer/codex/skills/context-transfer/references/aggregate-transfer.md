@@ -30,7 +30,7 @@ Maintain one owner map alongside the source map:
 
 | Map | Required information |
 | --- | --- |
-| Selected source | Exact ID, former purpose, inspected manifest/hash, evidence/catalog references, remaining objectives, takeover authority and any explicit preservation-only restriction |
+| Selected source | Exact ID and returned UI title, former purpose, inspected manifest/hash, evidence/catalog references, remaining objectives, takeover authority and any explicit preservation-only restriction |
 | History owner | Exact ID, sources relying on it, all segment identities/hashes, database table/ID scope, verified archive and receipt references |
 | Protected dependent | Exact unselected ID and which owner it still needs; unknown activity/lineage remains unresolved |
 
@@ -171,6 +171,11 @@ their normal archive/offload authority under SKILL.md's completion contract.
 Do not stop at the archive or demand a second retirement instruction. Only an
 explicit preservation-only restriction changes that endpoint. Never extend the
 selected source set to a newly discovered ancestor, child or unselected dependent.
+Finalize and read back the destination title using SKILL.md's naming rule before
+retirement. Use the user's shared-activity name, the exact common source title
+when identical, or a clear title for the established common activity; retain every
+source's original title in the group ledger. A provisional chat title is not a
+completed transfer of the activity's identity.
 Use SKILL.md's archive/ticket lifecycle for rollout offload, or thread-cleanup's
 supported application deletion when permanent conversation retirement is requested.
 Do not perform both as duplicate removal or treat rollout offload as database purge.
@@ -190,7 +195,8 @@ deletions, start a replacement operation while the original runs, or label the
 whole group retired while required selected sources remain. Group handoff
 acceptance and retirement completion are separate verification milestones within
 the same takeover. Report full takeover complete only after both have passed;
-an accepted handoff with unresolved retirement is still an incomplete takeover.
+an accepted handoff with unresolved retirement or unverified destination naming
+is still an incomplete takeover.
 
 Retained recovery archives and exports remain governed by their explicit retention
 authority. This mode adds no age-based purge, schedule or automatic archive expiry.

@@ -18,6 +18,9 @@ preservation-only requires an explicit restriction. Necessary same-scope schedul
 rebinding follows responsibility transfer. Permanent application/history purge
 continues to follow the requested deletion scope, and recovery archive expiry
 remains separate. This changes the earlier separately-authorized default wording.
+The subsequent screenshot supplies feedback about an omitted title-transfer step,
+not authorization to repeat the depicted migration. Correct the skill so source
+title inheritance/read-back forms part of takeover, with an aggregate title rule.
 Skill deployment and repository synchronization follow this repository's existing
 delivery path. No new third-party skill is installed.
 
@@ -78,14 +81,24 @@ delivery path. No new third-party skill is installed.
   blocker leaves takeover incomplete. Do not broaden to unselected chats or purge
   recovery archives. Apply this endpoint consistently across single and aggregate
   guidance, schedule authority, discovery metadata and README.
+- A9: For single-source takeover, record the exact user-visible source title from
+  supported task tools and give the destination that title unless the user chose
+  another. For aggregate takeover use the requested shared-activity title, otherwise
+  the common source title when identical or a clear shared-activity title derived
+  from the established objective. Record title choice with exact source IDs/titles;
+  do not identify sources by inferred names or rename an unselected chat. Apply
+  through set_thread_title and verify the exact destination's read-back before
+  declaring completion. No new approval is needed for normal title inheritance;
+  failed/queued/unverified renaming leaves this completion criterion unresolved.
 
 ## Execution and reconciliation
 
 Single implementation stage: Aggregate migration skill upgrade — COMPLETE.
-The user's takeover-completion correction (A8) is implemented and verified;
+Title-transfer correction A9 is implemented and verified. The user's takeover-completion
+correction (A8) is implemented and verified;
 prior aggregate workflow evidence remains applicable to unchanged runtime and
 fixture code.
-Mapped requirements: A1–A8. Stage acceptance covers the integrated instructions,
+Mapped requirements: A1–A9. Stage acceptance covers the integrated instructions,
 fixture workflow, focused verification, installed parity and scratch cleanup.
 Commit and remote synchronization are the required final delivery actions after
 verified stage closure; their exact result is reported at delivery.
@@ -132,12 +145,25 @@ Reconciliation:
   revised source, official validators and reference resolution pass, and the
   updated installed instructions were reread. No real source chat or schedule
   was changed by this correction.
+- A9: v0.3.2 requires exact source UI-title capture, destination title inheritance
+  (or the user's explicit override), and exact destination read-back after the
+  supported set_thread_title operation. Aggregate naming follows the selected
+  shared activity/common-title rule with source identities retained. This is a
+  completion criterion before retirement, not a final-report reminder. Manual
+  review covered single-source inheritance, an explicit override, identical
+  aggregate titles, differently purposed source titles and queued/unverified
+  updates. Source/installed skill validators and focused skill regressions passed;
+  both installed bundles match source hashes, local references resolve and the
+  installed naming guidance was reread. No live title/migration action was
+  performed merely because it appeared in the user's screenshot.
 
 Scratch cleanup completed through reviewed transactional-cleanup; the exact
 task-owned scratch root is absent. Retained source and installed skills are
 intentional outputs. The former v0.3.0 completion/authorization interpretation
 defect is resolved across the source and installed guidance. Correction scratch
 cleanup also completed through a reviewed transaction; its exact root is absent.
+The former v0.3.1 title-transfer gap is resolved in source and both installed
+copies. This narrow documentation correction created no expendable scratch.
 No advancement blockers or required deferrals remain.
 Stage/final refactoring assessment: existing single-source commands already
 support the verified workflow; a new multi-root database subsystem would add

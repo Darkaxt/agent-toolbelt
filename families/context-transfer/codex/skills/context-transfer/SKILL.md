@@ -4,7 +4,7 @@ description: Take over one Codex chat or consolidate selected chats into an inde
 license: MIT
 metadata:
   compatibility: Codex only. Requires local Codex state and rollout access, 7-Zip, and a non-C recovery drive.
-  version: "0.3.1"
+  version: "0.3.2"
 ---
 
 # Context Transfer
@@ -64,6 +64,32 @@ action and report takeover as incomplete. Do not invent a new authorization
 blocker when the selected takeover request already supplies it. For the normal
 endpoint, verify original archived state and zero manifest-bound rollout residuals;
 for requested permanent deletion also verify application/database/recall residuals.
+The destination must also have the intended activity title, verified through the
+supported task API. A finished archive/offload with the replacement still carrying
+an incidental new-chat title is not a fully completed takeover.
+
+### Carry Over The Chat Title
+
+Record the source's exact user-visible title from `list_threads` or `read_thread`
+with its full ID before retirement. For a single-source takeover, copy that title
+to the destination unless the user explicitly supplied a different destination
+name. Preserve prefixes, spelling and other intentional title text; do not use
+the first prompt, a summary or a guessed database field as the UI title.
+
+For aggregate takeover, use the user's requested shared-activity title. Otherwise
+reuse the source title if all selected titles are identical, or choose a clear
+title for the already-established shared activity and record that choice alongside
+the source titles in the group ledger. Do not arbitrarily copy the first source's
+different-purpose title or ask for approval of ordinary naming choices.
+
+After accepting the handoff and before source retirement, call `set_thread_title`
+for the exact destination ID (or its documented current-chat default), then read
+that same destination through `read_thread` or `list_threads` and compare the
+returned title with the intended one. Observe a queued update through its supported
+lifecycle; an update response alone is not read-back verification. Record the
+verified title in the existing transfer ledger. If it fails or remains unverified,
+keep the naming criterion unresolved and finish it before claiming full takeover.
+Do not rewrite application databases or rename an unselected chat to compensate.
 
 ## Non-Negotiable Boundaries
 
@@ -98,7 +124,8 @@ The installer validates a complete versioned release before atomically switching
 
 ## Phase 1: Select And Inspect
 
-Identify the source task with list_threads or read_thread. Use the source task ID, never only its title.
+Identify the source task with list_threads or read_thread. Use the source task ID,
+never only its title, and retain the exact returned UI title for destination naming.
 
 Inventory associated schedules using the schedule reference and retain their
 exact identities, bindings, definitions and disposition in private recovery
@@ -223,6 +250,8 @@ not a full backup of unrelated conversations or a permanent second search index.
 This phase is required for a selected takeover unless the user explicitly limited
 the operation to preservation. Reuse the takeover request's live-retirement
 authorization; do not introduce a second approval checkpoint here.
+
+First apply and read back the destination title under Carry Over The Chat Title.
 
 Before archiving/retiring the source, reconcile its schedule ledger. An unresolved
 automation that still targets or needs the source blocks that source's retirement.
