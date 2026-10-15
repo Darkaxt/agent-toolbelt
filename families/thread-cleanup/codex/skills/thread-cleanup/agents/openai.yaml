@@ -1,0 +1,6 @@
+interface:
+  display_name: "Permanent Thread Cleanup"
+  short_description: "Retire explicitly selected inactive conversations"
+  default_prompt: "Use $thread-cleanup for the explicitly authorized inactive conversations, preserving exclusions and verifying all residuals."
+policy:
+  allow_implicit_invocation: true

@@ -7,11 +7,13 @@ import os
 from pathlib import Path
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 from typing import Any, Callable, TextIO
 
 from .context_transfer import iter_rollout_records
+from .database_evidence import export_database_evidence
 
 
 DICTIONARY_CANDIDATES_MIB = (1536, 1024, 768, 512, 384, 256, 192, 128, 96, 64, 32)
@@ -137,8 +139,10 @@ def _load_inspection(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _validated_rollouts(inventory: dict[str, Any]) -> list[dict[str, Any]]:
-    if not inventory.get("retirement_ready") or inventory.get("blockers"):
+def _validated_rollouts(inventory: dict[str, Any], preserve_referenced_history: bool = False) -> list[dict[str, Any]]:
+    blockers = set(inventory.get("blockers", []))
+    preservation = preserve_referenced_history and blockers == {"surviving_fork_history_references"}
+    if not preservation and (not inventory.get("retirement_ready") or blockers):
         raise ArchiveError(
             "inspection_not_ready",
             "Inspection has blockers and cannot be packaged.",
@@ -146,6 +150,8 @@ def _validated_rollouts(inventory: dict[str, Any]) -> list[dict[str, Any]]:
         )
 
     from . import activity, context_transfer
+    if preserve_referenced_history and not inventory.get("activity_reconciliation"):
+        raise ArchiveError("activity_evidence_invalid", "Preservation-only packaging requires verified inactive task status.")
     try:
         activity.validate_reconciled_inventory(inventory)
     except context_transfer.ContextTransferError as exc:
@@ -378,6 +384,8 @@ def _extract_and_compare(
             "context-transfer/threads.json",
             "context-transfer/spawn-edges.json",
         ]
+        if manifest.get("database_evidence"):
+            metadata_members.append("context-transfer/database-evidence.jsonl")
         _run_seven_zip(
             [seven_zip_path, "x", "-y", f"-o{staging}", str(archive_path), *metadata_members]
         )
@@ -397,6 +405,10 @@ def _extract_and_compare(
             raise ArchiveError("threads_hash_mismatch", "Internal and external thread exports differ.")
         if _sha256_file(internal_edges) != _sha256_file(external_edges):
             raise ArchiveError("spawn_edges_hash_mismatch", "Internal and external edge exports differ.")
+        if manifest.get("database_evidence"):
+            evidence = staging / "context-transfer" / "database-evidence.jsonl"
+            if not evidence.is_file() or _sha256_file(evidence) != manifest["database_evidence"]["sha256"]:
+                raise ArchiveError("database_evidence_mismatch", "Scoped database export did not verify.")
 
         representatives = _representative_members(manifest["rollouts"])
         _run_seven_zip(
@@ -421,6 +433,7 @@ def _extract_and_compare(
             "internal_handoff_matches": True,
             "internal_threads_matches": True,
             "internal_spawn_edges_matches": True,
+            "database_evidence_verified": bool(manifest.get("database_evidence")),
             "representative_extractions_verified": len(representatives),
         }
     finally:
@@ -435,12 +448,13 @@ def pack_recovery(
     archive_root: str | os.PathLike[str],
     seven_zip_path: str | None = None,
     dictionary_mib: int | None = None,
+    preserve_referenced_history: bool = False,
     now: Callable[[], datetime] | None = None,
 ) -> dict[str, Any]:
     inspection_path = Path(inspection_manifest_path)
     handoff_source = Path(handoff_path)
     inventory = _load_inspection(inspection_path)
-    rollouts = _validated_rollouts(inventory)
+    rollouts = _validated_rollouts(inventory, preserve_referenced_history)
     if not handoff_source.is_file():
         raise ArchiveError("handoff_missing", f"Handoff file was not found: {handoff_source}")
     from . import handoff as handoff_contract
@@ -488,6 +502,15 @@ def pack_recovery(
     external_handoff = transaction_root / "CONTEXT_TRANSFER.md"
     shutil.copy2(handoff_source, external_handoff)
 
+    try:
+        database_export = export_database_evidence(
+            inventory["codex_home"], [item["thread_id"] for item in inventory["threads"]],
+            payload_root / "database-evidence.jsonl",
+        )
+    except (OSError, sqlite3.Error):
+        shutil.rmtree(payload_root.parent)
+        raise
+
     manifest = {
         "schema": "agent_toolbelt_context_transfer.archive_manifest.v1",
         "source_thread_id": source_id,
@@ -500,6 +523,9 @@ def pack_recovery(
         "total_rollout_bytes": inventory["total_rollout_bytes"],
         "handoff_sha256": _sha256_file(external_handoff),
         "rollouts": rollouts,
+        "database_evidence": database_export,
+        "preservation_only": preserve_referenced_history,
+        "history_reference_dependents": inventory.get("history_reference_dependents", []),
         "pack_source_strategy": "verified_transaction_snapshot",
         "activity_reconciliation": inventory.get("activity_reconciliation"),
         "privacy_warning": (
@@ -527,7 +553,7 @@ def pack_recovery(
     metadata_list.write_text(
         "".join(
             f'"context-transfer{os.sep}{name}"\n'
-            for name in ("manifest.json", "CONTEXT_TRANSFER.md", "threads.json", "spawn-edges.json")
+            for name in ("manifest.json", "CONTEXT_TRANSFER.md", "threads.json", "spawn-edges.json", "database-evidence.jsonl")
         ),
         encoding="utf-8",
         newline="\n",

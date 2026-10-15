@@ -166,6 +166,8 @@ def issue_deletion_ticket(
                 f"Recovery artifact is missing: {required}",
             )
     manifest = _load_json(manifest_path, kind="manifest_invalid")
+    if manifest.get("preservation_only"):
+        raise RetirementError("preservation_only_archive", "Referenced-ancestor preservation does not authorize deletion.")
     if manifest.get("schema") != "agent_toolbelt_context_transfer.archive_manifest.v1":
         raise RetirementError("manifest_invalid", "Unsupported archive manifest schema.")
     if _sha256_file(manifest_path) != verification.get("manifest_sha256"):
@@ -317,6 +319,10 @@ def apply_deletion_ticket(
     _verify_ticket_evidence(ticket)
 
     codex_home = Path(str(ticket["codex_home"])).resolve()
+    from .database_evidence import fork_references
+    dependents = fork_references(codex_home, [item["thread_id"] for item in ticket.get("files", [])])
+    if dependents:
+        raise RetirementError("surviving_fork_history_references", "Surviving forks still need these rollout/database histories.", details={"dependents": dependents})
     seen_paths: set[str] = set()
     results: list[dict[str, Any]] = []
     deleted_bytes = 0

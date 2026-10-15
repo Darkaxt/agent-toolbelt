@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
+from contextlib import closing
 from pathlib import Path
 import sys
 import tempfile
@@ -42,7 +44,10 @@ class RetirementFixture:
         self.unlisted = self.sessions / "new.jsonl"
         self.unlisted.write_bytes(b"new concurrent file")
         self.state_db = self.codex_home / "state_5.sqlite"
-        self.state_db.write_bytes(b"sqlite remains")
+        with closing(sqlite3.connect(self.state_db)) as state:
+            state.execute("CREATE TABLE threads(id TEXT,rollout_path TEXT)")
+            state.executemany("INSERT INTO threads VALUES (?,?)", [("root", str(self.root_rollout)), ("child", str(self.child_rollout))])
+            state.commit()
 
         self.transaction = root / "transaction"
         self.transaction.mkdir()

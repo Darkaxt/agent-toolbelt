@@ -16,6 +16,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("status", help="Resolve the current thread and show metadata.")
+    purge = subparsers.add_parser("purge-thread-cache", help="Remove one explicitly retired thread's derived recall index.")
+    purge.add_argument("--confirm-thread-id", required=True)
 
     collect_parser = subparsers.add_parser("collect", help="Warm recall indexes for current, recent, or workspace threads.")
     collect_parser.add_argument("--thread-source", choices=["current", "recent", "workspace"], default="recent")
@@ -108,7 +110,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    if args.command == "status":
+    if args.command == "purge-thread-cache":
+        payload = thread_recall.purge_retired_thread_cache(thread_id=args.thread_id, confirm_thread_id=args.confirm_thread_id, codex_home=args.home_override)
+    elif args.command == "status":
         payload = thread_recall.status(thread_id=args.thread_id, codex_home=args.home_override)
     elif args.command == "collect":
         payload = thread_recall.collect(

@@ -574,6 +574,7 @@ class CliTests(unittest.TestCase):
             archive_root="E:/Codex/ThreadArchives",
             seven_zip_path="D:/Tools/7z.exe",
             dictionary_mib=768,
+            preserve_referenced_history=False,
         )
 
     def test_reconcile_activity_cli_routes_and_writes_manifest(self):

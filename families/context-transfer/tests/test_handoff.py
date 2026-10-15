@@ -128,6 +128,9 @@ Repository D:/repo, branch main, commit abcdef1.
 child: investigated deployment verification.
 
 ## Uncertainties Requiring Verification
+No unresolved database uncertainty.
+## Database Evidence And Recall References
+Scoped database-evidence.jsonl is in the recovery archive. Recall does not follow loose references; use read-database without restoring live app state.
 Confirm the live deployment before changing code.
 """
 

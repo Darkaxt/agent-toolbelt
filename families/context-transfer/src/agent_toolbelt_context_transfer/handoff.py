@@ -23,6 +23,7 @@ REQUIRED_HANDOFF_SECTIONS = (
     "Repositories Branches And Artifacts",
     "Child-Agent Contribution Map",
     "Uncertainties Requiring Verification",
+    "Database Evidence And Recall References",
 )
 MILESTONE_TOKENS = (
     "decision:",
@@ -298,13 +299,17 @@ def validate_handoff(
             child_section,
         )
     ]
-    if missing_sections or missing_child_ids:
+    database_section = sections.get("Database Evidence And Recall References", "")
+    missing_ancestors = [item["thread_id"] for item in inventory.get("source_history_ancestors", [])
+                         if item["thread_id"] not in database_section]
+    if missing_sections or missing_child_ids or missing_ancestors:
         raise HandoffError(
             "handoff_incomplete",
             "CONTEXT_TRANSFER.md does not satisfy the destination handoff contract.",
             details={
                 "missing_sections": missing_sections,
                 "missing_child_thread_ids": missing_child_ids,
+                "missing_history_ancestor_ids": missing_ancestors,
             },
         )
     return {

@@ -118,6 +118,9 @@ No repository mutation.
 child: restore fixture.
 
 ## Uncertainties Requiring Verification
+No unresolved database uncertainty.
+## Database Evidence And Recall References
+Scoped database-evidence.jsonl is in the recovery archive. Recall requires exact rollout references; use read-database for archived database evidence.
 None.
 """,
             encoding="utf-8",

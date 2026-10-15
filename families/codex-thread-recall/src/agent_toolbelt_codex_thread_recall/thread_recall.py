@@ -1735,6 +1735,38 @@ def clear_thread_cache(conn: sqlite3.Connection, thread_id: str) -> None:
     conn.execute("delete from rollout_indexes where thread_id = ?", (thread_id,))
 
 
+def purge_retired_thread_cache(*, thread_id, confirm_thread_id, codex_home=None):
+    """Explicit retirement only; never erase a live chat's recall data."""
+    from uuid import UUID
+    try:
+        valid = thread_id and thread_id == confirm_thread_id and str(UUID(thread_id)) == thread_id
+    except ValueError:
+        valid = False
+    if not valid:
+        return failure("confirmation_required", "Confirm one complete exact retired thread ID")
+    home = default_codex_home(codex_home)
+    with __import__("contextlib").closing(sqlite3.connect(state_db_path(home).resolve().as_uri() + "?mode=ro", uri=True)) as state:
+        if state.execute("SELECT 1 FROM threads WHERE id=?", (thread_id,)).fetchone():
+            return failure("thread_still_exists", "Application thread deletion must finish first")
+    if not cache_db_path(home).exists():
+        return {"ok": True, "operation": "purge-thread-cache", "thread_id": thread_id, "deleted_entries": 0}
+    with ThreadIndexLock(codex_home=home, thread={"id": thread_id, "rollout_path": "retired"}):
+        conn = connect_existing_cache(home)
+        try:
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("BEGIN IMMEDIATE")
+            count = conn.execute("SELECT count(*) FROM entries WHERE thread_id=?", (thread_id,)).fetchone()[0]
+            paths = [r[0] for r in conn.execute("SELECT rollout_path_id FROM rollout_indexes WHERE thread_id=?", (thread_id,))]
+            clear_thread_cache(conn, thread_id)
+            for path_id in paths:
+                conn.execute("DELETE FROM rollout_paths WHERE id=? AND NOT EXISTS(SELECT 1 FROM entries WHERE rollout_path_id=?) AND NOT EXISTS(SELECT 1 FROM rollout_indexes WHERE rollout_path_id=?)", (path_id, path_id, path_id))
+            conn.commit()
+            return {"ok": True, "operation": "purge-thread-cache", "thread_id": thread_id, "deleted_entries": count,
+                    "application_databases_mutated": False}
+        finally:
+            conn.close()
+
+
 def upsert_rollout_path(conn: sqlite3.Connection, rollout_path: str | Path) -> int:
     path = str(rollout_path)
     conn.execute("insert or ignore into rollout_paths (path) values (?)", (path,))

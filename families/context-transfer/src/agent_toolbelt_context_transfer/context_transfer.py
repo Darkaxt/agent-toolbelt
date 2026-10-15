@@ -354,6 +354,19 @@ def inventory_thread_tree(
 
     from .activity import tree_fingerprint
 
+    from .database_evidence import database_inventory, fork_references, history_ancestors
+
+    reference_dependents = fork_references(codex_home_path, [item[0] for item in order])
+    if reference_dependents:
+        blockers.append("surviving_fork_history_references")
+    ancestors = history_ancestors(codex_home_path, source_thread_id)
+    destination_ancestors = history_ancestors(codex_home_path, destination_thread_id)
+    history_owners = {item[0] for item in order} | {item["thread_id"] for item in ancestors}
+    if destination_thread_id in history_owners or any(
+        item["thread_id"] in history_owners for item in destination_ancestors
+    ):
+        blockers.append("destination_is_history_dependent")
+
     return {
         "schema": "agent_toolbelt_context_transfer.inventory.v1",
         "source_thread_id": source_thread_id,
@@ -382,5 +395,11 @@ def inventory_thread_tree(
         "blockers": blockers,
         "retirement_ready": not blockers,
         "database_access": "read_only",
+        "database_evidence": database_inventory(codex_home_path, [item[0] for item in order]),
+        "history_reference_dependents": reference_dependents,
+        "source_history_ancestors": ancestors,
+        "destination_history_ancestors": destination_ancestors,
+        "recall_contract": {"exact_thread_id_required": True, "missing_rollout_fails_closed": True,
+                            "automatic_database_or_archive_fallback": False},
         "mutations_performed": False,
     }

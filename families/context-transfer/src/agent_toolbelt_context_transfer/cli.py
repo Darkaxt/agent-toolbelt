@@ -5,9 +5,10 @@ import json
 import os
 from pathlib import Path
 import sys
+import sqlite3
 from typing import Any
 
-from . import activity, archive, context_transfer, handoff, restore, retirement
+from . import activity, archive, context_transfer, database_evidence, handoff, restore, retirement
 
 
 DEFAULT_ARCHIVE_ROOT = Path(r"E:\Codex\ThreadArchives")
@@ -44,6 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     pack_parser.add_argument("--archive-root", default=str(DEFAULT_ARCHIVE_ROOT))
     pack_parser.add_argument("--seven-zip-path")
     pack_parser.add_argument("--dictionary-mib", type=int)
+    pack_parser.add_argument("--preserve-referenced-history", action="store_true", help="Archive inactive referenced ancestors only; never authorize their deletion")
 
     verify_parser = subparsers.add_parser(
         "verify",
@@ -100,6 +102,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     restore_parser.add_argument("--archive", required=True)
     restore_parser.add_argument("--seven-zip-path")
+    evidence_parser = subparsers.add_parser("read-database", help="Read scoped database evidence from a verified archive, without restoring live state.")
+    evidence_parser.add_argument("--archive", required=True)
+    evidence_parser.add_argument("--thread-id", required=True)
+    evidence_parser.add_argument("--table")
+    evidence_parser.add_argument("--pattern")
+    evidence_parser.add_argument("--limit", type=int, default=10)
+    evidence_parser.add_argument("--seven-zip-path")
+    export_parser = subparsers.add_parser("export-database", help="Preserve scoped database evidence even when retirement is blocked.")
+    export_parser.add_argument("--manifest", required=True)
+    export_parser.add_argument("--output", required=True)
     return parser
 
 
@@ -166,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
                 archive_root=args.archive_root,
                 seven_zip_path=args.seven_zip_path,
                 dictionary_mib=args.dictionary_mib,
+                preserve_referenced_history=args.preserve_referenced_history,
             )
             output_path = None
         elif args.operation == "verify":
@@ -210,6 +223,19 @@ def main(argv: list[str] | None = None) -> int:
                 confirm_delete=args.confirm_delete,
             )
             output_path = None
+        elif args.operation == "export-database":
+            inventory = archive._load_inspection(Path(args.manifest))
+            result = database_evidence.export_database_evidence(
+                inventory["codex_home"], [item["thread_id"] for item in inventory["threads"]], args.output)
+            result["output"] = str(Path(args.output).resolve())
+            output_path = None
+        elif args.operation == "read-database":
+            import shutil
+            archive.verify_recovery_archive(args.archive, seven_zip_path=args.seven_zip_path)
+            result = database_evidence.read_archive_evidence(
+                args.archive, args.seven_zip_path or shutil.which("7z.exe") or shutil.which("7z"),
+                thread_id=args.thread_id, table=args.table, pattern=args.pattern, limit=args.limit)
+            output_path = None
         elif args.operation == "restore":
             result = restore.restore_recovery_archive(
                 archive_path=args.archive,
@@ -234,6 +260,8 @@ def main(argv: list[str] | None = None) -> int:
         handoff.HandoffError,
         retirement.RetirementError,
         restore.RestoreError,
+        ValueError, OSError,
+        sqlite3.Error,
     ) as exc:
         payload = _failure(args.operation, exc)
 

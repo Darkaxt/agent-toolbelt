@@ -83,6 +83,11 @@ runtime.
 
 ## Commands
 
+After explicitly authorized application deletion, `--thread-id <id>
+purge-thread-cache --confirm-thread-id <same-id>` removes only that retired
+thread's derived index under its existing lock. It refuses while the app's
+thread row exists and never purges application databases or other threads.
+
 ```powershell
 python scripts/invoke_codex_thread_recall.py status
 python scripts/invoke_codex_thread_recall.py collect --thread-source recent --max-threads 10 --updated-within-hours 48 --max-run-seconds 90
@@ -154,6 +159,12 @@ index update midway through one thread.
 - Do not set `CODEX_THREAD_RECALL_WRAPPER_TIMEOUT_SEC` for normal foreground recall. Its default unset state allows a live refresh owner to finish.
 - Fail closed if `CODEX_THREAD_ID`, the thread row, or the rollout file cannot be resolved exactly.
 - Treat `thread_unavailable` or `rollout_missing` as recall unavailable; do not guess from cwd or title.
+- Loose/moved references are not followed automatically. Recall does not fall
+  back to `thread_history_1.sqlite` or a context-transfer archive, and an old
+  index is not proof that the original evidence remains available. A replacement
+  thread must use the migration handoff's exact archive/IDs and explicitly read
+  its database evidence (`context-transfer read-database`) or restored rollouts.
+  Memory bundles remain opt-in summaries, not transparent archive recall.
 - Use the evidence pointers for recall, not raw transcript dumping.
 - Check `index.built`, `index.stale`, and `index.appended_entries` when you need to
   understand whether a call rebuilt, reused, or incrementally extended the cache.

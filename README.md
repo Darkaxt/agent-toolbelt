@@ -30,6 +30,7 @@ Start by choosing the one family you actually need:
 | Specification-Gated Implementation | staged implementation with repeated specification reconciliation and zero unresolved deferrals at completion | `families/spec-gated-implementation` | - |
 | Operational Recordkeeping | event-scoped reconciliation of existing bills, correspondence, decisions and purchases | `families/operational-recordkeeping` | bundled Python helper |
 | Approach Recovery Ledger | shared dated execution plans, interruption evidence and preserved acceptance criteria | `families/approach-recovery-ledger` | bundled Python helper |
+| Thread Cleanup | permanent exact inactive conversation retirement, database and session artifacts | `families/thread-cleanup` | bundled Python helper |
 
 ## Install skills
 
@@ -67,6 +68,7 @@ Public skill names:
 - `spec-gated-implementation`
 - `operational-recordkeeping`
 - `approach-recovery-ledger`
+- `thread-cleanup`
 
 Read [Publishing and installing from skills.sh](docs/skills-sh.md) before installing account-backed or local-machine skills. Several skills require Windows desktop apps, local CLIs, or explicit user confirmation before visible actions.
 

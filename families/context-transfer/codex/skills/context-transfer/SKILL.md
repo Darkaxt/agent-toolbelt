@@ -4,7 +4,7 @@ description: Use when a fresh Codex task must take over useful context from an o
 license: MIT
 metadata:
   compatibility: Codex only. Requires local Codex state and rollout access, 7-Zip, and a non-C recovery drive.
-  version: "0.1.3"
+  version: "0.2.0"
 ---
 
 # Context Transfer
@@ -16,8 +16,11 @@ Do not use this skill merely to continue a normal task. Use codex-thread-recall 
 ## Non-Negotiable Boundaries
 
 - Run from a fresh destination task with a different CODEX_THREAD_ID.
+- The destination must be independent, not a fork of the source or its ancestors.
+  A different ID alone is insufficient. Start a normal new chat, inspect lineage,
+  and refuse `destination_is_history_dependent`; do not just fork again.
 - Do not ask the source task to summarize itself.
-- No direct SQLite mutation is allowed. The helper uses read-only SQLite for inventory and leaves lightweight thread rows in place.
+- No direct SQLite mutation is allowed. Inventory/export is read-only; migration preserves scoped database evidence and leaves live application databases unchanged. Permanent deletion is a separate `thread-cleanup` workflow through the supported application lifecycle.
 - Do not load or paste the complete rollout tree into model context.
 - Do not create a permanent second full-text rollout index.
 - Do not archive or delete a live source until handoff acceptance and archive verification pass.
@@ -47,7 +50,43 @@ Run inspect with source-thread-id, destination-thread-id, the reviewed non-C rec
 
 Inspection is read-only unless output is explicitly supplied. Inspect `threads[].rollouts` and `rollout_count`, not only the database's current `rollout_path`: resumed tasks can have earlier segments in sessions or archived_sessions. Discovered segments require matching session_meta identity; ambiguous or unreadable segments block retirement.
 
-`retirement_ready=false` does not prevent read-only catalog generation or provisional handoff validation. Preserve and report `retirement_blockers`; never guess that old open-child records mean terminal children, mutate SQLite, or use a hand-crafted retirement manifest. Require retirement_ready=true, no blockers, every child terminal or verified inactive, and every rollout readable before packing or deleting anything.
+Inspect `database_evidence` too: paginated conversations retain actual content in
+`thread_history_1.sqlite`, not just raw rollouts. Source/child rows from state,
+history, goals, queue and memory databases are exported to the recovery archive.
+Exports are private historical evidence, not permission to rewrite live databases.
+Inspect `history_reference_dependents` separately from child spawn edges: a fork
+can still depend on source database/rollout history without being a spawned agent.
+Those references block retirement. An external archive is evidence storage, not
+an automatic redirect for Codex's live paginated history. Do not delete an ancestor
+of a surviving fork or edit lineage headers/SQL to bypass the application's guard.
+An independent replacement chat must explicitly accept usable context before
+the dependent fork and its ancestors can be permanently retired.
+`source_history_ancestors` lists inherited history owners and boundaries. Preserve
+each necessary ancestor separately (its database rows AND every rollout segment),
+and put every exact ancestor ID/archive reference in the required database section.
+For inactive ancestors blocked only by surviving fork references, pack with
+`--preserve-referenced-history`; its verified archive is explicitly preservation-
+only and cannot issue a deletion ticket. All other activity/identity blockers
+remain binding. Do not claim complete inherited history from the fork's own rows.
+
+After the independent destination accepts the complete handoff, retire the selected
+leaf fork first, then its selected ancestors in reverse dependency order. Re-plan
+and refresh status after each deletion. Unselected forks must remain intact: their
+parents remain blocked unless the user separately authorizes migrating/retiring
+those forks too. Context acceptance and a copied archive alone do not detach a
+live paginated-history reference; never edit fork headers/SQL as a shortcut.
+When retirement is blocked, `export-database --manifest <inspection.json>
+--output <private-E-drive-evidence.jsonl>` still preserves scoped rows read-only.
+It is database evidence, not a complete rollout recovery archive or permission
+to delete ancestors. Give the replacement chat the exact output path, table/ID
+scope and returned digest. Optional compression must verify those exact bytes.
+
+`retirement_ready=false` does not prevent read-only catalog generation or provisional handoff validation. Preserve and report `retirement_blockers`; never guess that old open-child records mean terminal children, mutate SQLite, or use a hand-crafted retirement manifest. Normal packaging/deletion requires retirement_ready=true, no blockers, every child terminal or verified inactive, and every rollout readable. The sole packaging exception is preservation-only mode above: explicit reconciled inactive-status evidence is required and only surviving fork references may remain. It never permits deletion.
+
+Lineage inspection reports known references from readable registered rollout
+headers. Missing or compressed headers are not proof of independence or complete
+coverage; verify unresolved lineage through supported app evidence. The owning
+application's deletion refusal remains authoritative.
 
 ### Stale Open-Child Records
 
@@ -79,6 +118,15 @@ Write a bounded CONTEXT_TRANSFER.md with these exact sections:
 - Repositories Branches And Artifacts
 - Child-Agent Contribution Map
 - Uncertainties Requiring Verification
+- Database Evidence And Recall References
+
+In the last section, record source/child IDs, the reviewed archive location,
+important database-only facts or unresolved coverage, and the offline
+`read-database` command below. Tell the replacement thread that normal recall
+requires an exact thread row and readable rollout path: loose title/cwd references,
+an old cache, or the presence of database items are not automatic fallback. Moved
+rollouts yield `rollout_missing`; deleted rows yield `thread_unavailable`. Imported
+recall memory bundles remain explicitly queried summaries, not raw recall.
 
 In the child map, start one line per child with the exact thread ID followed by a colon.
 
@@ -98,6 +146,20 @@ Run pack with the reviewed manifest, handoff, and the reviewed non-C recovery ro
 
 Require maximum LZMA2 solid settings, `source_snapshot.source_paths_passed_to_seven_zip=false`, successful 7z test, archive SHA-256, matching internal and external metadata, and representative rollout extraction. The temporary rollout snapshot must be absent after the command returns, including after failure.
 
+New archives include `context-transfer/database-evidence.jsonl`, with selected
+rows, per-table counts and a verified digest. Require
+`database_evidence_verified=true`; older archives lack this coverage. Important
+database-only information must be understood by the replacement thread, not
+merely packed without mention. Read without restoring live state:
+
+```powershell
+python scripts/invoke_context_transfer.py read-database --archive <thread-tree.7z> --thread-id <exact-source-id> --table thread_items --pattern <term> --limit 10
+```
+
+Results are bounded; inspect `total_matches` and `truncated`. Raw evidence may
+contain credentials, so do not publish it. This export is deliberately scoped,
+not a full backup of unrelated conversations or a permanent second search index.
+
 ## Phase 5: Archive And Retire
 
 This phase always requires explicit live-retirement authorization for the selected real task.
@@ -111,6 +173,9 @@ This phase always requires explicit live-retirement authorization for the select
 7. Confirm residual manifest-bound rollout bytes are zero. Changed files must be skipped and require a fresh ticket; newly created files are ignored.
 
 Do not claim disk reclamation from Codex archival alone.
+Rollout offload does not delete database history or reclaim its SQLite pages.
+Use the separate explicitly authorized `thread-cleanup` workflow for permanent
+application deletion; never label rollout retirement as total thread removal.
 
 ## Restore
 

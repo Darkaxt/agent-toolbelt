@@ -160,6 +160,9 @@ No repository mutation in this fixture.
 child: completed fixture work.
 
 ## Uncertainties Requiring Verification
+No unresolved uncertainty.
+## Database Evidence And Recall References
+Scoped database-evidence.jsonl is in the recovery archive. Recall needs original rollouts; read-database provides offline evidence without live state restoration.
 None.
 """,
             encoding="utf-8",
@@ -203,7 +206,12 @@ None.
         self.assertFalse((transaction_root / ".payload").exists())
         self.assertFalse((transaction_root / ".rollout-snapshot").exists())
         self.assertFalse((transaction_root / ".verification-staging").exists())
+        self.assertTrue(result["database_evidence_verified"])
 
+        from agent_toolbelt_context_transfer.database_evidence import read_archive_evidence
+        evidence = read_archive_evidence(archive_path, SEVEN_ZIP, thread_id="root", table="threads")
+        self.assertEqual(evidence["total_matches"], 1)
+        self.assertEqual(evidence["matches"][0]["row"]["id"], "root")
         manifest = json.loads((transaction_root / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(len(manifest["rollouts"]), 2)
         self.assertTrue(all(item["archive_path"].startswith("sessions/") for item in manifest["rollouts"]))
@@ -263,6 +271,53 @@ None.
 
         self.assertTrue(observed_snapshot)
         self.assertTrue(result["ok"])
+
+    def test_preservation_archive_requires_inactivity_and_cannot_authorize_deletion(self):
+        from agent_toolbelt_context_transfer import retirement
+
+        self.fixture.add_thread("fork", b'{"type":"session_meta","payload":{"id":"fork","forked_from_id":"root"}}\n', "fork")
+        inventory = context_transfer.inventory_thread_tree(
+            source_thread_id="root", destination_thread_id="destination",
+            codex_home=self.fixture.codex_home, archive_root=self.archive_root)
+        self.assertEqual(inventory["blockers"], ["surviving_fork_history_references"])
+        self.manifest_path.write_text(json.dumps(inventory), encoding="utf-8")
+        arguments = dict(inspection_manifest_path=self.manifest_path,
+                         handoff_path=self.handoff_path, archive_root=self.archive_root,
+                         seven_zip_path=SEVEN_ZIP, dictionary_mib=16,
+                         preserve_referenced_history=True)
+        with self.assertRaises(archive.ArchiveError) as raised:
+            archive.pack_recovery(**arguments)
+        self.assertEqual(raised.exception.kind, "activity_evidence_invalid")
+        evidence = self.root / "activity.json"
+        evidence.write_text(json.dumps({
+            "schema": "agent_toolbelt_context_transfer.activity_evidence.v1",
+            "source_thread_id": "root", "destination_thread_id": "destination",
+            "evidence_source": "codex_task_api",
+            "inspection_sha256": archive._sha256_file(self.manifest_path),
+            "observations": [{"thread_id": key, "status": "idle", "host_id": "local",
+                              "tool": "read_thread", "observed_at": "2026-10-15T00:00:00Z"}
+                             for key in ("root", "child")]}), encoding="utf-8")
+        reconciled = activity.reconcile_activity(inspection_manifest_path=str(self.manifest_path),
+                                                activity_evidence_path=str(evidence))
+        self.manifest_path.write_text(json.dumps(reconciled), encoding="utf-8")
+        packed = archive.pack_recovery(**arguments)
+        with self.assertRaises(retirement.RetirementError) as raised:
+            retirement.issue_deletion_ticket(
+                verification_path=Path(packed["transaction_root"]) / "verification.json",
+                acceptance_path=self.root / "unused.json", archived_state_path=self.root / "unused.json",
+                confirm_live_retirement=True)
+        self.assertEqual(raised.exception.kind, "preservation_only_archive")
+        reconciled["blockers"].append("task_activity_unverified_or_active")
+        self.manifest_path.write_text(json.dumps(reconciled), encoding="utf-8")
+        with self.assertRaises(archive.ArchiveError) as raised:
+            archive.pack_recovery(**arguments)
+        self.assertEqual(raised.exception.kind, "inspection_not_ready")
+
+    def test_database_export_failure_removes_partial_payload(self):
+        with mock.patch.object(archive, "export_database_evidence", side_effect=sqlite3.DatabaseError("fixture")):
+            with self.assertRaises(sqlite3.DatabaseError):
+                self.pack()
+        self.assertFalse(any(self.archive_root.rglob(".payload")))
 
     def test_snapshot_identity_mismatch_fails_without_archive_or_staging_residue(self):
         payload = json.loads(self.manifest_path.read_text(encoding="utf-8"))

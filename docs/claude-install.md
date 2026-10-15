@@ -21,6 +21,8 @@ Each runtime family ships its own self-contained local marketplace with one plug
 
 ## Instruction-only skills
 
+- Thread Cleanup: `families/thread-cleanup/codex/skills/thread-cleanup`; identical self-contained helper bundle. Explicit permanent conversation retirement is separate from generated-artifact cleanup.
+
 - Diagnostics-First UI: `families/ui-diagnostics-first/codex/skills/ui-diagnostics-first`; copy the same canonical folder. No plugin, helper or application changes are installed.
 
 - Specification-Gated Implementation: `families/spec-gated-implementation/codex/skills/spec-gated-implementation`

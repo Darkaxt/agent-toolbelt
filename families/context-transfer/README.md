@@ -2,6 +2,23 @@
 
 Codex-only task-tree inventory, compact handoff coordination, verified recovery archives, manifest-bound local retirement, and conflict-safe restore.
 
+Version 0.2 includes scoped database-row evidence from the source/child tree in
+the archive. The required handoff explains important database-only context and
+exact recall/recovery references. Normal recall does not follow loose/moved
+references or fall back to database history. Use `read-database --archive <7z>
+--thread-id <id> [--table thread_items] [--pattern <term>] [--limit 10]` for bounded
+offline evidence without importing it into live Codex databases. Rollout offload
+does not purge those databases; permanent removal uses separate thread-cleanup.
+
+Use an independent new destination, not a fork. Inventory reports inherited
+history ancestors and surviving fork dependents separately from child agents.
+Preserve necessary ancestors separately and include their exact archive/row
+references in the handoff. `pack --preserve-referenced-history` permits verified
+inactive ancestor preservation when surviving fork references are its only
+blocker; the archive cannot issue a deletion ticket. After accepted migration,
+permanent cleanup retires selected leaves before selected ancestors. Unselected
+forks remain protected and can keep their ancestors non-deletable.
+
 Inventory includes verified earlier/resumed rollout segments in both Codex
 rollout roots, not only the current SQLite pointer. `threads[].rollouts` and
 `rollout_count` expose coverage. Filename candidates must have matching
