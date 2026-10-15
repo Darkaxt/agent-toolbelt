@@ -15,7 +15,7 @@ Start by choosing the one family you actually need:
 | Skroutz CLI | Skroutz.cy product search, offers, reviews, comparisons, and safe cart workflows | `families/skroutz-cli` | `agent-toolbelt-skroutz-cli` |
 | AliExpress CLI | AliExpress product search, item details, reviews/comments, price and delivery evidence, and optional managed logged-in read-only browsing | `families/aliexpress-cli` | `agent-toolbelt-aliexpress-cli` |
 | Codex Thread Recall | bounded self-recall from the current Codex thread's own raw rollout history before broad exploration | `families/codex-thread-recall` | `agent-toolbelt-codex-thread-recall` |
-| Context Transfer | destination-owned oversized Codex task-tree handoff, verified off-drive archive, exact retirement, and conflict-safe restore | `families/context-transfer` | `agent-toolbelt-context-transfer` |
+| Context Transfer | independent single-chat transfer or multi-chat consolidation, verified rollout/database archives, exact retirement and restore | `families/context-transfer` | `agent-toolbelt-context-transfer` |
 | Transactional Cleanup | reviewed generated-output snapshots and Windows identity-bound deletion tickets | `families/transactional-cleanup` | `agent-toolbelt-transactional-cleanup` |
 | C-Drive Maintenance | active lifecycle-specific cleanup and compatible toolchain consolidation with existing task owners | `families/c-drive-maintenance` | `agent-toolbelt-c-drive-maintenance` |
 | D-Temp Maintenance | owner-driven sweeps and verified cleanup of agent temporary clones, worktrees and outputs | `families/d-temp-maintenance` | - |

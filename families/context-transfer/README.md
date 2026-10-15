@@ -2,6 +2,22 @@
 
 Codex-only task-tree inventory, compact handoff coordination, verified recovery archives, manifest-bound local retirement, and conflict-safe restore.
 
+Skill version 0.3 adds aggregate transfer: several selected chats with different
+purposes within one activity become one independent working context. Read the
+skill's `references/aggregate-transfer.md` for source/owner coverage, consolidated
+requirements, shared handoff and complete group acceptance. It coordinates the
+existing single-source CLI with source-specific acceptance files; it does not
+merge live databases or add an aggregate CLI command. Shared ancestors retain
+verified recovery coverage and unselected dependents remain protected. Archive
+expiry and retirement still require their own explicit authority.
+
+Both transfer modes now reconcile associated schedules through the skill's
+`references/schedules.md`. Definitions and exact source bindings are preserved
+separately from rollout/database archives; unresolved dependencies block source
+retirement. Any authorized schedule change uses the owning tool with read-back,
+preserving timing, prompt scope and notification settings. The skill update
+itself changes no live schedules.
+
 Version 0.2 includes scoped database-row evidence from the source/child tree in
 the archive. The required handoff explains important database-only context and
 exact recall/recovery references. Normal recall does not follow loose/moved

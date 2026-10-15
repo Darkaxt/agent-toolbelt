@@ -1,17 +1,36 @@
 ---
 name: context-transfer
-description: Use when a fresh Codex task must take over useful context from an oversized source task, preserve the complete source and child-agent rollout tree in a verified recovery archive on another drive, archive the source task, reclaim exact rollout files through a reviewed deletion ticket, or restore an offloaded task safely.
+description: Transfer one Codex chat or consolidate several selected chats about one activity into an independent destination, with traceable context, verified rollout/database recovery archives and separately authorized retirement. Also use to restore an offloaded task.
 license: MIT
 metadata:
   compatibility: Codex only. Requires local Codex state and rollout access, 7-Zip, and a non-C recovery drive.
-  version: "0.2.0"
+  version: "0.3.0"
 ---
 
 # Context Transfer
 
-Use this workflow to retire an oversized Codex task without asking that source task to summarize or clean up itself. The destination task owns source analysis, live-state verification, handoff acceptance, archive coordination, and retirement.
+Use this workflow to take over an oversized Codex task or consolidate selected
+chats about one activity without asking the sources to summarize or clean up
+themselves. The destination task owns source analysis, live-state verification,
+handoff acceptance, archive coordination, and retirement.
 
 Do not use this skill merely to continue a normal task. Use codex-thread-recall when the current task only needs its own earlier context.
+
+## Choose The Transfer Mode
+
+For one source, follow the phases below. For several differently purposed chats
+that should become one working context, read
+[Aggregate Transfer](references/aggregate-transfer.md) before inspecting sources.
+It coordinates the same per-source commands with a shared handoff and a complete
+group acceptance gate; there is no aggregate CLI command or live database merge.
+The destination must be independent of every selected tree and inherited owner.
+Neither mode authorizes retiring a chat or deleting retained recovery archives
+merely because its context has been accepted.
+
+For either mode, read [Schedule Reconciliation](references/schedules.md) when
+inventorying the sources. Account for associated automations before acceptance
+and resolve any source-target dependency before retirement. Editing this skill
+or accepting a handoff does not itself authorize changing live schedules.
 
 ## Non-Negotiable Boundaries
 
@@ -45,6 +64,10 @@ The installer validates a complete versioned release before atomically switching
 ## Phase 1: Select And Inspect
 
 Identify the source task with list_threads or read_thread. Use the source task ID, never only its title.
+
+Inventory associated schedules using the schedule reference and retain their
+exact identities, bindings, definitions and disposition in private recovery
+records. Conversation queue/goal rows are not a schedule inventory.
 
 Run inspect with source-thread-id, destination-thread-id, the reviewed non-C recovery root, and an explicit output path for inspection.json.
 
@@ -163,6 +186,11 @@ not a full backup of unrelated conversations or a permanent second search index.
 ## Phase 5: Archive And Retire
 
 This phase always requires explicit live-retirement authorization for the selected real task.
+
+Before archiving/retiring the source, reconcile its schedule ledger. An unresolved
+automation that still targets or needs the source blocks that source's retirement.
+Verify any separately authorized schedule change through supported tools before
+deletion; keep independent schedules intact and do not silently duplicate them.
 
 1. Use set_thread_archived on the source root.
 2. Verify through task retrieval that the source is archived.

@@ -1,6 +1,6 @@
 interface:
   display_name: "Context Transfer"
-  short_description: "Offload an oversized Codex task tree with verified recovery."
-  default_prompt: "Use $context-transfer from a fresh destination task to inspect an oversized source task tree, build a bounded verified handoff, preserve all rollouts in a recovery archive, and retire exact local payloads only after explicit authorization."
+  short_description: "Transfer or consolidate Codex chats with verified recovery."
+  default_prompt: "Use $context-transfer from an independent destination to transfer one chat or consolidate selected chats about one activity into a traceable shared handoff, preserve their rollout/database evidence, and retire only explicitly authorized sources after complete acceptance."
 policy:
   allow_implicit_invocation: true
