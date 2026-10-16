@@ -43,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     pack_parser.add_argument("--manifest", required=True)
     pack_parser.add_argument("--handoff", required=True)
     pack_parser.add_argument("--archive-root", default=str(DEFAULT_ARCHIVE_ROOT))
+    pack_parser.add_argument("--transfer-directory", help="Shared <archive-root>/<year>/<YYYY-MM-DD>-<activity-slug> directory")
     pack_parser.add_argument("--seven-zip-path")
     pack_parser.add_argument("--dictionary-mib", type=int)
     pack_parser.add_argument("--preserve-referenced-history", action="store_true", help="Archive inactive referenced ancestors only; never authorize their deletion")
@@ -176,6 +177,7 @@ def main(argv: list[str] | None = None) -> int:
                 inspection_manifest_path=args.manifest,
                 handoff_path=args.handoff,
                 archive_root=args.archive_root,
+                transfer_directory=args.transfer_directory,
                 seven_zip_path=args.seven_zip_path,
                 dictionary_mib=args.dictionary_mib,
                 preserve_referenced_history=args.preserve_referenced_history,

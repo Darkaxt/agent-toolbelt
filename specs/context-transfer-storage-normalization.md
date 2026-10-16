@@ -26,6 +26,21 @@ skill/runtime correction, not archive expiry, conversation retirement or new sch
   behavior, install source/skill/runtime parity, clean task scratch and obsolete
   empty grouping directories through the installed cleanup helper, reconcile all
   requirements and commit the completed result.
+- N5 (user correction): normalize the contents as well as the parent root. Use
+  `<year>/<YYYY-MM-DD>-<activity-slug>/Records` and
+  `<year>/<YYYY-MM-DD>-<activity-slug>/Archives/<source-ID>/<transaction>`.
+  Activity slugs are lowercase kebab-case; dates reflect the chosen transfer start
+  date. Put normalization receipts in `Maintenance/<date>-<purpose>`. Preserve
+  historical evidence filenames and bytes, group UUID-prefixed multi-source
+  records beneath `Records/Sources/<source-ID>`, and publish a compact activity
+  index plus complete old-to-current mapping. This supersedes N2's initial
+  relative-directory preservation where needed for the requested internal layout.
+  Update the actual pack helper and aggregate guidance so future transfers use
+  this structure, including an explicitly selected shared transfer directory.
+  E: uses exFAT: moving individual records can change their directory-entry file
+  indices. Record before/after identities and verify volume/creation identity,
+  hashes, sizes, timestamps and exact destination coverage; do not claim those
+  rename-dependent indices remain unchanged. All recovery content stays intact.
 
 ## Execution
 
@@ -33,6 +48,7 @@ skill/runtime correction, not archive expiry, conversation retirement or new sch
 |---|---|---|
 | Canonical skill and runtime storage | COMPLETE | N1/N4 archive relocation and CLI/runtime tests passed; installed Codex/agents skills and selected runtime match; defaults and explicit override verified |
 | Consolidate existing recovery folders | COMPLETE | N2–N4 all 493 original files retain hashes/identities/size/mtime; all 25 archives pass installed recovery verification; four legacy roots and task scratch absent |
+| Normalize the internal transfer layout | COMPLETE | N5 nine dated activity groups with Records/Archives; 540 files preserved; shared pack layout tested and installed; index/mapping, recovery and cleanup verified |
 
 Blockers: none. Tracked deferrals: none. TailD's transfer completed; supported idle
 status, COMPLETE ledger and zero visible consumers permitted its tree move.
@@ -59,6 +75,18 @@ path references are retained as evidence and translated by the external move map
   and task scratch were reviewed/ticketed/removed through transactional-cleanup;
   all transactions are applied. No unrelated E: data or schedules changed.
 
+- N5: Nine activities now use `2026/2026-10-16-<activity>/Records` and
+  `Archives/<source-ID>/<UTC-stamp>`, with per-source records grouped beneath
+  `Records/Sources`. Maintenance receipts are separated. All 540 pre-existing
+  files retain hashes, sizes, timestamps, volume and creation identity. Expected
+  exFAT entry-index changes are recorded before/after. All 25 archives retain
+  their verified content; three fresh native recovery checks passed at new paths.
+  Full family tests passed, including shared source grouping and relocation/
+  restoration. Installed source/skill/runtime parity and pack capability verified.
+  Root INDEX/PATH_MAP provide current navigation and composed historical aliases.
+  Obsolete grouping roots and task scratch were ticketed and removed.
+
 Closure assessment: reuse existing same-directory metadata resolution and recovery
-verification. One default-path correction and explicit skill storage rules suffice;
-no redirect layer, symlinks, data copy, archive rewrite or migration framework added.
+verification. Explicit dated activity selection extends the existing pack path
+builder; archive formats and verification/retirement/restore lifecycles remain
+intact. No redirect layer, symlinks, data copies or archive rewrites were introduced.

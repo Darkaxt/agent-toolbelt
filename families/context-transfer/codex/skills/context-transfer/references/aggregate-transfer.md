@@ -12,6 +12,11 @@ runtime. All commands below use the installed wrapper from SKILL.md.
 Resolve the exact full source IDs and one independent destination ID through
 supported task tools. Record the user's shared activity/objective, selected IDs
 and exclusions in a private group ledger under the reviewed non-C recovery root.
+Choose one dated activity directory using Canonical Local Storage in SKILL.md.
+Place the shared handoff and group ledger in `Records`, and per-source inspection,
+acceptance and schedule evidence in `Records/Sources/<source-ID>`. Pass this same
+activity directory to every `pack --transfer-directory` invocation so all recovery
+transactions land in its `Archives/<source-ID>/<UTC-stamp>` tree.
 Related title, cwd or repository alone is not selection authority. If the user
 has not identified the sources sufficiently, resolve that selection before any
 mutation; do not infer that every chat about the repository belongs to the group.

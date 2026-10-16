@@ -78,7 +78,13 @@ Do not create another permanent full-text copy of the rollout corpus. Any tempor
 
 Create each transaction under:
 
-`E:\Codex\ContextTransfers\<year>\<root-thread-id>--<safe-slug>\<timestamp>\`
+`E:\Codex\ContextTransfers\<year>\<YYYY-MM-DD>-<activity-slug>\Archives\<source-thread-id>\<UTC-timestamp>\`
+
+Keep handoffs and working evidence in the same activity's `Records` directory,
+with multi-source records under `Records/Sources/<source-ID>`. Choose the shared
+dated activity path explicitly with `pack --transfer-directory`; normalization
+receipts use `Maintenance/<YYYY-MM-DD>-<purpose>`. This is the normalized local
+layout as of 2026-10-16.
 
 The transaction contains:
 

@@ -8,6 +8,14 @@ location until completion. Completed tree relocation preserves immutable
 evidence and records an old-to-current path map; verification, offline reads and
 restore use the current exact archive path. Explicit non-C roots remain supported.
 
+Skill 0.3.4 normalizes the contents: `<year>/<YYYY-MM-DD>-<activity>/Records`
+holds handoffs and working evidence, while `Archives/<source-ID>/<UTC-stamp>`
+holds complete immutable transactions. Multi-source records use
+`Records/Sources/<source-ID>`. Pass the shared dated activity path through
+`pack --transfer-directory` to keep all sources together; omitted paths derive
+from the source title and UTC date. Maintenance receipts have their own
+`Maintenance/<YYYY-MM-DD>-<purpose>` directory.
+
 Skill version 0.3 adds aggregate transfer: several selected chats with different
 purposes within one activity become one independent working context. Read the
 skill's `references/aggregate-transfer.md` for source/owner coverage, consolidated
@@ -74,7 +82,7 @@ agent-toolbelt-context-transfer inspect --source-thread-id <id> --archive-root "
 agent-toolbelt-context-transfer catalog --manifest inspection.json --output evidence-catalog.json
 agent-toolbelt-context-transfer validate-handoff --manifest inspection.json --handoff CONTEXT_TRANSFER.md
 agent-toolbelt-context-transfer validate-acceptance --manifest inspection.json --handoff CONTEXT_TRANSFER.md --acceptance destination-acceptance.json
-agent-toolbelt-context-transfer pack --manifest inspection.json --handoff CONTEXT_TRANSFER.md --archive-root "E:\Codex\ContextTransfers"
+agent-toolbelt-context-transfer pack --manifest <activity>/Records/inspection.json --handoff <activity>/Records/CONTEXT_TRANSFER.md --transfer-directory "E:\Codex\ContextTransfers\2026\2026-10-16-example"
 agent-toolbelt-context-transfer verify --archive <thread-tree.7z>
 agent-toolbelt-context-transfer issue-deletion-ticket --verification <verification.json> --acceptance <destination-acceptance.json> --archived-state <archived-state.json> --confirm-live-retirement
 agent-toolbelt-context-transfer apply-deletion --ticket <deletion-ticket.json> --ticket-id <reviewed-id> --confirm-delete

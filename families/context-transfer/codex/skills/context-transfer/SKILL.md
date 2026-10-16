@@ -4,7 +4,7 @@ description: Take over one Codex chat or consolidate selected chats into an inde
 license: MIT
 metadata:
   compatibility: Codex only. Requires local Codex state and rollout access, 7-Zip, and a non-C recovery drive.
-  version: "0.3.3"
+  version: "0.3.4"
 ---
 
 # Context Transfer
@@ -20,10 +20,28 @@ Do not use this skill merely to continue a normal task. Use codex-thread-recall 
 
 Use `E:\Codex\ContextTransfers` with exactly that spelling and capitalization
 for local transfer handoffs, group ledgers, acceptance records and recovery
-archives. This is also the CLI's default `--archive-root`. Put activity-specific
-working records beneath this root; preserve the helper's generated year/source-ID/
-transaction layout for archives. Do not invent another top-level transfer or
-recovery folder. An explicit user-selected non-C recovery location takes precedence.
+archives. This is also the CLI's default `--archive-root`. Use this inner layout:
+
+```text
+<root>/<year>/<YYYY-MM-DD>-<activity-slug>/
+  Records/                         handoff, ledger, acceptance and working evidence
+    Sources/<source-ID>/           per-source records for a multi-source transfer
+  Archives/<source-ID>/<UTC-stamp>/ verified transaction and its immutable evidence
+<root>/Maintenance/<YYYY-MM-DD>-<purpose>/
+```
+
+Choose a readable lowercase kebab-case activity slug from the actual chat/shared
+activity title and the transfer start date in the user's timezone. Write handoffs
+and inspection/output records under `Records`. Pass the same full activity path
+as `pack --transfer-directory <path>` for every selected source/ancestor; the helper
+creates `Archives/<source-ID>/<UTC-stamp>` without prompt-derived folder names.
+Without that option, pack derives a dated activity directory from its source title
+and UTC start date. Keep the explicit shared path across midnight or title changes.
+Do not nest another year tree inside Records or Archives. Keep fixed transaction
+filenames such as `thread-tree.7z`, `manifest.json` and `CONTEXT_TRANSFER.md` intact.
+Use the root's index/path map when resolving relocated historical evidence.
+Do not invent another top-level transfer or recovery folder. An explicit
+user-selected non-C recovery root takes precedence over the local default.
 
 Existing transfers keep their selected root until packing, acceptance and
 retirement finish; never move a tree in use by another chat or helper operation.

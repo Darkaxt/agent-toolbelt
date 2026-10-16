@@ -118,7 +118,7 @@ def detect_memory_bytes() -> tuple[int, int]:
 
 def _safe_slug(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
-    return slug[:64] or "task"
+    return slug[:64].rstrip("-") or "task"
 
 
 def _load_inspection(path: Path) -> dict[str, Any]:
@@ -446,6 +446,7 @@ def pack_recovery(
     inspection_manifest_path: str | os.PathLike[str],
     handoff_path: str | os.PathLike[str],
     archive_root: str | os.PathLike[str],
+    transfer_directory: str | os.PathLike[str] | None = None,
     seven_zip_path: str | None = None,
     dictionary_mib: int | None = None,
     preserve_referenced_history: bool = False,
@@ -487,16 +488,34 @@ def pack_recovery(
         inventory["threads"][0],
     )
     title = str(source_record.get("metadata", {}).get("title") or source_id)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", source_id):
+        raise ArchiveError("unsafe_source_id", "Source ID must be one safe directory component.")
+    if transfer_directory is None:
+        transfer_root = root / f"{current_time.year:04d}" / f"{current_time:%Y-%m-%d}-{_safe_slug(title)}"
+    else:
+        transfer_root = Path(transfer_directory).resolve()
+        try:
+            relative = transfer_root.relative_to(root)
+            if len(relative.parts) != 2:
+                raise ValueError("Expected year and dated activity")
+            year, activity_name = relative.parts
+            date_text, slug = activity_name[:10], activity_name[11:]
+            parsed_date = datetime.strptime(date_text, "%Y-%m-%d")
+            if (year != f"{parsed_date.year:04d}" or activity_name[10:11] != "-"
+                    or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug)):
+                raise ValueError("Expected a dated lowercase activity slug")
+        except ValueError as exc:
+            raise ArchiveError("invalid_transfer_directory",
+                               "Use <archive-root>/<year>/<YYYY-MM-DD>-<activity-slug>.") from exc
     transaction_root = (
-        root
-        / f"{current_time.year:04d}"
-        / f"{source_id}--{_safe_slug(title)}"
+        transfer_root / "Archives" / source_id
         / current_time.strftime("%Y%m%dT%H%M%SZ")
     )
     if transaction_root.exists():
         raise ArchiveError("transaction_exists", f"Transaction already exists: {transaction_root}")
 
     transaction_root.mkdir(parents=True)
+    (transfer_root / "Records").mkdir(exist_ok=True)
     payload_root = transaction_root / ".payload" / "context-transfer"
     payload_root.mkdir(parents=True)
     external_handoff = transaction_root / "CONTEXT_TRANSFER.md"
@@ -602,6 +621,7 @@ def pack_recovery(
             "schema": "agent_toolbelt_context_transfer.verification.v1",
             "ok": True,
             "transaction_root": str(transaction_root),
+            "transfer_directory": str(transfer_root),
             "archive_path": str(final_archive),
             "archive_sha256": archive_sha256,
             "archive_test_passed": True,

@@ -197,6 +197,9 @@ None.
         self.assertTrue(result["ok"])
         self.assertTrue(archive_path.is_file())
         self.assertEqual(archive_path.name, "thread-tree.7z")
+        self.assertEqual(transaction_root.relative_to(self.archive_root).parts,
+                         ('2026', '2026-08-31-apollo-installation-troubleshooting', 'Archives', 'root', '20260831T123456Z'))
+        self.assertTrue((Path(result['transfer_directory']) / 'Records').is_dir())
         self.assertFalse((transaction_root / "thread-tree.7z.partial").exists())
         self.assertTrue((transaction_root / "manifest.json").is_file())
         self.assertTrue((transaction_root / "CONTEXT_TRANSFER.md").is_file())
@@ -262,6 +265,28 @@ None.
         self.assertEqual(restored['restored_file_count'], 1)
         self.assertEqual(self.root_rollout.read_bytes(), root_bytes)
         self.assertEqual(before, {name: (relocated / name).read_bytes() for name in before})
+
+    def test_shared_transfer_directory_groups_sources_and_preserves_recovery(self):
+        shared = self.archive_root / '2026/2026-08-30-shared-activity'
+        first = archive.pack_recovery(inspection_manifest_path=self.manifest_path,
+                    handoff_path=self.handoff_path, archive_root=self.archive_root,
+                    transfer_directory=shared, seven_zip_path=SEVEN_ZIP, dictionary_mib=16)
+        inventory = context_transfer.inventory_thread_tree(source_thread_id='child',
+                    destination_thread_id='destination', codex_home=self.fixture.codex_home,
+                    archive_root=self.archive_root)
+        other_manifest = self.root / 'child-inspection.json'
+        other_manifest.write_text(json.dumps(inventory), encoding='utf-8')
+        second = archive.pack_recovery(inspection_manifest_path=other_manifest,
+                    handoff_path=self.handoff_path, archive_root=self.archive_root,
+                    transfer_directory=shared, seven_zip_path=SEVEN_ZIP, dictionary_mib=16)
+        self.assertEqual(Path(first['transaction_root']).parent, shared / 'Archives/root')
+        self.assertEqual(Path(second['transaction_root']).parent, shared / 'Archives/child')
+        self.assertTrue(archive.verify_recovery_archive(second['archive_path'], seven_zip_path=SEVEN_ZIP)['ok'])
+        with self.assertRaises(archive.ArchiveError) as raised:
+            archive.pack_recovery(inspection_manifest_path=self.manifest_path,
+                    handoff_path=self.handoff_path, archive_root=self.archive_root,
+                    transfer_directory=self.root / 'outside', seven_zip_path=SEVEN_ZIP, dictionary_mib=16)
+        self.assertEqual(raised.exception.kind, 'invalid_transfer_directory')
 
     def test_pack_never_passes_live_rollout_paths_to_seven_zip(self):
         real_run = archive._run_seven_zip
