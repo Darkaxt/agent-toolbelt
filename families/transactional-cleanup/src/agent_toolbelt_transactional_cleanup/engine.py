@@ -24,7 +24,8 @@ from . import git_markers
 POLICY = '2'
 KINDS = ('temporary', 'compiler-output', 'package-cache', 'browser-artifact',
          'media-intermediate', 'test-output', 'generated-report', 'explicit-generated-output',
-         'disposable-repository', 'retired-repository', 'generated-git-marker')
+         'disposable-repository', 'retired-repository', 'generated-git-marker',
+         'generated-dependency-repository')
 GENERATED = {'__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache'}
 RETRY = {'locked', 'failed', 'not_empty'}
 BATCH_SIZE = 256
@@ -611,7 +612,8 @@ class Engine:
     def register(self, transaction, path, kind, evidence, regenerated=False,
                  allow_hardlinks=False, allow_leaf_reparse=False,
                  allow_disposable_repository=False, retirement_evidence=None,
-                 confirm_retire_repository=None, confirm_git_marker=None):
+                 confirm_retire_repository=None, confirm_git_marker=None,
+                 dependency_evidence=None, confirm_dependency_repository=None):
         path = fs.canonical(path)
         reason = self.protection(path)
         if kind not in KINDS or not evidence.strip():
@@ -625,7 +627,24 @@ class Engine:
             repository_identity = None
             retirement_proof = None
             marker_proof = None
-            if kind == 'generated-git-marker' or confirm_git_marker:
+            if kind == 'generated-dependency-repository' or dependency_evidence or confirm_dependency_repository:
+                if (kind != 'generated-dependency-repository' or not regenerated
+                        or not dependency_evidence or not confirm_dependency_repository
+                        or fs.canonical(confirm_dependency_repository) != path
+                        or allow_hardlinks or allow_leaf_reparse or allow_disposable_repository
+                        or retirement_evidence or confirm_retire_repository or confirm_git_marker):
+                    raise CleanupError('dependency_authority_required',
+                                       'Generated dependency cleanup requires evidence and exact root confirmation')
+                if (reason != 'repository_root' or path == Path(row['workspace'])
+                        or path_key(path) not in {path_key(root) for root in roots}):
+                    raise CleanupError('dependency_exact_root_required', 'Use one exact generated clone scan root')
+                loaded = retirement.load_evidence(dependency_evidence, path)
+                if loaded.get('mode') != 'cmake-fetchcontent':
+                    raise CleanupError('dependency_evidence_invalid', 'Expected CMake FetchContent provenance')
+                retirement_proof = retirement.validate(path, loaded)
+                repository_identity = retirement_proof['root_identity']
+                reason = None
+            elif kind == 'generated-git-marker' or confirm_git_marker:
                 if (kind != 'generated-git-marker' or not regenerated or not confirm_git_marker
                         or fs.canonical(confirm_git_marker) != path or allow_hardlinks
                         or allow_leaf_reparse or allow_disposable_repository
@@ -649,7 +668,10 @@ class Engine:
                     raise CleanupError('protected_path', reason or 'workspace_overlap')
                 if path_key(path) not in {path_key(root) for root in roots}:
                     raise CleanupError('retirement_exact_root_required', 'Retired checkout must be an exact scan root')
-                retirement_proof = retirement.validate(path, retirement.load_evidence(retirement_evidence, path))
+                loaded = retirement.load_evidence(retirement_evidence, path)
+                if loaded.get('mode') == 'cmake-fetchcontent':
+                    raise CleanupError('retirement_evidence_invalid', 'Use the explicit generated-dependency contract')
+                retirement_proof = retirement.validate(path, loaded)
                 repository_identity = retirement_proof['root_identity']
                 reason = None
             elif allow_disposable_repository:

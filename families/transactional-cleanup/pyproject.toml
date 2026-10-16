@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-toolbelt-transactional-cleanup"
-version = "0.6.0"
+version = "0.7.0"
 description = "Reviewed Windows and device-bound Android task cleanup tickets"
 requires-python = ">=3.11"
 license = {text = "MIT"}

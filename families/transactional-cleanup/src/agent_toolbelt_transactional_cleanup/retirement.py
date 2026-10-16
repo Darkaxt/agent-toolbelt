@@ -81,7 +81,10 @@ def load_evidence(path, root):
         raise RetirementError('retirement_evidence_invalid', 'Expected retirement evidence version 1')
     if fs.canonical(value.get('repository', '')) != root:
         raise RetirementError('retirement_evidence_invalid', 'Evidence repository does not match the exact root')
-    for field in ('authorization', 'recovery_instructions', 'recovery_repository'):
+    fields = (('authorization', 'project', 'producer', 'dependency', 'origin', 'pin', 'validation_root')
+              if value.get('mode') == 'cmake-fetchcontent' else
+              ('authorization', 'recovery_instructions', 'recovery_repository'))
+    for field in fields:
         if not isinstance(value.get(field), str) or not value[field].strip():
             raise RetirementError('retirement_evidence_invalid', f'Missing {field}')
     return value
@@ -129,6 +132,9 @@ def verify_recovery(root, proof):
 
 
 def validate(root, evidence, expected=None, require_git=True):
+    if evidence.get('mode') == 'cmake-fetchcontent':
+        from . import generated_dependencies
+        return generated_dependencies.validate(root, evidence, expected, require_git)
     identity = standalone(root, expected.get('root_identity') if expected else None)
     check_consumers(root, evidence)
     if not require_git:

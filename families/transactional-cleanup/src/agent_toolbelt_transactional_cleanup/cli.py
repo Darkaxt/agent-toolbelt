@@ -33,6 +33,8 @@ def parser():
     register.add_argument('--retirement-evidence', help='External JSON ownership and independent recovery evidence')
     register.add_argument('--confirm-retire-repository', help='Explicitly confirm the exact obsolete checkout root')
     register.add_argument('--confirm-git-marker', help='Confirm one generated .git/<namespace>-workflow-tree file')
+    register.add_argument('--dependency-evidence', help='External JSON CMake provenance, patch and consumer evidence')
+    register.add_argument('--confirm-dependency-repository', help='Confirm one exact generated CMake dependency clone')
     for name in ('review', 'ticket'):
         command = commands.add_parser(name)
         command.add_argument('--transaction', required=True)
@@ -90,7 +92,8 @@ def main(argv=None):
                     result = engine.register(args.transaction, args.path, args.kind, args.evidence,
                                              args.regenerated, args.allow_hardlinks, args.allow_leaf_reparse,
                                              args.allow_disposable_repository, args.retirement_evidence,
-                                             args.confirm_retire_repository, args.confirm_git_marker)
+                                             args.confirm_retire_repository, args.confirm_git_marker,
+                                             args.dependency_evidence, args.confirm_dependency_repository)
                 elif args.command == 'review':
                     result = engine.review(args.transaction)
                 elif args.command == 'ticket':

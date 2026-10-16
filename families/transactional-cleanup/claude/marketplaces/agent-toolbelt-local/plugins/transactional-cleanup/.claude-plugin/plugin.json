@@ -1,6 +1,6 @@
 {
   "name": "transactional-cleanup",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Reviewed Windows and device-bound Android task cleanup tickets.",
   "license": "MIT"
 }

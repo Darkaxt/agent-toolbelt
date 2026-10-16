@@ -3,7 +3,7 @@ name: transactional-cleanup
 description: Clean task-generated Windows or Android artifacts through reviewed snapshots and exact-file tickets, including temporary test apps with recorded installation provenance.
 license: MIT
 metadata:
-  version: "0.6.0"
+  version: "0.7.0"
   compatibility: Windows 10/11, Python 3.11+, NTFS/ReFS or content-bound exFAT; Android cleanup requires ADB and device shell tools. Codex and Claude.
 ---
 
@@ -57,6 +57,10 @@ a blanket refusal to remove anything inside a repository. Classify each target:
   that exact clone satisfies its contract; tracked members can then be ticketed.
 - Entire obsolete checkout, including outside Temp: use Explicit Repository
   Retirement below, not the disposable-validation shortcut.
+- Generated CMake dependency clone under `.cxx/.../_deps/<name>-src`: read
+  [Generated Dependency Clones](references/generated-dependencies.md). Exact
+  provenance, pin/patch reproduction and local-work checks permit this narrow
+  cache class outside Temp without creating a full repository backup.
 - Obsolete tracked source or templates: removal is a normal source change, not a
   cleanup ticket. If removal is within the user's authorized scope, inspect
   references, build/package consumers and local changes, make the narrow reviewed
