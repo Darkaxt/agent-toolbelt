@@ -245,6 +245,24 @@ None.
         self.assertEqual(earlier.read_bytes(), content)
         self.assertTrue(self.root_rollout.exists())
 
+    def test_completed_archive_can_move_without_rewriting_recovery_evidence(self):
+        packed = self.pack()
+        original = Path(packed['transaction_root'])
+        before = {p.name: p.read_bytes() for p in original.iterdir() if p.is_file()}
+        relocated = self.root / 'ContextTransfers' / 'completed-transaction'
+        relocated.parent.mkdir()
+        original.rename(relocated)
+        current_archive = relocated / 'thread-tree.7z'
+        verified = archive.verify_recovery_archive(current_archive, seven_zip_path=SEVEN_ZIP)
+        self.assertTrue(verified['ok'])
+        self.assertEqual(verified['archive_sha256'], packed['archive_sha256'])
+        root_bytes = self.root_rollout.read_bytes()
+        self.root_rollout.unlink()
+        restored = restore.restore_recovery_archive(archive_path=current_archive, seven_zip_path=SEVEN_ZIP)
+        self.assertEqual(restored['restored_file_count'], 1)
+        self.assertEqual(self.root_rollout.read_bytes(), root_bytes)
+        self.assertEqual(before, {name: (relocated / name).read_bytes() for name in before})
+
     def test_pack_never_passes_live_rollout_paths_to_seven_zip(self):
         real_run = archive._run_seven_zip
         observed_snapshot = False

@@ -4,7 +4,7 @@ description: Take over one Codex chat or consolidate selected chats into an inde
 license: MIT
 metadata:
   compatibility: Codex only. Requires local Codex state and rollout access, 7-Zip, and a non-C recovery drive.
-  version: "0.3.2"
+  version: "0.3.3"
 ---
 
 # Context Transfer
@@ -15,6 +15,25 @@ themselves. The destination task owns source analysis, live-state verification,
 handoff acceptance, archive coordination, and retirement.
 
 Do not use this skill merely to continue a normal task. Use codex-thread-recall when the current task only needs its own earlier context.
+
+## Canonical Local Storage
+
+Use `E:\Codex\ContextTransfers` with exactly that spelling and capitalization
+for local transfer handoffs, group ledgers, acceptance records and recovery
+archives. This is also the CLI's default `--archive-root`. Put activity-specific
+working records beneath this root; preserve the helper's generated year/source-ID/
+transaction layout for archives. Do not invent another top-level transfer or
+recovery folder. An explicit user-selected non-C recovery location takes precedence.
+
+Existing transfers keep their selected root until packing, acceptance and
+retirement finish; never move a tree in use by another chat or helper operation.
+When normalizing completed trees, preserve all files and immutable evidence
+byte-for-byte, merge directory overlaps without overwriting files, and retain an
+old-to-current path map. Historical paths inside handoffs, manifests and applied
+tickets remain historical evidence; do not rewrite them or replay old tickets.
+Use the current exact archive path for `verify`, `read-database` and `restore`,
+which find and hash-check metadata beside the archive. Verify recovery after a
+move. Pending/live retirement evidence must stay in place until its owner finishes.
 
 ## Choose The Transfer Mode
 

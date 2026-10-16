@@ -29,7 +29,7 @@ Verification:
 
 Requirements: CT-5, CT-6, CT-7, and archive-layout acceptance criteria.
 
-- Implement transaction roots under `E:\Codex\ThreadArchives`.
+- Implement transaction roots under `E:\Codex\ContextTransfers` (normalized local convention, 2026-10-16).
 - Build the 7z payload directly on `E:` using recorded maximum-compression settings.
 - Generate external/internal manifests, metadata exports, hashes, and verification evidence.
 - Implement archive testing and representative extraction verification.

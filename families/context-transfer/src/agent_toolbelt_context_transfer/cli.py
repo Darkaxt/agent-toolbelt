@@ -11,7 +11,7 @@ from typing import Any
 from . import activity, archive, context_transfer, database_evidence, handoff, restore, retirement
 
 
-DEFAULT_ARCHIVE_ROOT = Path(r"E:\Codex\ThreadArchives")
+DEFAULT_ARCHIVE_ROOT = Path(r"E:\Codex\ContextTransfers")
 
 
 def build_parser() -> argparse.ArgumentParser:

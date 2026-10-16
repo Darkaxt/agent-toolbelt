@@ -559,7 +559,7 @@ class CliTests(unittest.TestCase):
                 "--handoff",
                 "D:/CONTEXT_TRANSFER.md",
                 "--archive-root",
-                "E:/Codex/ThreadArchives",
+                "E:/Codex/ContextTransfers",
                 "--seven-zip-path",
                 "D:/Tools/7z.exe",
                 "--dictionary-mib",
@@ -571,7 +571,7 @@ class CliTests(unittest.TestCase):
         pack_recovery.assert_called_once_with(
             inspection_manifest_path="D:/inspection.json",
             handoff_path="D:/CONTEXT_TRANSFER.md",
-            archive_root="E:/Codex/ThreadArchives",
+            archive_root="E:/Codex/ContextTransfers",
             seven_zip_path="D:/Tools/7z.exe",
             dictionary_mib=768,
             preserve_referenced_history=False,

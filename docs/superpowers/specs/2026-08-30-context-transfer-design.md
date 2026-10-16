@@ -17,7 +17,7 @@ The first live acceptance fixture is the task currently shown as `Beacon`, origi
 - Complete rollout size: `8,000,165,603` bytes (`7.451 GiB`)
 - Source task archive state at design time: not archived
 - Recovery drive free space at design time: approximately `2.40 TiB`
-- Recovery root: `E:\Codex\ThreadArchives`
+- Recovery root: `E:\Codex\ContextTransfers` (normalized local convention, 2026-10-16)
 
 These values are test evidence, not hardcoded production assumptions. The helper must discover every task tree from the live read-only Codex index.
 
@@ -78,7 +78,7 @@ Do not create another permanent full-text copy of the rollout corpus. Any tempor
 
 Create each transaction under:
 
-`E:\Codex\ThreadArchives\<year>\<root-thread-id>--<safe-slug>\<timestamp>\`
+`E:\Codex\ContextTransfers\<year>\<root-thread-id>--<safe-slug>\<timestamp>\`
 
 The transaction contains:
 
@@ -217,7 +217,7 @@ Proposed helper commands:
 ```powershell
 agent-toolbelt-context-transfer inspect `
   --source-thread-id <thread-id> `
-  --archive-root "E:\Codex\ThreadArchives"
+  --archive-root "E:\Codex\ContextTransfers"
 
 agent-toolbelt-context-transfer pack `
   --manifest <inspection-manifest> `

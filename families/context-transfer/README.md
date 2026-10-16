@@ -2,6 +2,12 @@
 
 Codex-only task-tree inventory, compact handoff coordination, verified recovery archives, manifest-bound local retirement, and conflict-safe restore.
 
+Local storage uses `E:\Codex\ContextTransfers` (skill 0.3.3), including the CLI
+default, handoffs and recovery archives. Keep live transfers in their chosen
+location until completion. Completed tree relocation preserves immutable
+evidence and records an old-to-current path map; verification, offline reads and
+restore use the current exact archive path. Explicit non-C roots remain supported.
+
 Skill version 0.3 adds aggregate transfer: several selected chats with different
 purposes within one activity become one independent working context. Read the
 skill's `references/aggregate-transfer.md` for source/owner coverage, consolidated
@@ -64,11 +70,11 @@ The implementation follows `docs/superpowers/specs/2026-08-30-context-transfer-d
 ## Commands
 
 ```powershell
-agent-toolbelt-context-transfer inspect --source-thread-id <id> --archive-root "E:\Codex\ThreadArchives" --output inspection.json
+agent-toolbelt-context-transfer inspect --source-thread-id <id> --archive-root "E:\Codex\ContextTransfers" --output inspection.json
 agent-toolbelt-context-transfer catalog --manifest inspection.json --output evidence-catalog.json
 agent-toolbelt-context-transfer validate-handoff --manifest inspection.json --handoff CONTEXT_TRANSFER.md
 agent-toolbelt-context-transfer validate-acceptance --manifest inspection.json --handoff CONTEXT_TRANSFER.md --acceptance destination-acceptance.json
-agent-toolbelt-context-transfer pack --manifest inspection.json --handoff CONTEXT_TRANSFER.md --archive-root "E:\Codex\ThreadArchives"
+agent-toolbelt-context-transfer pack --manifest inspection.json --handoff CONTEXT_TRANSFER.md --archive-root "E:\Codex\ContextTransfers"
 agent-toolbelt-context-transfer verify --archive <thread-tree.7z>
 agent-toolbelt-context-transfer issue-deletion-ticket --verification <verification.json> --acceptance <destination-acceptance.json> --archived-state <archived-state.json> --confirm-live-retirement
 agent-toolbelt-context-transfer apply-deletion --ticket <deletion-ticket.json> --ticket-id <reviewed-id> --confirm-delete
