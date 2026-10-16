@@ -30,6 +30,9 @@ Schema v9 stops treating SQLite as a second transcript store. Rollout JSONL file
 ## Non-Goals
 
 - Do not compress raw transcript blobs into SQLite.
-- Do not rely on pruning to control database size.
+- Do not age-prune available source indexes or trim evidence to meet a size quota.
+  Explicit reviewed maintenance may evict rebuildable caches with unavailable
+  sources, retaining raw histories, app rows and opt-in memory bundles. Collector
+  diagnostic retention is independent of evidence retention.
 - Do not add background crawling or cross-thread raw import.
 - Do not remove source evidence pointers from user-facing grep/worklog results.

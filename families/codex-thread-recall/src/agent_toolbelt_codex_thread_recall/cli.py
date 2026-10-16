@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
 from . import thread_recall
 
@@ -16,6 +17,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("status", help="Resolve the current thread and show metadata.")
+    maintenance = subparsers.add_parser("maintain-cache", help="Review or apply maintenance of rebuildable recall caches.")
+    maintenance.add_argument("--plan", help="Read an inventory JSON plan to apply.")
+    maintenance.add_argument("--confirm-plan-sha256", help="Hash of the inspected plan; required with --plan.")
+    maintenance.add_argument("--compact", action="store_true", help="Run native SQLite compaction after applying a reviewed plan.")
     purge = subparsers.add_parser("purge-thread-cache", help="Remove one explicitly retired thread's derived recall index.")
     purge.add_argument("--confirm-thread-id", required=True)
 
@@ -110,7 +115,20 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    if args.command == "purge-thread-cache":
+    if args.command == "maintain-cache":
+        from . import cache_maintenance
+        home = thread_recall.default_codex_home(args.home_override)
+        if args.plan:
+            plan = json.loads(Path(args.plan).read_text(encoding="utf-8-sig"))
+            if not args.confirm_plan_sha256 or args.confirm_plan_sha256 != plan.get("plan_sha256"):
+                payload = thread_recall.failure("confirmation_required", "Supply the inspected plan SHA-256")
+            else:
+                payload = cache_maintenance.apply(home, plan, compact=args.compact)
+        elif args.compact or args.confirm_plan_sha256:
+            payload = thread_recall.failure("confirmation_required", "Compaction requires an inspected --plan")
+        else:
+            payload = cache_maintenance.inventory(home)
+    elif args.command == "purge-thread-cache":
         payload = thread_recall.purge_retired_thread_cache(thread_id=args.thread_id, confirm_thread_id=args.confirm_thread_id, codex_home=args.home_override)
     elif args.command == "status":
         payload = thread_recall.status(thread_id=args.thread_id, codex_home=args.home_override)

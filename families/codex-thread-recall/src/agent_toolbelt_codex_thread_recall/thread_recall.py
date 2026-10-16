@@ -149,6 +149,8 @@ COLLECTOR_LOCK_SKIP_STATES = {"locked", "busy"}
 DEFAULT_COLLECTOR_UPDATED_WITHIN_HOURS = 48
 DEFAULT_COLLECTOR_MAX_THREADS = 10
 DEFAULT_COLLECTOR_MAX_RUN_SECONDS = 90
+COLLECTOR_LOG_MAX_BYTES = 16 * 1024 * 1024
+COLLECTOR_DIAGNOSTIC_EXAMPLES = 10
 EPISODE_GAP_SECONDS = 1800
 EPISODE_DOMINANT_LIMIT = 5
 FACET_TABLES: dict[str, tuple[str, str]] = {
@@ -1670,11 +1672,9 @@ def ensure_cache_schema(conn: sqlite3.Connection) -> None:
     conn.execute("create index if not exists idx_episodes_thread on episodes(thread_id, episode_index)")
     conn.execute("create index if not exists idx_episode_links_episode on entry_episode_links(episode_id)")
     conn.execute("create index if not exists idx_entry_entity_mentions_entry on entry_entity_mentions(entry_id)")
-    conn.execute("create index if not exists idx_entry_entity_mentions_entity on entry_entity_mentions(entity)")
     conn.execute("create index if not exists idx_entry_entity_mentions_entity_entry on entry_entity_mentions(entity, entry_id)")
     for facet_name, (table_name, column_name) in FACET_TABLES.items():
         conn.execute(f"create index if not exists idx_{table_name}_entry on {table_name}(entry_id)")
-        conn.execute(f"create index if not exists idx_{table_name}_value on {table_name}({column_name})")
         conn.execute(f"create index if not exists idx_{table_name}_value_entry on {table_name}({column_name}, entry_id)")
     if sqlite_fts5_available(conn):
         conn.execute(
@@ -2458,14 +2458,16 @@ def read_collector_last_run(codex_home: Path) -> dict[str, Any] | None:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    return payload if isinstance(payload, dict) else None
+    return compact_collector_payload(payload) if isinstance(payload, dict) else None
 
 
 def write_collector_last_run(codex_home: Path, payload: dict[str, Any]) -> None:
     root = collector_root(codex_home)
     root.mkdir(parents=True, exist_ok=True)
-    sanitized = collector_json_log_payload(payload)
-    collector_last_run_path(codex_home).write_text(json.dumps(sanitized, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+    sanitized = compact_collector_payload(payload)
+    path = collector_last_run_path(codex_home)
+    with CollectorDiagnosticLock(path):
+        path.write_text(json.dumps(sanitized, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
 
 
 def collector_json_log_payload(payload: Any) -> Any:
@@ -2480,13 +2482,59 @@ def collector_json_log_payload(payload: Any) -> Any:
     return payload
 
 
+def compact_collector_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Preserve exact counts, but never persist a census of unrelated chats."""
+    result = collector_json_log_payload(payload)
+    source = result.get("thread_source", {})
+    skipped = result.get("skipped_threads", source.get("skipped_threads", []))
+    if "skipped_thread_count" not in result:
+        result["skipped_thread_count"] = len(skipped)
+        result["skipped_by_reason"] = dict(Counter(item.get("reason", "unknown") for item in skipped))
+    result["skipped_threads"] = skipped[:COLLECTOR_DIAGNOSTIC_EXAMPLES]
+    if source:
+        source.pop("skipped_threads", None)
+        included = source.get("included_threads", [])
+        source.setdefault("included_thread_count", len(included))
+        source["included_threads"] = included[:COLLECTOR_DIAGNOSTIC_EXAMPLES]
+    threads = result.get("threads", [])
+    result.setdefault("processed_thread_count", len(threads))
+    result.setdefault("results_by_kind", dict(Counter(item.get("result", "unknown") for item in threads)))
+    result["threads"] = threads[:COLLECTOR_DIAGNOSTIC_EXAMPLES]
+    return result
+
+
+class CollectorDiagnosticLock(ThreadIndexLock):
+    def __init__(self, path: Path) -> None:
+        super().__init__(codex_home=path.parent, thread={"id": "collector-diagnostics", "rollout_path": str(path)})
+        self.path = path.with_name(path.name + ".lock.json")
+
+
 def append_collector_json_log(path: str | Path | None, payload: dict[str, Any]) -> None:
     if not path:
         return
     log_path = Path(path).expanduser()
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(collector_json_log_payload(payload), ensure_ascii=True) + "\n")
+    record = (json.dumps(compact_collector_payload(payload), ensure_ascii=True) + "\n").encode("utf-8")
+    if len(record) > COLLECTOR_LOG_MAX_BYTES:
+        record = (json.dumps({"diagnostic_record_oversized": True, "bytes": len(record),
+                              "started_at": payload.get("started_at")}) + "\n").encode("utf-8")
+    with CollectorDiagnosticLock(log_path):
+        with log_path.open("a+b") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            if size + len(record) > COLLECTOR_LOG_MAX_BYTES:
+                # Read a bounded tail; discard only the partial first record.
+                budget = (COLLECTOR_LOG_MAX_BYTES - len(record)) // 2
+                handle.seek(max(0, size - budget))
+                if size > budget:
+                    handle.readline(budget)
+                tail = handle.read(budget)
+                if tail and not tail.endswith(b"\n"):
+                    tail = tail[:tail.rfind(b"\n") + 1]
+                # a+b appends writes regardless of seek: truncate before rewriting.
+                handle.truncate(0)
+                handle.write(tail)
+            handle.write(record)
 
 
 def cache_freshness_payload(

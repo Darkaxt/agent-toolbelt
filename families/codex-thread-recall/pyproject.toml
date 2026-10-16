@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-toolbelt-codex-thread-recall"
-version = "0.1.0"
+version = "0.1.1"
 description = "Read the current Codex thread's raw rollout history for bounded self-recall."
 readme = "README.md"
 requires-python = ">=3.11"

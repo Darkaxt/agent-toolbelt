@@ -4,7 +4,7 @@ description: Use `scripts/invoke_codex_thread_recall.py` to inspect the current 
 license: MIT
 metadata:
   compatibility: Codex only. Requires CODEX_THREAD_ID, local Codex state_5.sqlite, and readable rollout JSONL files.
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
 # Codex Thread Recall
@@ -82,6 +82,33 @@ explicitly want to run against a development checkout instead of the local
 runtime.
 
 ## Commands
+
+For large-cache maintenance, run `maintain-cache` to produce a read-only inventory.
+Save and inspect its candidates, source diagnostics and `plan_sha256`, then apply
+that exact JSON with `maintain-cache --plan <path> --confirm-plan-sha256 <hash>
+--compact`. This evicts reviewed rebuildable caches whose registered and cached
+raw sources remain absent, plus interrupted orphan rows without completion
+metadata. Orphan eviction preserves available raw history for a later rebuild;
+complete caches with available sources and busy, changed, restored or unreadable sources
+are preserved. It also removes verified redundant prefix indexes and compacts via
+SQLite's native locks. Inspect preserved candidates and lock/checkpoint diagnostics;
+re-inventory after their concrete condition resolves. This does not retire chats,
+delete histories/recovery archives or touch imported memory bundles. Do not delete
+or replace the live database file. Restored rollouts rebuild their derived indexes.
+For a shared-cache maintenance window, pause only the owned collector's future
+launches, observe any current run through process completion, and restore its
+original enabled state in `finally`. Keep triggers and task settings intact; never
+stop live writers. A SQLite busy result can follow committed evictions: inspect
+its exact counts, resolve the concrete writer conflict and review a fresh plan for
+remaining candidates. Do not treat a partial result as full reclamation.
+
+Collector diagnostics retain skip counts by reason and at most ten examples;
+the JSONL retains complete recent records within 16 MiB. Detailed `collect`
+results remain available in its direct response. `status` compacts legacy saved
+diagnostics on read without mutating them. When refreshing the staged runtime,
+inspect any scheduled collector action: a pinned old executable must be rebound
+to the verified new `pythonw.exe`, preserving its triggers/settings and quiet
+launch behavior. An active runtime manifest alone does not update a pinned task.
 
 After explicitly authorized application deletion, `--thread-id <id>
 purge-thread-cache --confirm-thread-id <same-id>` removes only that retired
