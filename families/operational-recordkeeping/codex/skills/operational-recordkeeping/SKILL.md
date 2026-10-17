@@ -3,7 +3,7 @@ name: operational-recordkeeping
 description: Check existing records before drafting financial correspondence and reconcile bills, payments, correspondence, decisions and purchases before reporting completion. Use for accountant replies, company management and apartment setup operations; not unrelated chat or a new accounting system.
 license: MIT
 metadata:
-  version: "0.1.3"
+  version: "0.1.4"
   compatibility: Codex and Claude; Python 3.11+ standard library. Private local project profiles and existing text, JSON or XLSX records.
 ---
 
@@ -95,6 +95,12 @@ an agent-authored note alone as independent proof that money moved or mail sent.
   merely to prove execution. Record inaccessible checks as unverified.
 
 ## Keep The Workflow Light
+
+For a routine ledger entry or correction, read
+[Targeted Ledger Updates](references/ledger-updates.md). Batch the known changes,
+use typed saved-content checks and semantic preservation comparisons, and stop
+once those checks and the event reconciliation pass. Repeated export/render or
+verification-script debugging is not normal bookkeeping progress.
 
 At task start or after context loss, reread the small manifest and current open
 items. At event closure inspect only affected records, not every email, receipt

@@ -9,6 +9,11 @@ calling it ready. See the bundle's `references/correspondence-preflight.md`.
 This is instruction-level evidence review; helper success does not certify the
 semantic truth or completeness of an email.
 
+Routine ledger updates use `references/ledger-updates.md`: bounded event reads,
+batched typed edits, saved-content checks and semantic preservation comparisons.
+Style-index renumbering or openpyxl StyleProxy inequality must not trigger repeated
+whole-workbook export/repair cycles.
+
 The canonical agent-neutral bundle is
 `codex/skills/operational-recordkeeping`. Copy it to the personal Codex or Claude
 skills directory. Its helper uses Python 3.11+ standard library only: no checkout,
