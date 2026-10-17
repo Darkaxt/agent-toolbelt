@@ -119,6 +119,25 @@ unknown delivery does not free the build gate. Every client must continue readin
 the owned tool-session stream. Claude's ListAgents/SendMessage are agent tools,
 not a verified standalone helper sending API; no impersonated/stale inbox is used.
 
+The helper's `owner` probe walks only its native process ancestry, verifies each
+creation identity and reads exact `<pid>.json` Claude registrations under
+`CLAUDE_CONFIG_DIR/sessions` (default `~/.claude/sessions`). Registration PID and
+procStart must match; only the bound session's name is used. Explicit CLI labels
+win. Live Claude identity takes precedence over inherited Codex environment data;
+the owner platform/session is persisted separately from the operation label.
+No history scan, fuzzy project match, registration rewrite or private key read.
+
+`watch-support --ticket <id> [--after-request <id>]` subscribes to a separate native
+support-change event before reading state and waits on that event plus the exact
+supervisor process handle. It emits one JSON line and exits for an actionable
+request, unavailable monitor, recorded exit or proven supervisor exit. Atomic
+support writes signal the event; no polling, execution deadline or build/queue
+mutex is involved. Claude's Monitor tool can run this read-only waiter and deliver
+its stdout as an event. Its required, rearmable diagnostic deadline may terminate
+only the waiter. Keep observing the original managed build task for final results.
+Use only new-release runs: older supervisors do not publish support-change events.
+An emitted line proves command output, not that a live Claude model handled it.
+
 A private hidden console contains the owned wrapper. A disposable signal process
 verifies native PID/start identity and attaches only to that console to request
 Ctrl+C. It never detaches the supervising agent's console. Wrapper termination is

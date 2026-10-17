@@ -16,6 +16,14 @@ Codex, agents and Claude skills. Installed wrappers do not need the repository.
 Runtime override: `GRADLE_BUILD_GATE_HOME`; explicit development checkout:
 `AGENT_TOOLBELT_HOME`. No tasks, services or console windows are created.
 
+Claude owners can use `watch-support --ticket <id>` under their installed Monitor
+tool after `build_support_ready`. This read-only native event wait emits one JSON
+line for a current request or owner exit; it never enters FIFO or controls a build.
+Re-arm after a response or diagnostic Monitor expiry, and retain the original
+managed build task for final exit/lifecycle evidence. `support.request_status`
+distinguishes actionable alerts from resumed progress, answers and completed runs.
+Existing loaded supervisors keep their original transport until their run ends.
+
 ## Gradle Elephant Tray
 
 New build requests start one read-only tray observer per login session. Hover the
@@ -43,7 +51,9 @@ errors are reported in `tray_tracking`, without altering the build result.
 showing Task and Thread Name holding the gate (including preflight/waiting).
 Pass `--owner-task "Current operation" --thread-name "Actual conversation title"`
 before `--`. The project path remains execution metadata, not a conversation name.
-Missing/blank thread names and legacy records display Unknown. Absent a task
+Claude callers now auto-resolve their own live registration name with exact
+process/start identity; explicit names win. Other missing names and legacy records
+display Unknown. `owner` inspects the caller binding. Absent a task
 label, the current Codex task ID or supplied Claude session ID is used, otherwise
 owner is unknown. Neither observers nor the gate guess conversation titles.
 `--no-notify` opts out. Notification errors never change the build result or queue.

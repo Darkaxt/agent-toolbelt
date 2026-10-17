@@ -56,6 +56,85 @@ def complete(ticket_id, root=None):
             raise ValueError("Wrapper completion has not been verified")
         state.update(status="completed", completion_verified=True)
         save(path, state)
+    signal_change(ticket_id)
+
+
+def change_event_name(ticket_id):
+    return r"Local\Darka.GradleSupportChanged." + ticket_id
+
+
+def signal_change(ticket_id):
+    try:
+        native = NativeWait()
+        event = native.event(change_event_name(ticket_id))
+        try:
+            native.signal(event)
+        finally:
+            native.k.CloseHandle(event)
+    except OSError:
+        print(json.dumps({'state': 'support_watch_unavailable', 'ticket_id': ticket_id,
+                          'build_still_supervised': True}), file=sys.stderr, flush=True)
+
+
+def request_status(state):
+    if state.get('status') in ('wrapper_exited', 'completed'):
+        return 'build_exited'
+    if state.get('status') != 'running':
+        return 'state_unknown'
+    if state.get('support_available', True) is not True:
+        return 'monitor_unavailable'
+    request = state.get('request')
+    if not request:
+        return 'no_request'
+    if request.get('revision') != state.get('revision'):
+        return 'progress_resumed'
+    if request.get('response') is not None:
+        return 'answered'
+    return 'action_required'
+
+
+def wait_request(ticket_id, *, after_request=None, root=None):
+    """One diagnostic event for Monitor; no build control or polling deadline."""
+    ticket_path(ticket_id, root)  # Validate before constructing a named event.
+    native = NativeWait()
+    event = native.event(change_event_name(ticket_id))
+    process = None
+    try:
+        while True:
+            if not native.k.ResetEvent(event):
+                raise ctypes.WinError(ctypes.get_last_error())
+            state = read(ticket_id, root)
+            status = request_status(state)
+            base = {'ok': True, 'operation': 'watch-support', 'ticket_id': ticket_id,
+                    'record': str(ticket_path(ticket_id, root)), 'owner': state.get('owner'),
+                    'completion_verified': state.get('completion_verified', False)}
+            if status in ('build_exited', 'monitor_unavailable', 'state_unknown'):
+                return {**base, 'state': status}
+            if state.get('watch_protocol') != 1:
+                return {**base, 'state': 'monitor_unavailable', 'reason': 'legacy_supervisor_transport'}
+            if process is None:
+                ticket = state['ticket']
+                process, _ = native.process(ticket['pid'], ticket['created_ticks'])
+                if process is None:
+                    return {**base, 'state': 'supervisor_exited', 'completion_verified': False}
+            if status == 'action_required' and state['request']['id'] != after_request:
+                return {**base, 'state': 'owner_support_requested',
+                        'request_id': state['request']['id'], 'progress': state.get('progress')}
+            handles = (wintypes.HANDLE * 2)(event, process)
+            outcome = native.k.WaitForMultipleObjects(2, handles, False, 0xFFFFFFFF)
+            if outcome == 1:
+                # Read final metadata after exit before deciding it was abandoned.
+                state = read(ticket_id, root)
+                if state.get('status') in ('wrapper_exited', 'completed'):
+                    return {**base, 'state': 'build_exited',
+                            'completion_verified': state.get('completion_verified', False)}
+                return {**base, 'state': 'supervisor_exited', 'completion_verified': False}
+            if outcome != 0:
+                raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        native.k.CloseHandle(event)
+        if process is not None:
+            native.k.CloseHandle(process)
 
 
 def validate_response(state, request_id, decision, reason):
@@ -301,7 +380,8 @@ def request_console_cancel(wrapper):
 
 
 class BuildSupport:
-    def __init__(self, ticket, project, log_path, *, quiet_seconds=300, root=None):
+    def __init__(self, ticket, project, log_path, *, quiet_seconds=300, root=None, owner=None):
+        from .caller import resolve
         if quiet_seconds <= 0:
             raise ValueError("Diagnostic quiet interval must be positive")
         self.ticket = ticket
@@ -316,11 +396,14 @@ class BuildSupport:
         self.revision = 0
         self.requested_revision = None
         self.captures = []
+        owner = owner if owner is not None else resolve()
         self.state = {"schema": 1, "ticket": ticket, "project": str(project), "log_path": str(log_path),
-                      "owner_task": os.environ.get("CODEX_THREAD_ID"), "status": "running",
+                      "owner": owner,
+                      "owner_task": owner.get('session_id') if owner.get('system') == 'codex' else None,
+                      "status": "running",
                       "progress": {"task": None, "test": None, "source": "not_observed"},
                       "request": None, "cancellation": None, "revision": 0,
-                      "support_available": True}
+                      "support_available": True, "watch_protocol": 1}
 
     def update(self, **fields):
         with self.lock, state_lock(self.ticket["id"]):
@@ -334,6 +417,7 @@ class BuildSupport:
                     fields["request"] = request
             self.state.update(fields)
             save(self.path, self.state)
+        signal_change(self.ticket['id'])
 
     def start(self, child):
         handle, ticks = self.native.process(child.pid)
@@ -343,7 +427,8 @@ class BuildSupport:
         self.wrapper = {"pid": child.pid, "created_ticks": ticks}
         self.update(wrapper=self.wrapper)
         print(json.dumps({"state": "build_support_ready", "ticket_id": self.ticket["id"],
-                          "record": str(self.path)}), file=sys.stderr, flush=True)
+                          "record": str(self.path), "owner": self.state['owner'],
+                          "watch_operation": "watch-support"}), file=sys.stderr, flush=True)
         self.monitor = threading.Thread(target=self.watch, name="gradle-owner-support")
         self.monitor.start()
 

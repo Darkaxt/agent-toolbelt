@@ -12,6 +12,11 @@ from .queue import queue_status
 def main(argv=None):
     parser = argparse.ArgumentParser(description="FIFO Windows Gradle execution tickets and shared mutex supervisor")
     commands = parser.add_subparsers(dest="operation", required=True)
+    owner = commands.add_parser('owner', help='Read this caller identity and live Claude session name only')
+    owner.add_argument('--thread-name')
+    watch = commands.add_parser('watch-support', help='Wait for one current support request or owner exit; diagnostic only')
+    watch.add_argument('--ticket', required=True)
+    watch.add_argument('--after-request', help='Do not emit this already observed request again')
     status = commands.add_parser("status", help="Read-only activity inspection; not launch clearance")
     status.add_argument("--observe-home", action="append", default=[])
     tray_command = commands.add_parser("tray", help="Read-only desktop task/queue/usage observer; never controls builds")
@@ -61,14 +66,21 @@ def main(argv=None):
     run.add_argument("gradle_arguments", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     try:
-        if args.operation == "tray":
+        if args.operation == 'owner':
+            from .caller import resolve
+            result = {'ok': True, 'operation': 'owner', 'owner': resolve(args.thread_name)}
+        elif args.operation == 'watch-support':
+            result = support.wait_request(args.ticket, after_request=args.after_request)
+        elif args.operation == "tray":
             result = {"ok": True, "operation": "tray." + args.action, **getattr(tray, args.action)()}
         elif args.operation == "status":
             result = {"ok": True, "operation": "status", "gate_acquired": False,
                       "queue": queue_status(),
                       **gate.inspect_activity(gate.observation_homes(extra=args.observe_home))}
         elif args.operation == "support":
-            result = {"ok": True, "operation": "support", "record": support.read(args.ticket)}
+            record = support.read(args.ticket)
+            result = {"ok": True, "operation": "support", "request_status": support.request_status(record),
+                      "record": record}
         elif args.operation == "respond":
             result = support.respond(args.ticket, args.request, args.decision, args.reason)
         elif args.operation == "cancel":
@@ -95,7 +107,7 @@ def main(argv=None):
                                     tray=not args.no_tray,
                                     retire_daemons=args.retire_daemons, collect_all_failures=args.collect_all_failures,
                                     keep_daemon=args.keep_daemon)
-        print(json.dumps(result, indent=2))
+        print(json.dumps(result, indent=None if args.operation == 'watch-support' else 2), flush=True)
         return result.get("exit_code", 0)
     except (ValueError, OSError, RuntimeError) as exc:
         result = {"ok": False, "operation": args.operation,

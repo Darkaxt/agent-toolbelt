@@ -514,7 +514,8 @@ def execute_wrapper(project, profile, log_path):
             if controlled:
                 try:
                     support = BuildSupport(profile["_support_ticket"], project, log_path,
-                                           quiet_seconds=profile["_diagnostic_quiet_seconds"])
+                                           quiet_seconds=profile["_diagnostic_quiet_seconds"],
+                                           owner=profile.get('_owner'))
                     support.start(child)
                 except (OSError, ValueError, RuntimeError):
                     print(json.dumps({"state": "support_setup_unavailable", "build_still_supervised": True}),
@@ -613,11 +614,15 @@ def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemo
     from .queue import TicketQueue
     from .usage import record_project
     from .tray import BuildTelemetry
+    from .caller import resolve
     project = Path(project).expanduser().resolve()
     if not (project / "gradlew.bat").is_file():
         raise ValueError("Project must contain gradlew.bat")
     homes = observation_homes(arguments, extra_homes, project)
     profile = make_profile(project, arguments, homes, **options)
+    owner = resolve(thread_name)
+    thread_name = owner['thread_name']
+    profile['_owner'] = {**owner, 'operation': owner_task}
     if diagnostic_quiet_seconds <= 0:
         raise ValueError("Diagnostic quiet interval must be positive")
     version = wrapper_version(project) if retire_daemons != "none" else None

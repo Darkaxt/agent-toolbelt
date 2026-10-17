@@ -3,7 +3,7 @@ name: gradle-build-gate
 description: Run Windows Gradle builds and tests through a shared session-wide mutex supervisor, inspect active versus idle daemons, and apply a conservative memory profile without interrupting other builds.
 license: MIT
 metadata:
-  version: "0.8.0"
+  version: "0.8.1"
   compatibility: Windows desktop, Python 3.11+, Windows PowerShell, project gradlew.bat, existing JDK with source-file execution; no Python dependencies.
 ---
 
@@ -35,17 +35,23 @@ Do not substitute the first user prompt, a project/worktree path, a UUID, a PID,
 or an invented title. Do not copy Task into Thread Name.
 
 For Codex, use the current conversation ID to look up its title through the
-available task-list/read tools when the title is not already known; match the ID,
-not merely a similar project path. For Claude, use the actual session title when
-exposed by its interface or context. Do not query unrelated histories or guess.
+available app task-list/read tools when the title is not already known; match the
+ID, not merely a similar project path. Raw rollout/recall/SQLite titles can be
+the first prompt even after renaming: do not use them as the app's display title.
+For Claude, the helper reads only its own live ancestor registration and
+automatically uses the actual session name when `--thread-name` is omitted.
+Run `python scripts/invoke_gradle_build_gate.py owner` to inspect that binding.
+Explicit titles win; PID reuse or missing evidence never selects another session.
+Use Claude's current exposed title or exact-session `ListAgents`/`claude agents
+--json` result if needed; do not match by name/project or query unrelated histories.
 If the title cannot be obtained, omit `--thread-name` and briefly record that
 limitation with the build report; Unknown is preferable to a fabricated label.
 Do not ask the user, delay a required build, or relaunch a queued/running build
 solely to repair cosmetic metadata.
 
 This is an agent instruction, not a new helper validation gate: both CLI flags
-remain optional for compatibility. Omitted/blank thread names and legacy records
-display Unknown. Without a task label the helper may display a conversation ID
+remain optional for compatibility. Names without a verified source and legacy
+records display Unknown. Without a task label the helper may display a conversation ID
 or supervisor PID; that fallback is not a meaningful operation description and
 agents must not rely on it instead of supplying `--owner-task`.
 
@@ -146,15 +152,41 @@ Keep reading/yielding the original command session. On `owner_support_requested`
 inspect the record and owned JVM diagnostics, then reply to the CURRENT request.
 Do not ignore it or start another build. Codex additionally receives a message
 through its installed app-tools MCP when available; acceptance is not acknowledgement.
-Claude uses the structured request through its owned tool session. Do not invent
+Claude also uses the event-driven Monitor workflow below. Do not invent
 a standalone Claude sender, use stale inbox pipes, resume a duplicate agent, or
 change models/settings to deliver a notification.
 
-For long Claude tool calls, retain the managed background task and read its
-output between tool calls so the agent can handle support events. Do not detach
-the Gradle supervisor, abandon its task, or treat a background task ID as build
-completion. The response command runs separately while the original run remains
-supervised.
+For long Claude calls, retain the original managed background task, including any
+required existing watchdog, and read its output until `build_support_ready` gives
+the ticket. Then use the installed `Monitor` tool to run only this diagnostic wait:
+
+```text
+Monitor({description: "Owned Gradle support", timeout_ms: 1800000,
+  command: 'python "<installed-skill>/scripts/invoke_gradle_build_gate.py" watch-support --ticket <ticket-id>'})
+```
+
+Use the actual resolved Python/launcher paths and shell quoting. Each command
+emits one JSON line for a current request or owner exit and ends. The mandatory
+Monitor deadline bounds only this read-only watcher, never the Gradle supervisor.
+On diagnostic expiry, re-arm while the original build is alive. On a request,
+read `support`, inspect diagnostics and respond, then re-arm (optionally passing
+`--after-request <observed-id>`). On `build_exited`, read the original managed run
+for its actual result and lifecycle verification. `supervisor_exited` is an
+abnormal loss of supervision, not proof that its build stopped or the gate is free.
+`state_unknown` or `monitor_unavailable` requires the original tool-session fallback.
+Monitor is agent-local support, not a new agent or message to another chat.
+If Monitor is unavailable, keep using the original tool's output/wait interface;
+do not leave an unobserved background task. Keep the command task owned, never
+detach or relaunch it. A background task ID is not build completion.
+
+`support.request_status=action_required` means the current running revision has
+an unanswered request. `progress_resumed`, `answered` and `build_exited` are not
+current unanswered stalls. A request's existence or five minutes of compilation
+silence alone does not establish a hang. A waiting chat keeps its one queued run;
+it does not need to recruit the user to relay routine owner diagnostics. Preserve
+any actual authorization requirement before messaging another chat; this workflow
+does not grant that authority. Installing new guidance does not prove an already
+running owner has reread it; old runs retain their original transport.
 
 ```powershell
 python scripts/invoke_gradle_build_gate.py support --ticket <ticket-id>
