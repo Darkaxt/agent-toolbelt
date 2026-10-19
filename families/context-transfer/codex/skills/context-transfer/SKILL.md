@@ -4,7 +4,7 @@ description: Take over one Codex chat or consolidate selected chats into an inde
 license: MIT
 metadata:
   compatibility: Codex only. Requires local Codex state and rollout access, 7-Zip, and a non-C recovery drive.
-  version: "0.3.4"
+  version: "0.3.5"
 ---
 
 # Context Transfer
@@ -101,6 +101,9 @@ action and report takeover as incomplete. Do not invent a new authorization
 blocker when the selected takeover request already supplies it. For the normal
 endpoint, verify original archived state and zero manifest-bound rollout residuals;
 for requested permanent deletion also verify application/database/recall residuals.
+Before reporting takeover complete, run the final completion-record gate below
+for both single-source and aggregate transfers; do not leave this to a later
+dashboard warning or a separate user request.
 The destination must also have the intended activity title, verified through the
 supported task API. A finished archive/offload with the replacement still carrying
 an incidental new-chat title is not a fully completed takeover.
@@ -309,6 +312,22 @@ When permanent application deletion is in the requested scope, use the installed
 `thread-cleanup` workflow with that existing authority instead of doing duplicate
 rollout offload. Its reviewed plan/hash is a technical gate, not another user
 approval. Never label rollout retirement as total thread removal.
+
+## Phase 6: Validate Completion Records
+
+After the real takeover checks and source retirement have passed, write the
+canonical `Records/migration-result.json`, `destination-acceptance.json` and
+`schedule-ledger.json`, then run `validate-completion` as the normal final step.
+Read [Completion Records](references/completion-records.md) for the compact
+contract, command and failure handling. This also applies to aggregate transfers:
+keep per-source receipts and publish one traceable activity summary. Do not report
+success until the command returns `ok: true` and the saved records read back.
+
+The check validates record consistency and declared metadata hashes. It does not
+replace supported title/schedule readback, semantic acceptance, recovery testing,
+inactivity checks or verified retirement. It never performs those live operations.
+For an explicit preservation-only request, record that restricted endpoint rather
+than manufacture a COMPLETE takeover result.
 
 ## Restore
 

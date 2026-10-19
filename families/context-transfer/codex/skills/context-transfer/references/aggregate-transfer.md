@@ -205,3 +205,10 @@ is still an incomplete takeover.
 
 Retained recovery archives and exports remain governed by their explicit retention
 authority. This mode adds no age-based purge, schedule or automatic archive expiry.
+
+Before reporting full takeover complete, create the canonical activity-level
+acceptance and migration summaries without replacing per-source receipts, then
+run SKILL.md Phase 6's `validate-completion` gate. Read
+[Completion Records](completion-records.md) for the common source-coverage and
+evidence-binding contract. A COMPLETE group ledger under a different filename
+must not be the only machine-readable completion record.

@@ -8,7 +8,7 @@ import sys
 import sqlite3
 from typing import Any
 
-from . import activity, archive, context_transfer, database_evidence, handoff, restore, retirement
+from . import activity, archive, completion, context_transfer, database_evidence, handoff, restore, retirement
 
 
 DEFAULT_ARCHIVE_ROOT = Path(r"E:\Codex\ContextTransfers")
@@ -79,6 +79,12 @@ def build_parser() -> argparse.ArgumentParser:
     validate_acceptance_parser.add_argument("--manifest", required=True)
     validate_acceptance_parser.add_argument("--handoff", required=True)
     validate_acceptance_parser.add_argument("--acceptance", required=True)
+
+    completion_parser = subparsers.add_parser(
+        "validate-completion", help="Check canonical final takeover records and their bound metadata.")
+    completion_parser.add_argument("--transfer-directory", required=True)
+    completion_parser.add_argument("--destination-thread-id")
+    completion_parser.add_argument("--output")
 
     ticket_parser = subparsers.add_parser(
         "issue-deletion-ticket",
@@ -210,6 +216,15 @@ def main(argv: list[str] | None = None) -> int:
                 inspection_manifest_path=args.manifest,
             )
             output_path = None
+        elif args.operation == "validate-completion":
+            result = completion.validate_completion(args.transfer_directory, _destination_thread_id(args.destination_thread_id))
+            if args.output:
+                output = Path(args.output).resolve()
+                bound = {Path(item['path']) for item in result['evidence']}
+                bound.add(Path(args.transfer_directory).resolve() / 'Records' / 'migration-result.json')
+                if output in bound:
+                    raise completion.CompletionError('Validation output cannot overwrite its input evidence.')
+            output_path = _write_explicit_output(result, args.output)
         elif args.operation == "issue-deletion-ticket":
             result = retirement.issue_deletion_ticket(
                 verification_path=args.verification,

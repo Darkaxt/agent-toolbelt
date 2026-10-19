@@ -86,6 +86,7 @@ agent-toolbelt-context-transfer pack --manifest <activity>/Records/inspection.js
 agent-toolbelt-context-transfer verify --archive <thread-tree.7z>
 agent-toolbelt-context-transfer issue-deletion-ticket --verification <verification.json> --acceptance <destination-acceptance.json> --archived-state <archived-state.json> --confirm-live-retirement
 agent-toolbelt-context-transfer apply-deletion --ticket <deletion-ticket.json> --ticket-id <reviewed-id> --confirm-delete
+agent-toolbelt-context-transfer validate-completion --transfer-directory <activity> --destination-thread-id <id> --output <activity>/Records/completion-validation.json
 agent-toolbelt-context-transfer restore --archive <thread-tree.7z>
 ```
 
