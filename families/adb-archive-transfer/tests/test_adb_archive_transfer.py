@@ -6,6 +6,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import tarfile
+import io
 from pathlib import Path
 from unittest.mock import patch
 
@@ -33,6 +35,31 @@ def record(path: str, size: int, digest: str = "a" * 64) -> dict[str, object]:
 
 
 class PlanningTests(unittest.TestCase):
+    def test_tar_inventory_accepts_multiple_roots_but_rejects_links_and_extras(self):
+        with tempfile.TemporaryDirectory(dir=TEMP_ROOT) as folder:
+            path = Path(folder) / 'payload.tar'
+            files = [record('one/model.json', 1), record('two/model.mesh', 1)]
+            def make(extra=None):
+                with tarfile.open(path, 'w') as archive:
+                    for item in files:
+                        info = tarfile.TarInfo(str(item['relative_path']))
+                        info.size = 1
+                        archive.addfile(info, io.BytesIO(b'x'))
+                    if extra is not None:
+                        archive.addfile(extra)
+            make()
+            transfer.validate_archive_inventory(path, files)
+            for name in ['../outside', '/absolute', 'unexpected']:
+                make(tarfile.TarInfo(name))
+                with self.assertRaises(transfer.TransferError):
+                    transfer.validate_archive_inventory(path, files)
+            link = tarfile.TarInfo('link')
+            link.type = tarfile.SYMTYPE
+            link.linkname = '/outside'
+            make(link)
+            with self.assertRaises(transfer.TransferError):
+                transfer.validate_archive_inventory(path, files)
+
     def test_rejects_incoherent_transfer_thresholds(self):
         with self.assertRaises(transfer.TransferError) as raised:
             transfer.validate_thresholds(
@@ -251,7 +278,10 @@ class RecordingRunner:
         if command[0] == str(self.seven_zip_path):
             archive = Path(command[4])
             archive.parent.mkdir(parents=True, exist_ok=True)
-            archive.write_bytes(self.tar_bytes)
+            with tarfile.open(archive, 'w') as output:
+                for name in Path(command[5][1:]).read_text(encoding='utf8').splitlines():
+                    output.add(Path(cwd) / name, arcname=name, recursive=False)
+            self.tar_bytes = archive.read_bytes()
             return subprocess.CompletedProcess(command, 0, "Everything is Ok\n", "")
         if command[1:] == ["devices", "-l"]:
             return subprocess.CompletedProcess(
@@ -445,7 +475,7 @@ class TransactionTests(unittest.TestCase):
         self.assertFalse(any(argument.startswith("-mx") for argument in seven_zip_commands[0]))
         direct_push = next(line for line in rendered if " push " in f" {line} " and "medium.bin" in line)
         self.assertNotIn("bundle", direct_push)
-        extract_index = next(index for index, line in enumerate(rendered) if "tar --restrict -xf" in line)
+        extract_index = next(index for index, line in enumerate(rendered) if "tar -xf" in line)
         verify_index = next(index for index, line in enumerate(rendered) if "sha256sum -c" in line)
         placement_index = next(index for index, line in enumerate(rendered) if "mv --" in line and "/Roms/demo" in line)
         self.assertLess(extract_index, verify_index)

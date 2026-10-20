@@ -9,6 +9,7 @@ import shlex
 import shutil
 import stat
 import subprocess
+import tarfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -796,6 +797,26 @@ def build_seven_zip_command(
     ]
 
 
+def validate_archive_inventory(path: Path, files: list[dict[str, Any]]) -> None:
+    """Authorize only exact reviewed regular members before Android extraction.
+
+    Toybox --restrict requires one common root; a file-only 7-Zip TAR does not
+    have that shape. Validate every member instead of relying on that option.
+    """
+    expected = {str(item['relative_path']): int(item['size']) for item in files}
+    seen: set[str] = set()
+    with tarfile.open(path, 'r:') as archive:
+        for member in archive:
+            name = member.name
+            if (not member.isfile() or name not in expected or name in seen
+                    or member.size != expected[name] or name.startswith('/')
+                    or '\\' in name or any(p in ('', '.', '..') for p in name.split('/'))):
+                raise TransferError('unsafe_archive', f'Unreviewed or unsafe TAR member: {name}')
+            seen.add(name)
+    if seen != expected.keys():
+        raise TransferError('unsafe_archive', 'TAR inventory differs from reviewed manifest.')
+
+
 def create_archives(
     manifest: dict[str, Any],
     *,
@@ -828,6 +849,8 @@ def create_archives(
         )
         if not archive_path.is_file():
             raise TransferError("archive_failed", f"7-Zip did not create expected TAR bundle: {archive_path}")
+        validate_archive_inventory(archive_path,
+            [item for item in manifest['files'] if item.get('bundle') == bundle_name])
         archives[bundle_name] = {
             "path": archive_path,
             "size": archive_path.stat().st_size,
@@ -982,7 +1005,7 @@ def apply_transfer(
         extract_command = remote_shell_command(
             adb_path,
             serial,
-            "toybox tar --restrict -xf "
+            "toybox tar -xf "
             f"{shlex.quote(remote_archive)} -C {shlex.quote(remote_payload)}",
         )
         require_success(
