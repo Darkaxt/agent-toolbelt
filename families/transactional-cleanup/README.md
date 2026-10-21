@@ -1,5 +1,10 @@
 # Transactional Cleanup
 
+Version 0.7.1 corrects a Recovery path false positive: volume-root `Recovery`
+trees and the protected Windows tree remain excluded, while nested package
+modules named `recovery` use the normal provenance, Git, identity/content and
+signed-ticket checks. No file is eligible merely because of its directory name.
+
 Version 0.6 adds a separate device-bound Android backend: exact task-file
 review/inspect/ticket/apply, plus task-installed test-app cleanup with a pre-install
 absence baseline and planned APK hashes. Read [Android Task Cleanup](codex/skills/transactional-cleanup/references/android.md).

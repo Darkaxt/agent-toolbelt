@@ -922,6 +922,37 @@ with Engine(Path(sys.argv[1])).locked([Path(sys.argv[2])], operation='review', t
         marker.touch()
         self.assertEqual(self.engine.protection(marker), 'filesystem_or_repository_metadata')
 
+    def test_generated_package_recovery_directory_uses_normal_ticket_checks(self):
+        out = self.output()
+        recovery = out / 'dist' / 'javascript' / 'recovery'
+        recovery.mkdir(parents=True)
+        source = b'export const recovered = true;'
+        (recovery / 'RecoveryFiles.js').write_bytes(source)
+        review = self.engine.review(self.transaction)
+        self.assertEqual(review['candidate_bytes'], 9 + len(source))
+        ticket = self.engine.ticket(self.transaction, review['manifest_sha256'])['ticket_id']
+        self.assertEqual(self.engine.apply(ticket)['ticket_state'], 'applied')
+        self.assertFalse(out.exists())
+
+    def test_volume_recovery_and_windows_recovery_remain_protected(self):
+        for relative in ('Recovery', 'rEcOvErY/WindowsRE'):
+            with self.subTest(relative=relative):
+                path = Path(self.root.anchor) / relative
+                self.assertEqual(self.engine.protection(path), 'filesystem_or_repository_metadata')
+        if os.environ.get('SystemRoot'):
+            path = Path(os.environ['SystemRoot']) / 'System32' / 'Recovery'
+            self.assertEqual(self.engine.protection(path), 'protected_root')
+
+    def test_unattributed_preexisting_recovery_content_remains_excluded(self):
+        recovery = self.work / 'recovery'
+        recovery.mkdir()
+        source = recovery / 'notes.txt'
+        source.write_text('preserve user notes', encoding='utf-8')
+        transaction = self.engine.begin(self.work, [recovery])['transaction_id']
+        review = self.engine.review(transaction)
+        self.assertEqual(review['candidate_count'], 0)
+        self.assertTrue(source.exists())
+
     def test_marker_that_gains_repository_content_is_not_deleted(self):
         out = self.work / 'cache'
         out.mkdir()
