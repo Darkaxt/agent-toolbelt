@@ -6,6 +6,7 @@ Start by choosing the one family you actually need:
 
 | Family | Use it for | Folder | Primary CLI |
 | --- | --- | --- | --- |
+| FedEx Tracking | read-only public tracking, travel history and package versus shipment facts | `families/fedex-tracking` | - |
 | Diagnostics-First UI | app-owned debugging actions, rendered state and measured UI readiness instead of screenshot polling | `families/ui-diagnostics-first` | - |
 | Windows Elevation Gate | FIFO administrator prompts with top-most explanation, Accept/Cancel and user feedback | `families/windows-elevation-gate` | `agent-toolbelt-windows-elevation-gate` |
 | ADB Archive Transfer | endpoint-bound Android file transfer with uncompressed tiny-file bundles, direct large-file transfer, and manifest verification | `families/adb-archive-transfer` | `agent-toolbelt-adb-archive-transfer` |
@@ -44,6 +45,7 @@ npx skills add Darkaxt/agent-toolbelt --all
 
 Public skill names:
 
+- `fedex-tracking`
 - `adb-archive-transfer`
 - `ui-diagnostics-first`
 - `windows-elevation-gate`

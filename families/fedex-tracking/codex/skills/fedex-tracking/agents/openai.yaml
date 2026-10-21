@@ -1,0 +1,4 @@
+interface:
+  display_name: "FedEx Tracking"
+  short_description: "Read public FedEx tracking and shipment facts"
+  default_prompt: "Use $fedex-tracking to read this public shipment's status, travel history and package details."

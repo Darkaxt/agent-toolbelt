@@ -6,6 +6,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 EXPECTED_FAMILIES = {
+    "fedex-tracking": {"runtime": False, "has_claude": False},
     "thread-cleanup": {"runtime": False, "has_claude": False},
     "approach-recovery-ledger": {
         "runtime": False,

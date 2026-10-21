@@ -8,6 +8,7 @@ Each runtime family ships its own Codex skill bundle. Instruction-only skills us
 
 ## Skill locations
 
+- FedEx Tracking: `families/fedex-tracking/codex/skills/fedex-tracking`; identical instruction-only bundle for personal Codex, agents and Claude roots. Requires rendered-page browser tools when ordinary retrieval fails; no runtime or login.
 - Diagnostics-First UI: `families/ui-diagnostics-first/codex/skills/ui-diagnostics-first`; copy the identical instruction-only folder to personal Codex, agents and Claude skill roots. No runtime or settings changes.
 
 - ADB Archive Transfer: `families/adb-archive-transfer/codex/skills/adb-archive-transfer`

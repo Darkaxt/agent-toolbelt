@@ -21,6 +21,7 @@ Each runtime family ships its own self-contained local marketplace with one plug
 
 ## Instruction-only skills
 
+- FedEx Tracking: `families/fedex-tracking/codex/skills/fedex-tracking`; copy the identical bundle into the personal Claude skill root. Uses available browser tools for public pages; no plugin or account configuration.
 - Thread Cleanup: `families/thread-cleanup/codex/skills/thread-cleanup`; identical self-contained helper bundle. Explicit permanent conversation retirement is separate from generated-artifact cleanup.
 
 - Diagnostics-First UI: `families/ui-diagnostics-first/codex/skills/ui-diagnostics-first`; copy the same canonical folder. No plugin, helper or application changes are installed.
