@@ -32,6 +32,7 @@ npx skills update
 
 | Skill | Compatibility | Local prerequisites | Safety notes |
 | --- | --- | --- | --- |
+| `cybersecurity-orchestrator` | Codex and Claude | Existing specialist skills where available; no runtime | Select security workflows and focused investigative references; no automatic audit or vendor script execution. |
 | `fedex-tracking` | Codex and Claude with rendered-page browser tools | Accessible public FedEx page; no runtime or API key | Read-only public status, history and shipment facts; no login, delivery changes or access-control bypass. |
 | `ui-diagnostics-first` | Instruction-only Codex/Claude guidance | Authorized application source or existing UI diagnostics for integration | Real rendered state/actions and scoped measured readiness; no automatic device access, production bridge or enforcement claim. |
 | `windows-elevation-gate` | Codex and Claude in an interactive Windows login session | Python with Tkinter; family installer for shared runtime | FIFO explanatory prompts, Accept/Cancel and feedback before native UAC. No policy bypass or automatic retry. |

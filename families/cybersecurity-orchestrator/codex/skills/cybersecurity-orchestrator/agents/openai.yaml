@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cybersecurity Orchestrator"
+  short_description: "Route security work and retrieve reviewed references"
+  default_prompt: "Use $cybersecurity-orchestrator to select the appropriate security workflow and relevant reviewed references."
