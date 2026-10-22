@@ -32,7 +32,7 @@ recreation, mailbox movement or changes to its content.
 | Stage | Status | Acceptance |
 | --- | --- | --- |
 | Sender repair and private routing | COMPLETE | R1-R3, R5-R6: integrated CLI and regression verification, private account selection and alias guidance. |
-| Delivery | ACTIVE | R4, R6: installed parity, local package digest/content/privacy verification and source commit. |
+| Delivery | COMPLETE | R4, R6: installed parity, local package digest/content/privacy verification and source commit. |
 
 No tracked deferrals. Initial internal blocker: edit-draft has no sender option;
 the shared setter already supports COM object-reference assignment.
@@ -62,3 +62,14 @@ alias identity; no business metadata belongs in this specification.
 - Repository-wide skills.sh validation was attempted and stops on an unchanged
   context-transfer absolute-path check. Focused Outlook skill validation and root
   family/layout checks pass; no claim is made that the unrelated global check passed.
+
+## Final local delivery
+
+Version 0.1.2 is delivered as a versioned usable local source/runtime bundle.
+Its independently reopened ZIP/member digests match the release receipt; the
+installed runtime and three personal skill/reference copies match source.
+Private route values are absent from both source and every archive member.
+A generic private-configuration filename is ignored by Git as an extra guard.
+The source commit is recorded in the local receipt. No public push or release
+was performed. Required blockers and tracked deferrals: zero. The unrelated
+repository-wide validator limitation remains explicitly recorded above.
