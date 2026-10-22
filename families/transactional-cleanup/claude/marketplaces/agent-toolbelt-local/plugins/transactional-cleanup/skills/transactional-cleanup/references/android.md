@@ -27,11 +27,26 @@ boundary honestly. A host mutex cannot prevent arbitrary Android-side writers.
 
 ## Exact File Tickets
 
-Use one exact task-owned top-level directory under `/storage/emulated/0`, for
-example `/storage/emulated/0/RShopS12Reference-20261014`. Broad roots, standard
-user-data directories, Android app-data paths, traversal, links and special
-objects are protected. The inventory is capped at 10,000 members; narrow scope
-rather than scanning all storage. Only ordinary files and directories qualify.
+Use one exact task-owned top-level directory under `/storage/emulated/0`, or
+one exact task-owned immediate child of `/storage/emulated/0/Download`, for
+example `/storage/emulated/0/Download/20MTD-Revamped-1.0.0-deployer`.
+Use one transaction per exact task directory, with its actual producer and
+disposable purpose; do not pass a wildcard or select Download as a whole.
+The shared Download parent's identity is recorded and rechecked, but that parent
+and its unrelated contents are never ticketed. `adb-inspect` exposes this proof
+separately as `root_ancestors`, outside the deletion `items`. Broad roots, other
+standard user-data directories, protected task-root names, Android app-data paths,
+traversal, aliases, links and special objects remain protected. The inventory is
+capped at 10,000 members; narrow scope rather than scanning all storage. Only
+ordinary files and directories qualify.
+
+`protected_android_path` is the helper's scope validation, not a command-policy
+denial. For a valid task-owned path, diagnose an unsupported capability and
+correct the helper rather than routinely requesting a Files/manual-cleanup
+override. Existing task authorization already covers its expendable outputs;
+the signed ticket is still required. Never switch tools to evade an actual
+command-policy denial. Wait until the final installer/producer has finished
+before reviewing or removing its staging folders.
 
 Run these as separate invocations through the installed wrapper:
 

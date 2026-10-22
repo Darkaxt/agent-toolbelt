@@ -1,5 +1,10 @@
 # Transactional Cleanup
 
+Version 0.7.2 supports exact task-owned immediate children of Android Download.
+The shared Download parent is identity-bound and rechecked but never ticketed;
+normal endpoint, ancestry, content and signed-ticket protections remain in place.
+See [Android Task Cleanup](codex/skills/transactional-cleanup/references/android.md).
+
 Version 0.7.1 corrects a Recovery path false positive: volume-root `Recovery`
 trees and the protected Windows tree remain excluded, while nested package
 modules named `recovery` use the normal provenance, Git, identity/content and

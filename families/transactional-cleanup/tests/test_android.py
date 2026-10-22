@@ -21,6 +21,7 @@ class FakeDevice:
         self.identity = {'serial': 'test-serial', 'android_serial': 'hardware',
                          'fingerprint': 'build', 'model': 'fixture'}
         self.files = {'/storage/emulated/0/S12-fixture/a.bin': b'alpha'}
+        self.directories = {'/storage/emulated/0/S12-fixture': 'dir'}
         self.calls = []
         self.installed = False
         self.install_stamp = 'first-install'
@@ -34,8 +35,8 @@ class FakeDevice:
             self.snapshot(path) for path in sorted(self.files) if path.startswith(root + '/')]]
 
     def snapshot(self, path):
-        if path == '/storage/emulated/0/S12-fixture':
-            return {'path': path, 'directory': True, 'identity': 'dir'}
+        if path in self.directories:
+            return {'path': path, 'directory': True, 'identity': self.directories[path]}
         if path not in self.files:
             return None
         value = self.files[path]
@@ -45,7 +46,11 @@ class FakeDevice:
     def remove(self, item, dry_run):
         self.calls.append(('remove', item['path'], dry_run))
         if item['directory']:
-            return 'not_empty' if self.files else ('would_delete' if dry_run else 'deleted')
+            if any(path.startswith(item['path'] + '/') for path in self.files):
+                return 'not_empty'
+            if not dry_run:
+                self.directories.pop(item['path'], None)
+            return 'would_delete' if dry_run else 'deleted'
         path = item['path']
         if path not in self.files:
             return 'missing'
@@ -145,6 +150,96 @@ class AndroidTests(unittest.TestCase):
                      '/storage/emulated/0/ROMs', self.root + '/../DCIM', self.root + '//x'):
             with self.subTest(path=path), self.assertRaises(CleanupError):
                 self.engine.review(path, 'task', 'evidence')
+
+    def download_fixture(self):
+        self.root = '/storage/emulated/0/Download/20MTD-Revamped-1.0.0-deployer'
+        self.shared_parent = '/storage/emulated/0/Download'
+        self.device.directories = {self.root: 'dir', self.shared_parent: 'download-dir'}
+        self.device.files = {self.root + '/installer.ps1': b'installer',
+                             self.shared_parent + '/personal.pdf': b'preserve sibling'}
+
+    def test_download_task_ticket_removes_only_reviewed_files_and_empty_task_root(self):
+        self.download_fixture()
+        review = self.review()
+        page = self.engine.inspect(review['transaction_id'])
+        self.assertEqual(page['root_ancestors'],
+                         [{'path': self.shared_parent, 'directory': True, 'identity': 'download-dir'}])
+        self.assertEqual({item['path'] for item in page['items']},
+                         {self.root, self.root + '/installer.ps1'})
+        ticket = self.ticket(review)
+        self.assertTrue(self.engine.apply(ticket, True)['ok'])
+        self.assertIn(self.root + '/installer.ps1', self.device.files)
+        self.assertTrue(self.engine.apply(ticket)['ok'])
+        self.assertEqual(self.device.files,
+                         {self.shared_parent + '/personal.pdf': b'preserve sibling'})
+        self.assertEqual(self.device.directories, {self.shared_parent: 'download-dir'})
+        self.assertNotIn(('remove', self.shared_parent, False), self.device.calls)
+
+    def test_download_new_and_changed_task_files_survive_exact_retry(self):
+        self.download_fixture()
+        ticket = self.ticket(self.review())
+        self.device.files[self.root + '/installer.ps1'] = b'changed installer'
+        self.device.files[self.root + '/new.txt'] = b'new user content'
+        result = self.engine.apply(ticket)
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['counts']['changed_after_review'], 1)
+        self.assertEqual(self.device.files[self.root + '/new.txt'], b'new user content')
+        self.device.files[self.root + '/installer.ps1'] = b'installer'
+        result = self.engine.apply(ticket)
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['deleted_bytes'], 9)
+        self.assertEqual(self.device.files, {self.root + '/new.txt': b'new user content',
+                                           self.shared_parent + '/personal.pdf': b'preserve sibling'})
+
+    def test_download_shared_parent_replacement_blocks_apply(self):
+        self.download_fixture()
+        ticket = self.ticket(self.review())
+        self.device.directories[self.shared_parent] = 'replacement-parent'
+        with self.assertRaises(CleanupError) as failure:
+            self.engine.apply(ticket)
+        self.assertEqual(failure.exception.kind, 'android_ancestor_changed')
+        self.assertFalse(self.device.calls)
+
+    def test_download_shared_parent_replacement_during_inventory_rejects_review(self):
+        self.download_fixture()
+        inventory = self.device.inventory
+        def replaced(root):
+            items = inventory(root)
+            self.device.directories[self.shared_parent] = 'replacement-parent'
+            return items
+        self.device.inventory = replaced
+        with self.assertRaises(CleanupError) as failure:
+            self.review()
+        self.assertEqual(failure.exception.kind, 'android_ancestor_changed')
+        self.assertFalse(self.device.calls)
+
+    def test_download_shared_parent_change_between_members_preserves_remaining_files(self):
+        self.download_fixture()
+        self.device.files[self.root + '/second.ps1'] = b'second installer'
+        ticket = self.ticket(self.review())
+        remove = self.device.remove
+        def replace_after_first(item, dry_run):
+            result = remove(item, dry_run)
+            if not dry_run and result == 'deleted':
+                self.device.directories[self.shared_parent] = 'replacement-parent'
+            return result
+        self.device.remove = replace_after_first
+        with self.assertRaises(CleanupError) as failure:
+            self.engine.apply(ticket)
+        self.assertEqual(failure.exception.kind, 'android_ancestor_changed')
+        self.assertEqual(sum(path.startswith(self.root + '/') for path in self.device.files), 1)
+        self.assertIn(self.shared_parent + '/personal.pdf', self.device.files)
+
+    def test_download_broad_roots_protected_names_and_aliases_fail_before_transport(self):
+        for path in ('/storage/emulated/0/Download', '/storage/emulated/0/Download/',
+                     '/storage/emulated/0/Downloads/task', '/storage/emulated/0/Documents/task',
+                     '/storage/emulated/0/Download/Android', '/storage/emulated/0/Download/Saves',
+                     '/storage/emulated/0/Download/task/nested', '/sdcard/Download/task',
+                     '/storage/emulated/0/Download/task/../other'):
+            with self.subTest(path=path), self.assertRaises(CleanupError) as failure:
+                self.engine.review(path, 'task', 'evidence')
+            self.assertEqual(failure.exception.kind, 'protected_android_path')
+        self.assertFalse(self.device.calls)
 
     def test_package_absence_baseline_and_data_acknowledgement_required(self):
         baseline = self.engine.package_baseline('org.example.test', 'S12', 'temporary test APK', ['a' * 64])

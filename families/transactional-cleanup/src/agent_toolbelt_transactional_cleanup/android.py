@@ -28,9 +28,13 @@ def safe_path(path, *, root=False):
     path = str(path)
     parts = path.split('/')
     if (not path.startswith('/storage/emulated/0/') or any(ord(c) < 32 or ord(c) == 127 for c in path)
-            or any(p in {'', '.', '..'} for p in parts[1:])
-            or parts[4].casefold() in PROTECTED or (root and len(parts) != 5)):
-        raise CleanupError('protected_android_path', 'Use one exact task-owned directory under /storage/emulated/0; no user-data roots or traversal')
+            or any(p in {'', '.', '..'} for p in parts[1:])):
+        raise CleanupError('protected_android_path', 'Use an exact task directory under /storage/emulated/0 or its Download directory; no aliases or traversal')
+    task_depth = 6 if parts[4].casefold() == 'download' else 5
+    if ((parts[4].casefold() in PROTECTED and task_depth != 6)
+            or len(parts) < task_depth or parts[task_depth - 1].casefold() in PROTECTED
+            or (root and len(parts) != task_depth)):
+        raise CleanupError('protected_android_path', 'Select one exact task directory; shared/user-data roots and nested root selections are protected')
     return path
 
 
@@ -296,7 +300,15 @@ class AndroidCleanup:
         manifest = {'kind': 'files', 'device': device.endpoint(), 'root': root,
                     'owner_task': owner_task, 'evidence': evidence}
         with self.host.locked(self.locks(manifest), operation='adb-review'):
+            if PurePosixPath(root).parent.name.casefold() == 'download':
+                parent = device.snapshot(str(PurePosixPath(root).parent))
+                if parent is None or not parent['directory']:
+                    raise CleanupError('android_ancestor_changed', 'Shared Download parent must be an ordinary directory')
+                manifest['root_ancestors'] = [parent]
             manifest['items'] = device.inventory(root)
+            for parent in manifest.get('root_ancestors', []):
+                if device.snapshot(parent['path']) != parent:
+                    raise CleanupError('android_ancestor_changed', 'Shared Download parent changed during review')
             self.check_device(device, manifest)
             record = self.new(manifest)
         return self.summary(record)
@@ -353,6 +365,7 @@ class AndroidCleanup:
         manifest = record['manifest']
         result = self.summary(record)
         result.update(owner_task=manifest['owner_task'], evidence=manifest['evidence'],
+                      root_ancestors=manifest.get('root_ancestors', []),
                       expected_apk_sha256=manifest.get('expected_apk_sha256'),
                       items=manifest.get('items', [manifest['installed']] if 'installed' in manifest else [])[offset:offset + limit],
                       next_offset=offset + limit if offset + limit < len(manifest.get('items', [])) else None)
@@ -477,6 +490,9 @@ class AndroidCleanup:
                         if results.get(path) in {'deleted', 'missing'}:
                             continue
                         self.check_device(device, manifest)
+                        for parent in manifest.get('root_ancestors', []):
+                            if device.snapshot(parent['path']) != parent:
+                                raise CleanupError('android_ancestor_changed', 'Shared Download parent changed; remaining members preserved')
                         ancestors = [directories[str(parent)] for parent in PurePosixPath(path).parents
                                      if str(parent) in directories]
                         parent_states = [(parent, device.snapshot(parent['path'])) for parent in ancestors]
