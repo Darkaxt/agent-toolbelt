@@ -28,7 +28,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             with client.outlook_operation_queue(
                 operation,
-                queue_timeout_sec=args.queue_timeout_sec,
+                queue_timeout_sec=None if args.queue_wait_forever else args.queue_timeout_sec,
             ) as queue_meta:
                 diagnostics["queue"] = queue_meta
                 with client.outlook_com_lock():

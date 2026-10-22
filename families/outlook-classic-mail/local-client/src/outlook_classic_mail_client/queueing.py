@@ -33,7 +33,12 @@ def pid_is_running(pid: int) -> bool | None:
 
             process_query_limited_information = 0x1000
             still_active = 259
-            kernel32 = ctypes.windll.kernel32
+            from ctypes import wintypes
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
             handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
             if not handle:
                 error = kernel32.GetLastError()
@@ -146,14 +151,11 @@ class QueueStore:
             rows = conn.execute(
                 "SELECT ticket_id, pid, lease_expires_at FROM queue_tickets"
             ).fetchall()
-            expired_ids = [int(row["ticket_id"]) for row in rows if float(row["lease_expires_at"]) < current]
-            dead_ids = [
-                int(row["ticket_id"])
-                for row in rows
-                if int(row["ticket_id"]) not in expired_ids
-                and pid_is_running_func(int(row["pid"])) is False
-            ]
-            delete_ids = expired_ids + dead_ids
+            # Lease age is diagnostic only. A live or unreadable owner keeps its turn.
+            dead_ids = [int(row["ticket_id"]) for row in rows
+                        if pid_is_running_func(int(row["pid"])) is False]
+            expired_ids = []
+            delete_ids = dead_ids
             if delete_ids:
                 placeholders = ",".join("?" for _ in delete_ids)
                 conn.execute(
@@ -243,7 +245,7 @@ def acquire_queue_turn(
     operation: str,
     *,
     path: Path | str | None = None,
-    timeout_sec: float = DEFAULT_QUEUE_TIMEOUT_SEC,
+    timeout_sec: float | None = DEFAULT_QUEUE_TIMEOUT_SEC,
     poll_interval_sec: float = DEFAULT_QUEUE_POLL_SEC,
     lease_sec: int = DEFAULT_QUEUE_LEASE_SEC,
     pid: int | None = None,
@@ -297,7 +299,7 @@ def acquire_queue_turn(
                 return
 
             waited = monotonic_func() - start
-            if waited >= timeout_sec:
+            if timeout_sec is not None and waited >= timeout_sec:
                 metadata = {
                     "used": True,
                     "waited_seconds": round(max(0.0, waited), 3),

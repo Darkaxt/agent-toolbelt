@@ -4192,6 +4192,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_QUEUE_TIMEOUT_SEC,
         help="Maximum time to wait in the local Outlook FIFO queue before failing.",
     )
+    parser.add_argument("--queue-wait-forever", action="store_true", help="Wait for actual FIFO admission without a deadline.")
     subparsers = parser.add_subparsers(dest="operation", required=True)
 
     subparsers.add_parser("accounts", help="List configured Outlook accounts.")

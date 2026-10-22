@@ -106,6 +106,7 @@ class OutlookQueueTests(unittest.TestCase):
                 lease_sec=60,
                 monotonic_func=lambda: 10.0,
                 wall_time_func=lambda: 10.0,
+                pid_is_running_func=lambda pid: pid != 999,
             ) as meta:
                 self.assertEqual(meta["position_at_enqueue"], 1)
 
@@ -168,6 +169,30 @@ class OutlookQueueTests(unittest.TestCase):
             with store.connection() as conn:
                 remaining = conn.execute("SELECT COUNT(*) FROM queue_tickets").fetchone()[0]
             self.assertEqual(remaining, 1)
+
+    def test_expired_live_and_unknown_owners_are_preserved(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = queueing.QueueStore(Path(temp_dir)/"queue.sqlite")
+            store.ensure_schema()
+            store.enqueue(operation="search", pid=11, now=0, lease_sec=1)
+            store.enqueue(operation="accounts", pid=12, now=0, lease_sec=1)
+            self.assertEqual(store.prune_stale(now=10000,pid_is_running_func=lambda pid: True if pid==11 else None), {"expired":0,"dead":0})
+            with store.connection() as db:
+                self.assertEqual(db.execute("SELECT count(*) FROM queue_tickets").fetchone()[0],2)
+
+    def test_indefinite_wait_does_not_steal_live_ticket(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path=Path(temp_dir)/"queue.sqlite"
+            store=queueing.QueueStore(path);store.ensure_schema()
+            first=store.enqueue(operation="search",pid=11,now=0,lease_sec=1)
+            def release(_):
+                self.assertEqual(store.prune_stale(now=10000,pid_is_running_func=lambda pid:True)["dead"],0)
+                store.complete(ticket_id=first["ticket_id"])
+            with queueing.acquire_queue_turn("accounts",path=path,timeout_sec=None,
+                    pid_is_running_func=lambda pid:True,sleep_func=release,
+                    monotonic_func=lambda:10000,wall_time_func=lambda:10000) as meta:
+                self.assertIsNone(meta["timeout_seconds"])
+                self.assertEqual(meta["position_at_enqueue"],2)
 
     def test_retry_transient_state_operation_uses_backoff(self):
         attempts = {"count": 0}
