@@ -10,3 +10,4 @@ build/
 .ruff_cache/
 .DS_Store
 uv.lock
+sender_routes.json

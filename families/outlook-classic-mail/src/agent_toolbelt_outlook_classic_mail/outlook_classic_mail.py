@@ -438,6 +438,7 @@ def build_parser() -> argparse.ArgumentParser:
     edit_draft = subparsers.add_parser("edit-draft", help="Safely update an existing draft.")
     edit_draft.add_argument("--account", required=True)
     edit_draft.add_argument("--message-id", required=True)
+    edit_draft.add_argument("--send-using-account")
     edit_draft.add_argument("--body")
     edit_draft.add_argument("--subject")
     edit_draft.add_argument("--to")
@@ -688,6 +689,7 @@ def build_operation_args(args: argparse.Namespace) -> list[str]:
 
     if args.operation == "edit-draft":
         parts.extend(["--account", args.account, "--message-id", args.message_id])
+        append_optional_arg(parts, "--send-using-account", args.send_using_account)
         append_optional_arg(parts, "--body", args.body)
         append_optional_arg(parts, "--subject", args.subject)
         append_optional_arg(parts, "--to", args.to)

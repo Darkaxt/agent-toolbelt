@@ -137,3 +137,5 @@ account and reports `send_using_account_recipient_unmatched`. Inspect
 Blocklist support is read-only. The `threat` profile uses threat-centered DNS
 lists; `debug-all` adds broader ad/tracking/adult/platform lists for exploratory
 dry runs.
+
+Existing-draft sender repair: `edit-draft --account <draft-store> --message-id <draft-id> --send-using-account <configured-smtp> --confirm` selects the requested From account in place. The original store and EntryID remain bound, all omitted fields remain unchanged, and `draft_sender.verified` requires saved-item readback. Without the option, edits preserve the observed sender. Failed assignment or readback retains the draft with diagnostics; it never sends or recreates it.

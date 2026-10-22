@@ -620,6 +620,14 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
             ],
         )
 
+    def test_build_operation_args_routes_sender_only_draft_repair(self):
+        args = outlook_classic_mail.build_parser().parse_args([
+            "edit-draft", "--account", "store@example.com", "--message-id", "draft-1",
+            "--send-using-account", "sender@example.com", "--confirm"])
+        self.assertEqual(outlook_classic_mail.build_operation_args(args), [
+            "edit-draft", "--account", "store@example.com", "--message-id", "draft-1",
+            "--send-using-account", "sender@example.com", "--confirm"])
+
     def test_build_operation_args_routes_edit_draft(self):
         parser = outlook_classic_mail.build_parser()
         args = parser.parse_args(

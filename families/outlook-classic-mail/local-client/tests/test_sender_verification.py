@@ -234,6 +234,94 @@ class SenderVerificationTests(unittest.TestCase):
         self.assertEqual(readback["draft_sender"]["actual"], "existing@example.com")
         self.assertIsNone(readback["draft_sender"]["verified"])
 
+    def test_explicit_sender_repair_preserves_existing_draft(self):
+        draft = self.draft
+        draft.Parent = self.account["store"].GetDefaultFolder(client.OL_FOLDER_DRAFTS)
+        before = (draft.EntryID, draft.Subject, draft.Body, draft.HTMLBody, draft.To,
+                  draft.CC, list(draft.Attachments))
+        # The saved item is the same original draft, not a recreated template.
+        self.session.GetItemFromID = Mock(return_value=draft)
+        result = client.edit_draft(self.session, account_selector="demo@example.com",
+            message_id=draft.EntryID, send_using_account_selector="demo@example.com", confirm=True)
+        self.assertTrue(result["draft_sender"]["verified"])
+        self.assertEqual(result["draft_sender"]["source"], "saved_item_readback")
+        self.assertTrue(result["draft_sender"]["assignment"]["write_succeeded"])
+        self.assertEqual(before, (draft.EntryID, draft.Subject, draft.Body, draft.HTMLBody,
+                                 draft.To, draft.CC, list(draft.Attachments)))
+        self.assertTrue(draft.saved)
+
+    def test_explicit_sender_repair_uses_requested_account_not_store(self):
+        self.draft.Parent = self.account["store"].GetDefaultFolder(client.OL_FOLDER_DRAFTS)
+        self.session.GetItemFromID = Mock(return_value=self.draft)
+        other = {**self.account, "smtp_address": "other@example.com",
+                 "account": SimpleNamespace(SmtpAddress="other@example.com")}
+        resolve = client.resolve_account
+        with patch.object(client, "resolve_account", side_effect=lambda session, selector:
+                          other if selector == "other@example.com" else resolve(session, selector)):
+            result = client.edit_draft(self.session, account_selector="demo@example.com",
+                message_id=self.draft.EntryID, send_using_account_selector="other@example.com", confirm=True)
+        self.assertEqual(result["draft_sender"]["requested"], "other@example.com")
+        self.assertTrue(result["draft_sender"]["verified"])
+        self.session.GetItemFromID.assert_called_with(self.draft.EntryID, self.account["store_id"])
+
+    def test_explicit_sender_repair_failure_retains_original_draft(self):
+        self.draft.Parent = self.account["store"].GetDefaultFolder(client.OL_FOLDER_DRAFTS)
+        self.draft.reject_send_using = True
+        self.session.GetItemFromID = Mock(return_value=self.draft)
+        result = client.edit_draft(self.session, account_selector="demo@example.com",
+            message_id=self.draft.EntryID, send_using_account_selector="demo@example.com", confirm=True)
+        self.assertFalse(result["draft_sender"]["verified"])
+        self.assertEqual(result["draft_sender"]["status"], "unset")
+        self.assertFalse(result["draft_sender"]["assignment"]["write_succeeded"])
+        self.assertIn("send_using_account_unverified", result["draft_edit"]["warnings"])
+        self.assertTrue(self.draft.saved)
+
+    def test_explicit_sender_repair_still_requires_confirmation_and_drafts(self):
+        self.session.GetItemFromID = Mock(return_value=self.draft)
+        for confirm in (False, True):
+            with self.assertRaises(ValueError):
+                client.edit_draft(self.session, account_selector="demo@example.com",
+                    message_id=self.draft.EntryID, send_using_account_selector="demo@example.com", confirm=confirm)
+        self.assertFalse(self.draft.saved)
+
+    def test_invalid_requested_sender_fails_before_changing_draft(self):
+        self.draft.Parent = self.account["store"].GetDefaultFolder(client.OL_FOLDER_DRAFTS)
+        self.session.GetItemFromID = Mock(return_value=self.draft)
+        with self.assertRaises(ValueError):
+            client.edit_draft(self.session, account_selector="demo@example.com",
+                message_id=self.draft.EntryID, subject="Must not change",
+                send_using_account_selector="missing@example.com", confirm=True)
+        self.assertEqual(self.draft.Subject, "Draft")
+        self.assertFalse(self.draft.saved)
+
+    def test_sender_only_option_is_dispatched_through_client_cli(self):
+        self.draft.Parent = self.account["store"].GetDefaultFolder(client.OL_FOLDER_DRAFTS)
+        self.session.GetItemFromID = Mock(return_value=self.draft)
+        args = client.build_parser().parse_args(["edit-draft", "--account", "demo@example.com",
+            "--message-id", self.draft.EntryID, "--send-using-account", "demo@example.com", "--confirm"])
+        result = client.dispatch_operation(args, application=None, session=self.session)
+        self.assertTrue(result["result"]["draft_sender"]["verified"])
+
+    def test_good_assignment_cannot_hide_failed_saved_readback_during_repair(self):
+        self.draft.Parent = self.account["store"].GetDefaultFolder(client.OL_FOLDER_DRAFTS)
+        self.persisted.SendUsingAccount = None
+        self.session.GetItemFromID = Mock(side_effect=[self.draft, self.persisted])
+        result = client.edit_draft(self.session, account_selector="demo@example.com",
+            message_id=self.draft.EntryID, send_using_account_selector="demo@example.com", confirm=True)
+        self.assertTrue(result["draft_sender"]["assignment"]["write_succeeded"])
+        self.assertFalse(result["draft_sender"]["verified"])
+        self.assertIn("send_using_account_unverified", result["draft_edit"]["warnings"])
+
+    def test_read_command_retains_draft_sender_evidence(self):
+        self.draft.Parent = self.account["store"].GetDefaultFolder(client.OL_FOLDER_DRAFTS)
+        self.draft.SendUsingAccount = self.account["account"]
+        self.session.GetItemFromID = Mock(return_value=self.draft)
+        args = client.build_parser().parse_args(["read-message", "--account", "demo@example.com",
+                                                "--message-id", self.draft.EntryID])
+        result = client.dispatch_operation(args, application=None, session=self.session)
+        self.assertEqual(result["result"]["draft_sender"]["actual"], "demo@example.com")
+        self.assertIsNone(result["result"]["draft_sender"]["verified"])
+
 
 if __name__ == "__main__":
     unittest.main()

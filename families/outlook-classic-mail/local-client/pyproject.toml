@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "outlook-classic-mail-client"
-version = "0.1.0"
+version = "0.1.2"
 description = "Standalone Outlook Classic COM client for local multi-account mail workflows."
 readme = "README.md"
 requires-python = ">=3.11"

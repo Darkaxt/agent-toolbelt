@@ -3092,6 +3092,40 @@ def create_target_store_draft(
     }
 
 
+def sender_routes_path() -> Path:
+    override = os.getenv("OUTLOOK_CLASSIC_MAIL_SENDER_ROUTES")
+    if override:
+        return Path(override).expanduser()
+    return Path(os.getenv("LOCALAPPDATA", str(Path.home() / ".local" / "share"))) / "Tools" / "outlook-classic-mail" / "state" / "sender_routes.json"
+
+
+def load_sender_routes() -> list[dict[str, str]]:
+    """Read private user configuration, never embedded in a skill bundle."""
+    try:
+        raw = sender_routes_path().read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("routes"), list):
+            raise ValueError
+        routes = data["routes"]
+        for route in routes:
+            if not isinstance(route, dict):
+                raise ValueError
+            domain = route.get("recipient_domain")
+            account = route.get("send_using_account")
+            if not isinstance(domain, str) or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?", domain):
+                raise ValueError
+            if not isinstance(account, str) or not EMAIL_PATTERN.fullmatch(account):
+                raise ValueError
+            if route.get("provider") is not None and not isinstance(route["provider"], str):
+                raise ValueError
+        return routes
+    except (ValueError, TypeError, KeyError):
+        raise ValueError("Invalid private sender routes configuration; check version and route fields.") from None
+
+
 def resolve_send_using_account(
     session: Any,
     *,
@@ -3110,6 +3144,28 @@ def resolve_send_using_account(
         }
 
     recipient_addresses = set(message_recipient_smtp_addresses(message))
+    routed = [
+        (route, sorted(address for address in recipient_addresses
+                       if address.rsplit("@", 1)[-1].casefold() == route["recipient_domain"].casefold()))
+        for route in load_sender_routes()
+    ]
+    routed = [(route, addresses) for route, addresses in routed if addresses]
+    if routed:
+        accounts = {route["send_using_account"].casefold() for route, _ in routed}
+        providers = {route.get("provider", "") for route, _ in routed}
+        aliases = sorted({address for _, addresses in routed for address in addresses})
+        if len(accounts) != 1 or len(providers) != 1:
+            raise ValueError("Conflicting private sender routes; pass --send-using-account explicitly.")
+        selected = resolve_account(session, next(iter(accounts)))
+        provider = next(iter(providers))
+        return selected, {
+            "source": "private_recipient_domain", "requested": None,
+            "selected": selected.get("smtp_address"),
+            "matched_recipient_accounts": [selected.get("smtp_address")],
+            "alias_identity": {"addresses": aliases, "provider": provider,
+                               "delivery_verified": False},
+            "warnings": ["alias_reverse_route_requires_verification"] if provider == "simplelogin" else [],
+        }
     matches = [
         account
         for account in collect_accounts(session)
@@ -3547,6 +3603,7 @@ def edit_draft(
     *,
     account_selector: str,
     message_id: str,
+    send_using_account_selector: str | None = None,
     body: str | None = None,
     subject: str | None = None,
     to: str | None = None,
@@ -3557,7 +3614,7 @@ def edit_draft(
 ) -> dict[str, Any]:
     if not confirm:
         raise ValueError("Editing a draft requires --confirm.")
-    if not any(value is not None for value in (body, subject, to, cc, bcc)) and not list(attachments or []):
+    if not any(value is not None for value in (body, subject, to, cc, bcc, send_using_account_selector)) and not list(attachments or []):
         raise ValueError("Editing a draft requires at least one field to update.")
     if body is not None and not body.strip():
         raise ValueError("Editing a draft body requires --body with non-empty final draft text.")
@@ -3570,6 +3627,9 @@ def edit_draft(
     if not folder_paths_match(parent_folder, drafts_folder):
         raise ValueError("Message is not in the selected account's Drafts folder; refusing to edit it as a draft.")
 
+    send_account = resolve_account(session, send_using_account_selector) if send_using_account_selector is not None else None
+    sender_assignment: dict[str, Any] | None = None
+    warnings: list[str] = []
     body_update: dict[str, Any] | None = None
     original_sender = inspect_sender_account(item)
     if body is not None:
@@ -3578,9 +3638,16 @@ def edit_draft(
         item.Subject = subject
     recipient_summary = apply_recipient_fields(item, to=to, cc=cc, bcc=bcc)
     attach_draft_files(item, draft_attachments)
+    if send_account is not None:
+        sender_assignment = {}
+        set_send_using_account(item, send_account, warnings, diagnostics=sender_assignment)
     item.Save()
-    sender = verify_saved_draft_sender(session, item, account_info, expected=original_sender["actual"], compare_account=False)
+    expected_sender = send_account["smtp_address"] if send_account is not None else original_sender["actual"]
+    sender = verify_saved_draft_sender(session, item, account_info, expected=expected_sender,
+                                      compare_account=False, assignment=sender_assignment)
     sender["before_edit"] = original_sender
+    if send_account is not None and sender["verified"] is not True:
+        add_unique_warning(warnings, "send_using_account_" + ("mismatch" if sender["status"] == "mismatch" else "unverified"))
     return {
         "account": account_info["smtp_address"],
         "store": account_info["delivery_store"],
@@ -3595,7 +3662,7 @@ def edit_draft(
             "draft_folder": folder_summary(parent_folder),
             "target_drafts_folder": folder_summary(drafts_folder),
             "draft_folder_verified": True,
-            "warnings": (body_update or {}).get("warnings", []),
+            "warnings": list(dict.fromkeys(warnings + (body_update or {}).get("warnings", []))),
         },
         "draft_recipients": draft_recipients_summary(
             item,
@@ -3903,7 +3970,7 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
             operation="read-message",
             account=payload["account"],
             store=payload["store"],
-            result={"message": payload["message"]},
+            result={key: value for key, value in payload.items() if key not in ("account", "store")},
         )
 
     if args.operation == "save-attachments":
@@ -4070,6 +4137,7 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
             session,
             account_selector=args.account,
             message_id=args.message_id,
+            send_using_account_selector=args.send_using_account,
             body=args.body,
             subject=args.subject,
             to=args.to,
@@ -4300,6 +4368,7 @@ def build_parser() -> argparse.ArgumentParser:
     edit_draft_parser = subparsers.add_parser("edit-draft", help="Safely update an existing draft.")
     edit_draft_parser.add_argument("--account", required=True)
     edit_draft_parser.add_argument("--message-id", required=True)
+    edit_draft_parser.add_argument("--send-using-account")
     edit_draft_parser.add_argument("--body")
     edit_draft_parser.add_argument("--subject")
     edit_draft_parser.add_argument("--to")

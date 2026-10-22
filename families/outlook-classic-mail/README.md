@@ -185,3 +185,5 @@ When attachment files from an existing message are needed, use
 the saved paths; it does not mutate mailbox state.
 
 Cache and folder-hint writes are best-effort. If the local state files are temporarily locked, the client returns the search results and reports the skipped update as a warning. Use `--no-update-cache` for repeated read-only direct-folder searches when cache freshness is not needed.
+
+Existing-draft sender repair: `edit-draft --account <draft-store> --message-id <draft-id> --send-using-account <configured-smtp> --confirm` selects the requested From account in place. The original store and EntryID remain bound, all omitted fields remain unchanged, and `draft_sender.verified` requires saved-item readback. Without the option, edits preserve the observed sender. Failed assignment or readback retains the draft with diagnostics; it never sends or recreates it.
