@@ -6,6 +6,7 @@ Start by choosing the one family you actually need:
 
 | Family | Use it for | Folder | Primary CLI |
 | --- | --- | --- | --- |
+| ReCodex Policy Diagnostics | explain blocked PowerShell execution and record cybersecurity rejections in the existing private ledger | `families/recodex-policy-diagnostics` | installed Inspector CLI |
 | Cybersecurity Orchestrator | focused routing to existing security workflows and corrected investigative references | `families/cybersecurity-orchestrator` | - |
 | FedEx Tracking | read-only public tracking, travel history and package versus shipment facts | `families/fedex-tracking` | - |
 | Diagnostics-First UI | app-owned debugging actions, rendered state and measured UI readiness instead of screenshot polling | `families/ui-diagnostics-first` | - |
@@ -46,6 +47,7 @@ npx skills add Darkaxt/agent-toolbelt --all
 
 Public skill names:
 
+- `recodex-policy-diagnostics`
 - `cybersecurity-orchestrator`
 - `fedex-tracking`
 - `adb-archive-transfer`

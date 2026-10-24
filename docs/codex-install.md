@@ -8,6 +8,7 @@ Each runtime family ships its own Codex skill bundle. Instruction-only skills us
 
 ## Skill locations
 
+- ReCodex Policy Diagnostics: `families/recodex-policy-diagnostics/codex/skills/recodex-policy-diagnostics`; copy the identical instruction-only bundle to personal Codex or agents roots alongside `approach-recovery-ledger`. Uses the existing installed Inspector; no application or policy changes.
 - Cybersecurity Orchestrator: `families/cybersecurity-orchestrator/codex/skills/cybersecurity-orchestrator`; copy the identical instruction-only bundle into the personal skill root. Uses available specialist skills and bundled primary-source references; it does not install a security plugin or retain the retired bulk collection.
 - FedEx Tracking: `families/fedex-tracking/codex/skills/fedex-tracking`; identical instruction-only bundle for personal Codex, agents and Claude roots. Requires rendered-page browser tools when ordinary retrieval fails; no runtime or login.
 - Diagnostics-First UI: `families/ui-diagnostics-first/codex/skills/ui-diagnostics-first`; copy the identical instruction-only folder to personal Codex, agents and Claude skill roots. No runtime or settings changes.

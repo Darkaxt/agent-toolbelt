@@ -21,6 +21,7 @@ Each runtime family ships its own self-contained local marketplace with one plug
 
 ## Instruction-only skills
 
+- ReCodex Policy Diagnostics: `families/recodex-policy-diagnostics/codex/skills/recodex-policy-diagnostics`; copy the identical bundle to the personal Claude root alongside `approach-recovery-ledger`. Uses the existing installed Inspector and private rejection register.
 - Cybersecurity Orchestrator: `families/cybersecurity-orchestrator/codex/skills/cybersecurity-orchestrator`; copy the identical instruction-only bundle into the personal skill root. Uses available specialist skills and bundled primary-source references; it does not install a security plugin or retain the retired bulk collection.
 - FedEx Tracking: `families/fedex-tracking/codex/skills/fedex-tracking`; copy the identical bundle into the personal Claude skill root. Uses available browser tools for public pages; no plugin or account configuration.
 - Thread Cleanup: `families/thread-cleanup/codex/skills/thread-cleanup`; identical self-contained helper bundle. Explicit permanent conversation retirement is separate from generated-artifact cleanup.

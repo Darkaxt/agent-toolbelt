@@ -1,19 +1,24 @@
 ---
 name: approach-recovery-ledger
-description: Record a recovered thread's actual execution plan, interruption and dated evidence in a shared local ledger; consult relevant attempts before planning or selecting a permitted recovery approach. Does not retry operations or change access programs.
+description: Record actual execution plans, cybersecurity rejections and recovery outcomes in a shared private ledger; consult related attempts before selecting permitted next work. Preserves evidence and unfinished criteria without retrying denied operations or changing access programs.
 license: MIT
 metadata:
-  version: "0.1.0"
+  version: "0.1.1"
   compatibility: Self-contained Python 3.11+ helper; same instructions for Codex and Claude.
 ---
 
 # Approach Recovery Ledger
 
 Use the shared ledger to avoid repeated dead ends while preserving real progress
-and outstanding acceptance criteria. The recovered thread writes the entry
-**after recovery**, describing its actual execution plan: objective, scope,
+and outstanding acceptance criteria. The owning chat writes the entry on an
+observed rejection or **after recovery**, describing its actual execution plan: objective, scope,
 method, steps and intended next action. Do not substitute a guessed triggering
 command or reconstruct unavailable private reasoning.
+
+For cybersecurity or other policy rejections, use
+[the rejection-register contract](references/rejections.md). This is the same
+shared ledger, not a second database. A resumed chat records observed rejections
+when it can execute; no automatic backend interception hook is installed.
 
 ## Workflow
 

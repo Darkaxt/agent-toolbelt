@@ -1,9 +1,13 @@
 # Approach Recovery Ledger
 
-Version 0.1.0: shared, dated approach history for recovered threads and subsequent
+Version 0.1.1: shared, dated approach and cybersecurity rejection history for recovered threads and subsequent
 planning. The thread records its own actual execution plan after recovery.
 The helper does not detect blocks, recover a thread, retry requests or decide
 what is permitted.
+
+`references/rejections.md` defines the rejection-register use of the same private
+database. ReCodex Policy Diagnostics can attach local analysis as evidence;
+backend rejection causes remain separate and unknown when not established.
 
 The canonical self-contained bundle is
 `codex/skills/approach-recovery-ledger`. It works with Codex or Claude and needs

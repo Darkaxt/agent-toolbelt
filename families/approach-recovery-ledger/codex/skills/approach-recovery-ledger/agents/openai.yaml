@@ -1,5 +1,5 @@
 interface:
-  display_name: "Approach Recovery Ledger"
+  display_name: "Approach & Rejection Ledger"
   short_description: "Share dated execution plans and recovery evidence"
   default_prompt: "Use $approach-recovery-ledger to consult relevant shared attempts and record this recovered thread's actual execution plan, observed interruption, evidence and outstanding criteria."
 policy:

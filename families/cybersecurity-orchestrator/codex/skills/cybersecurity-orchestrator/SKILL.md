@@ -3,7 +3,7 @@ name: cybersecurity-orchestrator
 description: Select the appropriate installed security workflow for explicit audits, finding handling, detection engineering or forensic investigations. Route to specialist skills and focused primary-source references; ordinary coding does not require a security audit.
 license: MIT
 metadata:
-  version: "0.1.0"
+  version: "0.1.1"
   compatibility: Codex and Claude. Instruction-only; specialist tools must actually be available in the current environment.
 ---
 
@@ -17,6 +17,7 @@ Read the selected installed skill before using its helper. Check actual availabi
 
 | Requested outcome | Route |
 | --- | --- |
+| Explain a blocked execution or cybersecurity rejection | `recodex-policy-diagnostics` for observed/local diagnostic evidence; `approach-recovery-ledger` for the private rejection register. Neither overrides a denial. |
 | Security review of a PR, commit, branch or working-tree diff | `codex-security:security-diff-scan` |
 | Standard repository or scoped-path audit | `codex-security:security-scan` |
 | Explicit exhaustive or repeated independent scans | `codex-security:deep-security-scan` |
