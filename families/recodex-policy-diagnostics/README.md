@@ -1,12 +1,12 @@
 # ReCodex Policy Diagnostics
 
-Version 0.1.0. The canonical instruction-only bundle is
-`codex/skills/recodex-policy-diagnostics`. Copy the same folder to the personal
-Codex, shared-agent or Claude skill root. It requires the locally installed
+Version 0.1.1. The canonical Codex-only instruction bundle is
+`codex/skills/recodex-policy-diagnostics`. Install it in the personal Codex or
+Codex-discovered shared-agent skill root, not Claude. It requires the locally installed
 ReCodex Policy Inspector and `approach-recovery-ledger` for durable rejection
 records; neither application nor database is bundled.
 
-The skill explains an observed blocked operation, uses the Inspector's headless
+The skill preflights planned script invocations and explains observed blocked operations, using the Inspector's headless
 CLI for local PowerShell diagnostics, records cybersecurity rejections in the
 existing private ledger, and preserves a concrete permitted next action. It does
 not run submitted commands or install an automatic rejection/recovery hook.

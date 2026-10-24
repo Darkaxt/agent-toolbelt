@@ -32,7 +32,7 @@ npx skills update
 
 | Skill | Compatibility | Local prerequisites | Safety notes |
 | --- | --- | --- | --- |
-| `recodex-policy-diagnostics` | Windows Codex and Claude | Installed ReCodex Policy Inspector and approach-recovery-ledger | Analyze submitted text without execution; record observed rejections separately from local predictions; no policy changes or denied-action retries. |
+| `recodex-policy-diagnostics` | Codex on Windows only | Installed ReCodex Policy Inspector and approach-recovery-ledger | Preflight script invocations without execution; record actual rejections separately from local predictions; no policy changes or denied-action retries. Do not install for Claude. |
 | `cybersecurity-orchestrator` | Codex and Claude | Existing specialist skills where available; no runtime | Select security workflows and focused investigative references; no automatic audit or vendor script execution. |
 | `fedex-tracking` | Codex and Claude with rendered-page browser tools | Accessible public FedEx page; no runtime or API key | Read-only public status, history and shipment facts; no login, delivery changes or access-control bypass. |
 | `ui-diagnostics-first` | Instruction-only Codex/Claude guidance | Authorized application source or existing UI diagnostics for integration | Real rendered state/actions and scoped measured readiness; no automatic device access, production bridge or enforcement claim. |

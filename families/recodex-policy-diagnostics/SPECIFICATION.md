@@ -1,4 +1,32 @@
-# ReCodex rejection diagnostics skill 0.1.0
+# ReCodex rejection diagnostics skill
+
+## 0.1.1 maintenance scope
+
+The user's subsequent instructions extend the skill to targeted pre-execution
+inspection and script-first command construction, recognize the extracted
+classifier as evidence within its reported coverage, and restrict this skill to
+Codex. The prior 0.1.0 delivery below is historical; its Claude deployment is
+superseded by this explicit scope change. The shared ledger remains cross-agent.
+
+Acceptance: prospective triggering; script contents reviewed separately from
+launcher classification; task checkpoints before consequential operations;
+warnings distinguished from live denials; no invented rejection records,
+automatic rewriting, hidden payloads or bypass of unresolved denials; matching
+Codex/shared-agent installed copies; Claude diagnostic copy removed; source and
+metadata validation, synchronized source and a versioned local instruction bundle.
+No classifier/runtime/enforcement or live-ledger change is authorized or needed.
+
+Maintenance verification: both Codex-discovered copies validate and match the
+source digests; the Claude diagnostic copy is removed. A read-only candidate
+invocation was analyzed by the installed Inspector without executing it. The
+0.1.1 ZIP was reopened and each member digest checked against source/installation;
+its SHA-256 is `8cc6155b459c71a799cbfad15ebf7719a7f949538f169aed76f45257a2f233c0`.
+The security orchestrator's conditional routing now limits ReCodex to Codex and
+retains the shared ledger for other clients. Existing 0.1.0 runtime tests remain
+applicable to unchanged Inspector and ledger binaries; no thread-survival or
+automatic interception guarantee is claimed by this instruction-only maintenance.
+
+## Historical 0.1.0 delivery
 
 Authorization: already_authorized by the request to create an Inspector-backed
 skill and include a cybersecurity rejection ledger. This is skill delivery, not

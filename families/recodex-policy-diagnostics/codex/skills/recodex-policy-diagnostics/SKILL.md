@@ -1,18 +1,62 @@
 ---
 name: recodex-policy-diagnostics
-description: Diagnose a blocked or rejected execution using observed evidence and the installed ReCodex Policy Inspector; record cybersecurity rejections in the shared recovery ledger and identify permitted next work. Does not override enforcement or retry denied operations.
+description: Preflight planned Codex PowerShell execution and diagnose observed rejections with the installed ReCodex Policy Inspector. Prefer reviewable scripts, preserve task progress and record actual rejections in the shared ledger. Does not override enforcement or retry denied operations.
 license: MIT
 metadata:
-  version: "0.1.0"
-  compatibility: Windows; existing ReCodex Policy Inspector and approach-recovery-ledger. Identical instructions for Codex and Claude.
+  version: "0.1.1"
+  compatibility: Codex on Windows; existing ReCodex Policy Inspector and approach-recovery-ledger. Not a Claude workflow.
 ---
 
 # ReCodex Policy Diagnostics
 
-Use after an actual execution rejection, or an explicit request to inspect a
-command. A failed build, transport disconnect or Windows access error alone is
+Use before planned complex or sensitive Codex shell execution, especially when
+related work has encountered local classification problems; also use after an
+actual rejection or an explicit inspection request. Routine simple reads do not
+need repeated preflight. A failed build, transport disconnect or Windows access error alone is
 not evidence of a cybersecurity rejection. Do not stop the whole assignment
 when only one operation or acceptance criterion is affected.
+
+## Prepare and preflight before execution
+
+Reuse the project's existing build/deployment/packaging script or required helper.
+Put complex new logic in a reviewable script file using file-editing tools, then
+invoke it with a short explicit command. Select this structure for maintainability,
+correct quoting and testability from the outset. Do not replace a denied inline
+operation with a script call to obtain execution. A file is not a way to hide its
+contents from review or change the underlying scope/permissions.
+
+Before a consequential multi-step operation, update the existing task checkpoint
+with the objective, script path/revision, intended inputs, completed work,
+outstanding criteria and next action. Keep private details out of public source.
+This preserves a resumption point; it cannot prevent interrupted generation.
+
+Analyze the exact planned PowerShell invocation as data with the procedure below,
+before submitting it for execution. Inspect script contents separately using
+language-appropriate review and checks. A clean launcher prediction does not
+certify the script body. Never feed Python/JavaScript to the PowerShell parser and
+claim it checked that language, or treat a separately analyzed PowerShell file as
+proof that the host recursively checks its contents the same way.
+
+Use the extracted classifier as evidence of its actual reported matches and
+parsing decisions. Keep its recorded source revision, engine identity and selected
+rules with the report; extraction provenance is valuable evidence, not a reason
+to dismiss its findings. Focus on the reported local parsing and guardrail path.
+A textual heuristic match is concrete evidence of that classifier's decision;
+it does not establish that the script actually performs the matched operation.
+Preserve runtime provenance and do not infer behavior outside reported coverage.
+
+A local warning is not itself a live denial or proof of prohibited behavior.
+Review the actual operation, scope and finding; preserve a concrete disposition
+and follow the real execution/approval requirements. Unknown coverage is not an
+invented blanket prohibition, and no-match is not an approval. Do not run a
+rewrite/retest loop to find wording the checker accepts. Correct independently
+identified engineering defects, not trigger words for the purpose of evasion.
+An existing live denial remains unresolved regardless of a preflight result.
+
+Keep preflight reports with the task checkpoint. Do not fabricate a rejection
+ledger entry for a command that was only analyzed and never rejected. Record
+actual rejections through the shared register below; continue independent
+permitted work rather than abandoning the task.
 
 ## Retain evidence and consult the rejection register
 

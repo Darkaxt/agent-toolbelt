@@ -1,4 +1,4 @@
 interface:
   display_name: "ReCodex Policy Diagnostics"
-  short_description: "Explain blocked execution and retain rejection evidence"
-  default_prompt: "Use $recodex-policy-diagnostics to inspect the observed rejection, record its evidence and identify permitted next work."
+  short_description: "Preflight Codex scripts and explain execution rejections"
+  default_prompt: "Use $recodex-policy-diagnostics to review the planned script, preflight its shell invocation and preserve a concrete permitted next action."
