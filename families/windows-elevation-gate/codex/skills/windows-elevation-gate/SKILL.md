@@ -3,7 +3,7 @@ name: windows-elevation-gate
 description: Queue Windows administrator actions through an elevated session broker with broker-owned Accept/Cancel and feedback. One native UAC starts the broker; each command requires its own approval. Use for authorized administrator actions across tasks.
 license: MIT
 metadata:
-  version: "0.2.2"
+  version: "0.2.5"
   compatibility: Windows interactive login session, Python 3.11+, protected .NET Framework broker and installed shared client runtime
 ---
 
@@ -130,11 +130,18 @@ Broker waits are event-driven, with no arbitrary timeout, lease expiry or proces
 killing. Disconnect before approval cancels that request; disconnect after launch
 does not cancel the supervised command or establish its completion.
 
-The explicit legacy `run --one-shot` path remains for protected installation or
-diagnosed recovery only. It retains the former custom popup followed by native
-UAC, per-action worker and on-disk FIFO state. Never select it merely because a
-broker call failed. `one-shot-status`, `recover` and `finalize` apply only to that
-legacy path. Its recovery contract follows:
+Every public `run` uses the persistent broker, including ordinary application
+and MSI installations. Do not select `--one-shot`: it is now a deprecated
+compatibility alias for broker routing and cannot launch per-action native UAC.
+Unavailable, draining or disconnected brokers never cause automatic fallback.
+Inspect status and retained receipts; only explicitly requested `broker-start`
+can start a missing session broker. Do not resubmit uncertain operations.
+
+Native-UAC bootstrap is reserved for the fixed protected broker/Coordinator
+installation scripts, not arbitrary app installation or a client recovery flag.
+Those installers retain their reviewed bootstrap interface. `one-shot-status`,
+`recover` and `finalize` only inspect/finalize historical legacy requests; they
+do not grant a new generic launch path. Their historical recovery contract follows:
 
 No timeout, lease expiry, low CPU heuristic or stale lockfile steals a legacy ticket.
 Dead owners before UAC can be reclaimed through exact PID/start identity. An owner

@@ -83,8 +83,7 @@ Neither is retried. Client disconnect before approval cancels the request; respo
 loss returns `completion_unverified`, not proof of nonexecution or permission to
 resubmit. Bound output/history and request receipts support diagnosis.
 
-Explicit `run --one-shot` retains the prior per-action popup/UAC path for installation
-or diagnosed recovery; it is never an automatic fallback. `one-shot-status`,
+Public `run` always uses the broker; deprecated `--one-shot` is only a compatibility alias, never per-action UAC. Fixed protected-component installers retain their separate reviewed bootstrap. `one-shot-status`,
 `recover` and `finalize` inspect that legacy queue. Dead owners before UAC are reclaimable; ambiguous UAC owner
 exit requires explicit user-confirmed recovery. Normal metadata is removed at
 completion; the last 100 compact queue records remain. `finalize --request-id`

@@ -28,7 +28,7 @@ def parser():
             command.add_argument("--show-dialog", action="store_true",
                                  help="Show a non-elevating visual preview; no queue or UAC request")
         else:
-            command.add_argument("--one-shot", action="store_true", help="Explicit legacy per-action UAC for installation/recovery; never automatic fallback")
+            command.add_argument("--one-shot", action="store_true", help="Deprecated compatibility flag; run always uses the persistent broker, never per-action UAC")
     commands.add_parser("status")
     commands.add_parser("one-shot-status", help="Inspect the legacy per-action UAC queue")
     for name in ("broker-start", "broker-status", "broker-stop"):
@@ -66,7 +66,7 @@ def main(argv=None):
                                      thread_name=args.thread_name, reason=args.reason,
                                      changes=args.changes, targets=args.target, bind_files=args.bind_file)
             result = ({"ok": True, "operation": "preview", "request": request, "launched": False}
-                      if args.operation == "preview" else engine.run(request) if args.one_shot else broker.run(request))
+                      if args.operation == "preview" else broker.run(request))
             if args.operation == "preview" and args.show_dialog:
                 result["dialog"] = broker.preview(request)
     except broker.CompletionUnknown as exc:
@@ -77,6 +77,9 @@ def main(argv=None):
         result = {"ok": False, "operation": args.operation, "failure_kind": "broker_stopping", "error": str(exc), "launched": False}
     except (OSError, ValueError, RuntimeError, EOFError) as exc:
         result = {"ok": False, "operation": args.operation, "failure_kind": "request_failed", "error": str(exc)}
+    if args.operation == "run" and args.one_shot:
+        result["routing_notice"] = {"deprecated_flag": "--one-shot", "route": "persistent_broker",
+                                    "message": "Public run always uses broker approval. Native-UAC bootstrap is reserved for the fixed protected-component installer."}
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["ok"] else 3 if result.get("failure_kind") == "user_declined" else 1
 
