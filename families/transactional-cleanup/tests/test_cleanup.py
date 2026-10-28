@@ -20,7 +20,8 @@ from agent_toolbelt_transactional_cleanup import cli
 
 class CleanupTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(dir='D:/Temp' if Path('D:/Temp').is_dir() else None)
+        scratch = os.environ.get('TRANSACTIONAL_CLEANUP_TEST_ROOT')
+        self.temp = tempfile.TemporaryDirectory(dir=scratch or ('D:/Temp' if Path('D:/Temp').is_dir() else None))
         self.root = Path(self.temp.name)
         self.work = self.root / 'work'
         self.work.mkdir()
@@ -942,6 +943,37 @@ with Engine(Path(sys.argv[1])).locked([Path(sys.argv[2])], operation='review', t
         if os.environ.get('SystemRoot'):
             path = Path(os.environ['SystemRoot']) / 'System32' / 'Recovery'
             self.assertEqual(self.engine.protection(path), 'protected_root')
+
+    def test_attributed_package_boot_directory_uses_normal_ticket_checks(self):
+        out = self.output()
+        boot = out / 'go-modules' / 'example.org' / 'module@v1' / 'boot'
+        boot.mkdir(parents=True)
+        source = b'package boot\n'
+        (boot / 'boot.go').write_bytes(source)
+        review = self.engine.review(self.transaction)
+        self.assertEqual(review['candidate_bytes'], 9 + len(source))
+        ticket = self.engine.ticket(self.transaction, review['manifest_sha256'])['ticket_id']
+        self.assertEqual(self.engine.apply(ticket)['ticket_state'], 'applied')
+        self.assertFalse(out.exists())
+
+    def test_volume_boot_efi_and_windows_boot_remain_protected(self):
+        for relative in ('Boot', 'bOoT/BCD', 'EFI', 'eFi/Microsoft/Boot'):
+            with self.subTest(relative=relative):
+                path = Path(self.root.anchor) / relative
+                self.assertEqual(self.engine.protection(path), 'filesystem_or_repository_metadata')
+        if os.environ.get('SystemRoot'):
+            path = Path(os.environ['SystemRoot']) / 'Boot'
+            self.assertEqual(self.engine.protection(path), 'protected_root')
+
+    def test_unattributed_preexisting_package_boot_remains_excluded(self):
+        boot = self.work / 'boot'
+        boot.mkdir()
+        source = boot / 'notes.txt'
+        source.write_text('preserve user notes', encoding='utf-8')
+        transaction = self.engine.begin(self.work, [boot])['transaction_id']
+        review = self.engine.review(transaction)
+        self.assertEqual(review['candidate_count'], 0)
+        self.assertTrue(source.exists())
 
     def test_unattributed_preexisting_recovery_content_remains_excluded(self):
         recovery = self.work / 'recovery'

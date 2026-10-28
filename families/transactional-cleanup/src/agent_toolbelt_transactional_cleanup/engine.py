@@ -384,11 +384,11 @@ class Engine:
             if os.environ.get(var) and path == fs.canonical(os.environ[var]):
                 return 'critical_root'
         parts = {part.casefold() for part in path.parts}
-        # Windows recovery is a volume-root tree, not an arbitrary package module
-        # named recovery. SystemRoot descendants are already protected above.
+        # Windows boot, EFI and recovery are volume-root trees, not arbitrary
+        # package modules with those names. SystemRoot is protected above.
         volume_child = path.parts[1].casefold() if len(path.parts) > 1 else ''
-        if (parts & {'$recycle.bin', 'system volume information', 'boot', '$extend'}
-                or volume_child == 'recovery'):
+        if (parts & {'$recycle.bin', 'system volume information', '$extend'}
+                or volume_child in {'boot', 'efi', 'recovery'}):
             return 'filesystem_or_repository_metadata'
         empty_leaf_marker = (path.name.casefold() == '.git'
                              and '.git' not in {part.casefold() for part in path.parent.parts}

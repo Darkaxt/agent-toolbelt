@@ -1,5 +1,11 @@
 # Transactional Cleanup
 
+Version 0.7.3 corrects the same false positive for nested package modules named
+`boot`. Volume-root Boot/EFI/Recovery and the Windows tree stay protected;
+unattributed user files, ancestry, Git, identity/content and signed-ticket checks
+remain unchanged. The test scratch parent can be set through
+`TRANSACTIONAL_CLEANUP_TEST_ROOT` without changing application/global settings.
+
 Version 0.7.2 supports exact task-owned immediate children of Android Download.
 The shared Download parent is identity-bound and rechecked but never ticketed;
 normal endpoint, ancestry, content and signed-ticket protections remain in place.
