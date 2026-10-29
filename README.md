@@ -6,6 +6,7 @@ Start by choosing the one family you actually need:
 
 | Family | Use it for | Folder | Primary CLI |
 | --- | --- | --- | --- |
+| Claude Context Diagnostics | recorded session usage, compaction cadence and large context additions | `families/claude-context-diagnostics` | bundled Python helper |
 | F3D Viewer | visual model reading with F3D; measured scene/rig inspection through the existing Blender gate | `families/f3d-viewer` | installed F3D console |
 | ReCodex Policy Diagnostics | explain blocked PowerShell execution and record cybersecurity rejections in the existing private ledger | `families/recodex-policy-diagnostics` | installed Inspector CLI |
 | Cybersecurity Orchestrator | focused routing to existing security workflows and corrected investigative references | `families/cybersecurity-orchestrator` | - |
@@ -98,3 +99,4 @@ Read [Publishing and installing from skills.sh](docs/skills-sh.md) before instal
 - [Codex install guide](docs/codex-install.md)
 - [Claude install guide](docs/claude-install.md)
 - [skills.sh guide](docs/skills-sh.md)
+- `claude-context-diagnostics`

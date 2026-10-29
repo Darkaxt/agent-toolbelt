@@ -6,6 +6,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 EXPECTED_FAMILIES = {
+    "claude-context-diagnostics": {"runtime": False, "has_claude": False},
     "f3d-viewer": {"runtime": False, "has_claude": False},
     "recodex-policy-diagnostics": {"runtime": False, "has_claude": False},
     "cybersecurity-orchestrator": {"runtime": False, "has_claude": False},

@@ -50,3 +50,4 @@ helper and needs no plugin, repository bootstrap or account credentials.
 4. Install the single plugin exposed by that family marketplace.
 
 For an instruction-only skill, copy its canonical folder directly into the Claude-compatible personal skills directory instead of creating a marketplace plugin.
+- Claude Context Diagnostics: `families/claude-context-diagnostics/codex/skills/claude-context-diagnostics`; copy the self-contained bundle to the personal Claude skill root. Python reads an exact session transcript without changing it; no plugin or hook is installed.

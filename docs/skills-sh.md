@@ -32,6 +32,7 @@ npx skills update
 
 | Skill | Compatibility | Local prerequisites | Safety notes |
 | --- | --- | --- | --- |
+| `claude-context-diagnostics` | Claude Code transcripts, Python 3.11+ | Exact session UUID and readable local JSONL | Read-only bounded metadata; no raw transcript output, inference, settings changes or daemon. |
 | `f3d-viewer` | Instruction-only Codex/Claude guidance | Existing F3D; installed Blender gate for measured Blender analysis | Visual reads and explicit preview outputs; no new bridge, model edits, preferences or file associations. |
 | `recodex-policy-diagnostics` | Codex on Windows only | Installed ReCodex Policy Inspector and approach-recovery-ledger | Preflight script invocations without execution; record actual rejections separately from local predictions; no policy changes or denied-action retries. Do not install for Claude. |
 | `cybersecurity-orchestrator` | Codex and Claude | Existing specialist skills where available; no runtime | Select security workflows and focused investigative references; no automatic audit or vendor script execution. |
