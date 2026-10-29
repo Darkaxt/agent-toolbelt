@@ -94,7 +94,7 @@ agent-toolbelt-transactional-cleanup begin --workspace <repo> --scan-root <temp-
 agent-toolbelt-transactional-cleanup register --transaction <id> --path <output> --kind compiler-output --evidence <provenance>
 agent-toolbelt-transactional-cleanup register --transaction <id> --path <temp-clone> --kind disposable-repository --evidence <provenance> --regenerated --allow-disposable-repository
 agent-toolbelt-transactional-cleanup review --transaction <id>
-agent-toolbelt-transactional-cleanup inspect --transaction <id> --decision candidate --offset 0 --limit 100
+agent-toolbelt-transactional-cleanup inspect --transaction <id> --offset 0 --limit 1000
 agent-toolbelt-transactional-cleanup ticket --transaction <id> --manifest-sha256 <reviewed-hash>
 agent-toolbelt-transactional-cleanup apply --ticket <id> --dry-run
 agent-toolbelt-transactional-cleanup apply --ticket <id>
@@ -122,6 +122,11 @@ rather than launching an overlapping operation. Operations on disjoint explicit
 roots may run concurrently. `state_busy` is reserved for a pre-upgrade runtime that
 still owns the legacy global lock. A completed `reviewed` transaction should not be
 reviewed again.
+Large-manifest inspection supports 1,000 members per call. Follow next_offset,
+inspect each needed page once and serialize access to the same transaction,
+including read-only inspect calls. Capture large JSON outside the conversation
+instead of spawning small-page processes. Candidate/deletion byte totals exclude
+directory sizes; do not add directory metadata sizes to an independent census.
 For pre-existing known
 generated output, registration requires `--regenerated` with explicit provenance.
 Without it, pre-existing modified files are protected. New untracked source files

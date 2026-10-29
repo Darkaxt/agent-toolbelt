@@ -91,10 +91,11 @@ deleting the template does not reclaim those dependencies.
    repository root, tracked file, helper installation, or protected system path.
    Use the separate disposable-validation-repository contract below only when all
    of its safeguards apply.
-3. Finish and verify the primary task, then run `review --transaction <id>`.
-   Inspect candidate/exclusion diagnostics and byte estimate. When diagnostics are
-   capped, page the signed manifest with `inspect --transaction <id> --offset <n>
-   --limit 100`, optionally filtering with `--decision candidate|excluded`.
+3. Once the selected outputs' last consumers have exited and required retained
+   evidence is verified, run `review --transaction <id>` once. Inspect the signed
+   manifest with `inspect --transaction <id> --offset <n> --limit 1000`, using its
+   returned `next_offset` for further pages. Optional `--decision` filters must
+   not conceal exclusions or leave required candidates uninspected.
 4. In a separate invocation run `ticket --transaction <id>
    --manifest-sha256 <reviewed hash>`. No paths can be added after review.
 5. Use `apply --ticket <opaque id> --dry-run` if useful, then
@@ -111,6 +112,38 @@ deleting the template does not reclaim those dependencies.
 
 All commands accept `--state-root <directory>` before the command for test isolation.
 Keep normal installed commands on their default helper state.
+
+## Avoid Call Amplification
+
+Batch outputs ready at the same cleanup checkpoint into one bounded transaction;
+do not create a transaction per file or inspection page. This does not postpone
+cleanup of spent D: output until the whole thread ends or combine unrelated owners.
+
+For a large Windows manifest, use `inspect`'s supported maximum of **1,000 members
+per call** (not its 100-member default). Android `adb-inspect` has a separate
+maximum of **100**; follow that backend's reference instead. Read each required
+page once and retain the
+transaction, manifest hash and inspection coverage. Capture large JSON in the
+calling process or an attributable task file and inspect every member there;
+summarize the results instead of dumping all rows into the conversation. A tool
+display cap is not a reason to spawn dozens of small-page helper processes.
+Keep inspection output outside the frozen deletion targets; files created after
+review are not covered by that ticket.
+Do not repeat begin/review/inspect for an unchanged snapshot or merely to report
+status. Ticket issuance remains a separate invocation after inspection.
+
+Serialize commands for the same transaction or overlapping roots, **including
+inspect calls**; parallel pages can return `target_busy`. When the original tool
+session is still running, observe it through its supported wait interface rather
+than launching duplicate helper commands. Use status for a concrete progress or
+recovery question, not a tight polling loop. Dry-run is optional when it resolves
+an actual uncertainty, not a mandatory extra apply for every batch.
+
+Use the helper's reported byte totals. `candidate_count` includes directories,
+but `candidate_bytes` and deletion byte totals exclude directory sizes. If an
+independent census is needed, sum `size` only for non-directory members and report
+logical bytes, not physically reclaimed space. A caller's accounting error does
+not justify re-reading the entire unchanged manifest or weakening its checks.
 
 If an operation returns `target_busy`, its root overlaps a live operation; use
 lock-free `status` to observe it and retry after that operation completes. Disjoint
