@@ -3,7 +3,7 @@ name: f3d-viewer
 description: Prefer F3D for read-only visual inspection and previews of existing 3D models. Use gated Blender for native scene evaluation, rig or animation measurements, and editing.
 license: MIT
 metadata:
-  version: "0.1.0"
+  version: "0.1.1"
   compatibility: Installed F3D; examples use its Windows console frontend. Blender analysis requires the existing blender-gate skill.
 ---
 
@@ -32,6 +32,13 @@ $f3d = Join-Path $env:ProgramFiles 'F3D/bin/f3d-console.exe'
 These flags are available in F3D 4.0; verify older builds before invoking them.
 Use new explicit output paths in task scratch, retain the native process through
 exit, inspect diagnostics and actually view the PNG before making visual claims.
+**Exit code 0 is not proof of success:** F3D 4.0 can return it for missing inputs.
+Confirm each intended input exists before launch. Missing inputs or reader errors
+mean failure regardless of the exit code. Load-only checks need positive evidence
+that the intended model loaded. For previews, require a newly created, nonempty,
+decodable image at the exact requested path; an old image is not evidence of this
+run. Inspect that image and report relevant texture/scene warnings as incomplete
+coverage rather than an unqualified pass.
 Use another camera angle when the question cannot be answered from one view.
 Keep source models and their relative texture/material dependencies intact.
 Missing textures, reader errors or incomplete scene support are limitations to
