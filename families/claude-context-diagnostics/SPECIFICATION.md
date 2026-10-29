@@ -37,10 +37,19 @@ writers. No deletion of unknown files, settings changes or running-session resta
    retained unknown ancestry bridges. The passive exact Skyrim report succeeds,
    retains usage and discloses its real historical cycle. Privacy/nonmutation and
    existing behavior pass. No required consolidation or tracked deferrals.
-2. Verified local upgrade and delivery — ACTIVE (R8). Verified existing-file
+2. Verified local upgrade and delivery — COMPLETE (R8). Verified existing-file
    upgrade support passes exact-byte, local-edit, writer-lock and failed-write
-   restoration checks. Remaining acceptance: committed release, installed CLI
-   read-back and scratch cleanup. Do not overwrite the directory blindly.
+   restoration checks. Release 0.1.1 is delivered from source
+   92b5657db54e191540a71b3eedd7d0b1e5824aa9, installed and hash-verified. The
+   installed CLI passes all three original failure probes and reads the actual
+   exact Skyrim transcript, preserving its real historical cycle warning.
+   Source/release/installed helper SHA-256 matches:
+   ec5490549ff73098881024b5e84a746025378e69e6f391da8ef376cc6d60d0b1.
+   installation-0.1.1.json, installed-regressions-0.1.1.json and
+   installed-skyrim-report-0.1.1.json are retained under the private release root.
+   Cleanup ce7079676d798b62912995879ff48292 is applied without errors;
+   the exact repair scratch root is absent. No blockers, deferrals or required
+   consolidation remain. No live Claude session was restarted or messaged.
    Only source commits belonging to this skill may be synchronized; preserve
    unrelated shared-branch work. Scratch: E:/Temp/claude-context-repair-20261029.
 
