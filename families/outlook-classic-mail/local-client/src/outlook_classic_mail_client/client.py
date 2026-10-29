@@ -1,5 +1,6 @@
 import argparse
 import contextlib
+import hashlib
 import html
 import json
 import os
@@ -7,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -2398,16 +2400,77 @@ def prepare_draft_attachments(attachments: Iterable[str] | None) -> dict[str, An
     }
 
 
-def attach_draft_files(draft: Any, draft_attachments: dict[str, Any]) -> None:
+def attachment_staging_root() -> Path:
+    """Private operation scratch, never a global TEMP change or a C: fallback."""
+    for drive in ("E:/", "D:/"):
+        if Path(drive).is_dir():
+            root = Path(drive) / "Temp"
+            root.mkdir(exist_ok=True)
+            return root
+    raise ValueError("Long-path attachments require available E:/Temp or D:/Temp staging.")
+
+
+def file_sha256(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+@contextlib.contextmanager
+def attach_draft_files(draft: Any, draft_attachments: dict[str, Any]):
+    """Keep by-value input alive through the caller's Save, then verify it.
+
+    Outlook may leave an attachment behind even when Add raises. Choose the
+    transport before Add; never catch/retry a mutating COM call here.
+    """
     if not draft_attachments.get("items"):
+        yield
         return
     attachments = safe_get(draft, "Attachments")
     add_attachment = safe_get(attachments, "Add")
     if not callable(add_attachment):
         raise ValueError("Draft item does not expose Attachments.Add.")
-    for item in draft_attachments["items"]:
-        add_attachment(item["path"])
-        item["attached"] = True
+    with contextlib.ExitStack() as stack:
+        stage = None
+        staged = []
+        for index, item in enumerate(draft_attachments["items"]):
+            path = item["path"]
+            long_path = len(path.encode("utf-16-le")) // 2 >= 260 or path.startswith("\\\\?\\")
+            item["transport"] = "short_path_staging" if long_path else "direct"
+            if not long_path:
+                add_attachment(path)
+                item["attached"] = True
+                continue
+            if stage is None:
+                stage = Path(stack.enter_context(tempfile.TemporaryDirectory(
+                    prefix="om-", dir=attachment_staging_root())))
+            # Outlook refuses writes to its built-in long-filename property;
+            # DisplayName also does not rename an HTML/plain-text attachment.
+            # Keep the original basename on disk instead. Per-input directories
+            # disambiguate identical names from different source folders.
+            input_dir = stage / str(index)
+            input_dir.mkdir()
+            transport = input_dir / item["filename"]
+            if len(str(transport).encode("utf-16-le")) // 2 >= 260:
+                raise ValueError("Attachment filename leaves insufficient room for Outlook's "
+                                 "short staging directory; no attachment was added for this file.")
+            with Path(path).open("rb") as source, transport.open("xb") as target:
+                shutil.copyfileobj(source, target)
+            digest = file_sha256(transport)
+            add_attachment(str(transport))
+            staged.append((item, attachments.Count, digest, stage / f"verify-{index}.bin"))
+            item["staging_drive"] = stage.drive
+        yield
+        # The caller has saved successfully. Reacquire from the saved collection
+        # and export to a new short path, verifying actual bytes rather than Size.
+        for item, ordinal, digest, exported in staged:
+            saved = draft.Attachments.Item(ordinal)
+            if saved.FileName != item["filename"]:
+                raise ValueError("Saved attachment filename differs from the source filename.")
+            saved.SaveAsFile(str(exported))
+            if file_sha256(exported) != digest:
+                raise ValueError("Saved attachment content differs from the staged source.")
+            item.update(attached=True, filename_verified=True, content_sha256=digest,
+                        content_verified=True)
 
 
 EMAIL_PATTERN = re.compile(r"[\w.+%-]+@[\w.-]+\.[A-Za-z]{2,}")
@@ -3026,8 +3089,8 @@ def save_target_store_draft(
     set_send_using_account(draft, target_account_info, warnings, diagnostics=sender_assignment)
     if initial_assignment is not None:
         sender_assignment["native_template"] = initial_assignment
-    attach_draft_files(draft, draft_attachments or {})
-    draft.Save()
+    with attach_draft_files(draft, draft_attachments or {}):
+        draft.Save()
     placement = draft_placement_summary(
         strategy="target_store_drafts",
         target_account_info=target_account_info,
@@ -3062,8 +3125,8 @@ def create_target_store_draft(
         draft.Body = body
     sender_assignment: dict[str, Any] = {}
     set_send_using_account(draft, account_info, warnings, diagnostics=sender_assignment)
-    attach_draft_files(draft, draft_attachments or {})
-    draft.Save()
+    with attach_draft_files(draft, draft_attachments or {}):
+        draft.Save()
     placement = draft_placement_summary(
         strategy="target_store_drafts",
         target_account_info=account_info,
@@ -3287,8 +3350,8 @@ def draft_reply(
                 draft_content = ensure_thread_content(reply, message, "reply")
                 body_format = prepend_draft_body(reply, suggested_body)
                 draft_content["body_format"] = body_format
-                attach_draft_files(reply, draft_attachments)
-                reply.Save()
+                with attach_draft_files(reply, draft_attachments):
+                    reply.Save()
                 target_folder = account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
                 draft_placement = draft_placement_summary(
                     strategy="native_reply",
@@ -3412,8 +3475,8 @@ def draft_forward(
                 draft_content = ensure_thread_content(forward, message, "forward")
                 body_format = prepend_draft_body(forward, suggested_body)
                 draft_content["body_format"] = body_format
-                attach_draft_files(forward, draft_attachments)
-                forward.Save()
+                with attach_draft_files(forward, draft_attachments):
+                    forward.Save()
                 target_folder = account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
                 draft_placement = draft_placement_summary(
                     strategy="native_forward",
@@ -3637,11 +3700,11 @@ def edit_draft(
     if subject is not None:
         item.Subject = subject
     recipient_summary = apply_recipient_fields(item, to=to, cc=cc, bcc=bcc)
-    attach_draft_files(item, draft_attachments)
-    if send_account is not None:
-        sender_assignment = {}
-        set_send_using_account(item, send_account, warnings, diagnostics=sender_assignment)
-    item.Save()
+    with attach_draft_files(item, draft_attachments):
+        if send_account is not None:
+            sender_assignment = {}
+            set_send_using_account(item, send_account, warnings, diagnostics=sender_assignment)
+        item.Save()
     expected_sender = send_account["smtp_address"] if send_account is not None else original_sender["actual"]
     sender = verify_saved_draft_sender(session, item, account_info, expected=expected_sender,
                                       compare_account=False, assignment=sender_assignment)

@@ -84,6 +84,17 @@ Do not use this skill when:
 
 ## Script Interface
 
+Long `--attach` source paths are handled automatically with short-lived staging;
+do not rename user files merely to shorten their parent path. The helper keeps
+the original Unicode basename, saves the draft, then verifies the attachment's
+filename and exported SHA-256 before removing staging. For staged items inspect
+`transport: short_path_staging`, `filename_verified` and `content_verified`.
+Ordinary short paths remain direct. A near-filesystem-limit basename may still
+exceed Outlook's remaining native path budget; that is reported before Add.
+Never replay a failed Add without inspecting the exact draft: Outlook can insert
+an incomplete attachment even when Add raises. Existing draft readback and sender,
+recipient, body and attachment verification requirements still apply.
+
 ```bash
 python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] accounts
 python scripts/invoke_outlook_mail.py [--queue-timeout-sec <n>] sync-mail [--refresh-cache] [--account <smtp|store>|--all-accounts] [--days <n>] [--force] [--rediscover-folders]

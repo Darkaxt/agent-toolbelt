@@ -16,6 +16,17 @@ Use this family when an agent needs local mailbox access through Microsoft Outlo
 - exposes explicit folder move previews and confirmed message moves
 - creates reply and forward drafts with quoted thread content diagnostics, reply-all and explicit recipient controls, explicit local attachments, and verified sender-store placement when Outlook does not do that reliably
 - exports attachments from one selected message to a local directory
+- accepts long source paths for draft attachments through short-lived staging,
+  preserving the original Unicode filename and verifying the saved content
+
+Long-path input is copied into an isolated `E:/Temp/om-*` workspace (`D:/Temp`
+only when E: is unavailable). The input stays alive through Save; a fresh export
+checks SHA-256 and the original filename before the workspace is removed. No
+source file is renamed, and a failed native Add is never replayed. Very long
+basenames must still fit Outlook's native path budget with the short staging
+directory; the helper reports that specific constraint before Add. Staged result
+items expose `transport`, `staging_drive`, `filename_verified`, `content_verified`
+and `content_sha256`. Ordinary short paths retain the direct transport.
 
 ## What it does not do
 
