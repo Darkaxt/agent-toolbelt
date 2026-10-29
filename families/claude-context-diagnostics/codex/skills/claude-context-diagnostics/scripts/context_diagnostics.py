@@ -8,7 +8,7 @@ import re
 import sys
 import uuid
 
-VERSION = '0.1.0'
+VERSION = '0.1.1'
 MAX_RECORD = 16 * 1024 * 1024
 
 
@@ -40,7 +40,7 @@ def timestamp(value):
     try:
         parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
         return parsed.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z') if parsed.tzinfo else None
-    except ValueError:
+    except (ValueError, OverflowError):
         return None
 
 
@@ -101,7 +101,7 @@ def read_nodes(path, sid):
     nodes = {}
     leaf = None
     matched = False
-    counts = {'duplicate_uuids':0, 'malformed_records':0, 'oversized_records':0, 'foreign_session_records':0, 'sidechain_records':0, 'trailing_partial_bytes':0, 'unsupported_conversation_records':0}
+    counts = {'duplicate_uuids':0, 'malformed_records':0, 'oversized_records':0, 'foreign_session_records':0, 'sidechain_records':0, 'trailing_partial_bytes':0, 'unsupported_conversation_records':0, 'invalid_parent_references':0, 'invalid_timestamps':0}
     with path.open('rb') as source:
         initial = os.fstat(source.fileno())
         limit = initial.st_size
@@ -132,6 +132,7 @@ def read_nodes(path, sid):
                 counts['sidechain_records'] += 1
                 continue
             kind = item.get('type')
+            conversation = kind in ('user','assistant','system')
             uid = identifier(item.get('uuid'))
             if uid is None:
                 if kind in ('user','assistant','system'):
@@ -141,12 +142,23 @@ def read_nodes(path, sid):
             if not isinstance(msg, dict):
                 counts['unsupported_conversation_records'] += 1
                 continue
+            if not conversation and kind not in ('attachment','progress'):
+                counts['unsupported_conversation_records'] += 1
             boundary = kind == 'system' and item.get('subtype') == 'compact_boundary'
             meta = item.get('compactMetadata') or {}
             if not isinstance(meta, dict):
                 meta = {}
-            node = {'uuid':uid, 'parent':identifier(item.get('parentUuid')), 'logical_parent':identifier(item.get('logicalParentUuid')) if boundary else None,
-                    'timestamp':timestamp(item.get('timestamp')), 'kind':kind, 'tools':[], 'results':[],
+            parent_value=item.get('parentUuid')
+            logical_value=item.get('logicalParentUuid') if boundary else None
+            parent=identifier(parent_value);logical_parent=identifier(logical_value)
+            invalid_references=sum(value is not None and cleaned is None for value,cleaned in ((parent_value,parent),(logical_value,logical_parent)))
+            counts['invalid_parent_references'] += invalid_references
+            recorded_at=timestamp(item.get('timestamp'))
+            if item.get('timestamp') is not None and recorded_at is None:
+                counts['invalid_timestamps'] += 1
+            node = {'uuid':uid, 'parent':parent, 'logical_parent':logical_parent,
+                    'invalid_ancestry':bool(invalid_references),
+                    'timestamp':recorded_at, 'kind':kind, 'tools':[], 'results':[],
                     'usage':usage_metadata(msg) if kind == 'assistant' and not item.get('isApiErrorMessage') else None,
                     'request':identifier(item.get('requestId')) or identifier(msg.get('id')) or uid,
                     'model':identifier(msg.get('model'))}
@@ -154,7 +166,7 @@ def read_nodes(path, sid):
                 node['compact'] = {k:number(meta.get(k)) for k in ('preTokens','postTokens','durationMs')}
                 node['compact']['trigger'] = meta.get('trigger') if meta.get('trigger') in ('auto','manual') else 'unknown'
             content = msg.get('content')
-            if isinstance(content, list):
+            if conversation and isinstance(content, list):
                 for block in content:
                     if not isinstance(block, dict):
                         continue
@@ -167,7 +179,8 @@ def read_nodes(path, sid):
             if uid in nodes:
                 counts['duplicate_uuids'] += 1
             nodes[uid] = node
-            leaf = uid
+            if conversation:
+                leaf = uid
         final = os.fstat(source.fileno())
     if not matched:
         raise DiagnosticError('Transcript does not establish the requested session identity.')
@@ -182,23 +195,33 @@ def read_nodes(path, sid):
 
 def build_report(nodes, leaf, counts, snapshot, sid, cycles=5, top=5):
     chain, seen, warnings = [], set(), []
+    ancestry_complete=True
+    invalid_ancestry=False
     current = leaf
     while current:
         if current in seen:
+            ancestry_complete=False
             warnings.append('Parent ancestry contains a cycle; history is incomplete.')
             break
         seen.add(current)
         node = nodes.get(current)
         if node is None:
+            ancestry_complete=False
             warnings.append('A parent record is unavailable; history is incomplete.')
             break
         chain.append(node)
+        if node.get('invalid_ancestry'):
+            ancestry_complete=False;invalid_ancestry=True
         current = node['parent'] or node['logical_parent']
     chain.reverse()
+    if invalid_ancestry:
+        warnings.append('Selected ancestry contains an invalid parent reference; history is incomplete.')
     if counts['malformed_records'] or counts['oversized_records'] or counts['unsupported_conversation_records']:
         warnings.append('Unsupported, malformed or oversized conversation records were skipped; telemetry may be incomplete.')
     if counts['trailing_partial_bytes']:
         warnings.append('A trailing incomplete append was excluded from the snapshot.')
+    if counts['invalid_timestamps']:
+        warnings.append('Invalid timestamps were omitted; time-based telemetry may be incomplete.')
     tools = {t['tool_id']:t for n in chain for t in n['tools'] if t['tool_id']}
     # A single assistant response may be serialized as several content-block rows.
     last_requests = {n['request']:n['uuid'] for n in chain if n['usage'] is not None}
@@ -247,7 +270,7 @@ def build_report(nodes, leaf, counts, snapshot, sid, cycles=5, top=5):
     durations = [c['durationMs'] for c in selected if c['durationMs'] is not None]
     report = {'ok':True, 'schema_version':1, 'version':VERSION, 'session_id':sid, 'leaf_uuid':leaf,
               'source':'recorded_mainline_transcript_snapshot', 'snapshot':snapshot, 'coverage':counts,
-              'ancestry_complete':not any('ancestry' in w or 'parent record' in w for w in warnings),
+              'ancestry_complete':ancestry_complete,
               'latest_usage':latest, 'compactions':selected,
               'tool_metrics_scope':{'since_compaction':selected[0]['timestamp'] if selected else None,
                                     'meaning':'Since the earliest shown boundary, or all available ancestry when no boundary exists.'},

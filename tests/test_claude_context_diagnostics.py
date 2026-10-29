@@ -1,9 +1,12 @@
 import hashlib
+import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -110,6 +113,42 @@ class ContextDiagnosticsTests(unittest.TestCase):
         self.assertFalse(report['ancestry_complete'])
         self.assertEqual(report['coverage']['malformed_records'],1)
 
+    def test_invalid_parent_reference_cannot_claim_complete_ancestry(self):
+        self.write([assistant('a','invalid parent value',10)])
+        report = diag.report_session(self.path,SID)
+        self.assertFalse(report['ancestry_complete'])
+        self.assertEqual(report['coverage']['invalid_parent_references'],1)
+        self.assertTrue(report['warnings'])
+
+    def test_unsupported_tail_preserves_mainline_usage_and_is_disclosed(self):
+        self.write([record('root'),assistant('a','root',100),record('extra',kind='future-record')])
+        report = diag.report_session(self.path,SID)
+        self.assertEqual(report['latest_usage']['total_input_tokens'],100)
+        self.assertEqual(report['leaf_uuid'],'a')
+        self.assertEqual(report['coverage']['unsupported_conversation_records'],1)
+        self.assertTrue(report['warnings'])
+
+    def test_unknown_parent_bridge_is_retained_without_becoming_default_leaf(self):
+        self.write([record('root'),assistant('a','root',100),record('bridge','a',kind='future-record'),assistant('b','bridge',150)])
+        report = diag.report_session(self.path,SID)
+        self.assertEqual(report['latest_usage']['total_input_tokens'],150)
+        self.assertTrue(report['ancestry_complete'])
+        self.assertEqual(report['coverage']['unsupported_conversation_records'],1)
+
+    def test_out_of_range_timestamp_returns_bounded_json_without_traceback(self):
+        row=assistant('a',None,100)
+        row['timestamp']='0001-01-01T00:00:00+23:59'
+        self.write([row])
+        output=io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code=diag.main(['report','--session-id',SID,'--transcript',str(self.path)])
+        self.assertEqual(code,0)
+        report=json.loads(output.getvalue())
+        self.assertIsNone(report['latest_usage']['timestamp'])
+        self.assertEqual(report['coverage']['invalid_timestamps'],1)
+        self.assertTrue(report['warnings'])
+        self.assertNotIn(str(self.path),output.getvalue())
+
     def test_attachment_nodes_preserve_compaction_ancestry(self):
         boundary = record('compact',kind='system',subtype='compact_boundary',compactMetadata={'preTokens':240000})
         bridge = record('attachment','compact','attachment')
@@ -146,6 +185,42 @@ class ContextDiagnosticsTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             release.install_tree(target,payload)
         self.assertEqual(foreign.read_text(),'preserve')
+
+    @unittest.skipUnless(os.name=='nt','Windows existing-bundle upgrade contract')
+    def test_verified_upgrade_replaces_only_exact_previous_bytes(self):
+        target=self.root/'upgrade-exact';old={'SKILL.md':b'old','scripts/helper.py':b'old helper'}
+        new={'SKILL.md':b'new','scripts/helper.py':b'new helper'}
+        release.install_tree(target,old)
+        release.install_tree(target,new,old)
+        release.install_tree(target,new,old)
+        self.assertEqual({name:(target/name).read_bytes() for name in new},new)
+
+    @unittest.skipUnless(os.name=='nt','Windows existing-bundle upgrade contract')
+    def test_upgrade_preserves_local_edits_and_existing_writers(self):
+        old={'SKILL.md':b'old','helper.py':b'old helper'};new={name:b'new' for name in old}
+        changed=self.root/'upgrade-edited';release.install_tree(changed,old)
+        (changed/'helper.py').write_bytes(b'local edit')
+        with self.assertRaises(RuntimeError):release.install_tree(changed,new,old)
+        self.assertEqual((changed/'SKILL.md').read_bytes(),b'old')
+        self.assertEqual((changed/'helper.py').read_bytes(),b'local edit')
+        locked=self.root/'upgrade-locked';release.install_tree(locked,old)
+        with (locked/'helper.py').open('r+b'):
+            with self.assertRaises(OSError):release.install_tree(locked,new,old)
+        self.assertEqual({name:(locked/name).read_bytes() for name in old},old)
+
+    @unittest.skipUnless(os.name=='nt','Windows existing-bundle upgrade contract')
+    def test_failed_upgrade_restores_previous_bundle_before_unlocking(self):
+        target=self.root/'upgrade-failure';old={'SKILL.md':b'old','helper.py':b'old helper'}
+        new={name:b'new' for name in old};release.install_tree(target,old)
+        original=release.write_locked;calls=0
+        def interrupted(stream,data):
+            nonlocal calls
+            calls+=1
+            if calls==2:raise OSError('Fictional write failure')
+            original(stream,data)
+        with patch.object(release,'write_locked',side_effect=interrupted):
+            with self.assertRaises(OSError):release.install_tree(target,new,old)
+        self.assertEqual({name:(target/name).read_bytes() for name in old},old)
 
 
 if __name__ == '__main__':

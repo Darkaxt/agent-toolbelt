@@ -1,6 +1,6 @@
 # Claude Context Diagnostics
 
-Version 0.1.0 is a self-contained, read-only Python skill for Claude Code's
+Version 0.1.1 is a self-contained, read-only Python skill for Claude Code's
 recorded session usage, compaction cadence and large tool-result additions.
 It works with native or gateway-backed sessions; it does not require the proxy.
 
@@ -20,3 +20,10 @@ scratch folder and run `python -B -m unittest tests.test_claude_context_diagnost
 Fixtures are retained for reviewed transactional cleanup. Use
 `python -B families/claude-context-diagnostics/scripts/release_local.py --help`
 for versioned local bundle installation and hash receipts.
+For an existing unmodified installation, pass `--upgrade-from <retained-version>`.
+On Windows the installer verifies the prior release manifest and pins all installed
+members before replacing their contents. Local edits, extra files, redirected
+targets and existing writers are preserved by refusing the upgrade. A failed write
+restores the verified previous bytes while handles remain held; retain that prior
+release for explicit recovery if the installer/OS itself is interrupted. No live
+Claude restart or session mutation is needed.

@@ -3,7 +3,7 @@ name: claude-context-diagnostics
 description: Inspect this Claude Code session's recorded token usage, compaction cadence and large context additions when context fills rapidly or recovery repeats.
 license: MIT
 metadata:
-  version: "0.1.0"
+  version: "0.1.1"
   compatibility: Claude Code JSONL transcripts and Python 3.11+; local read-only diagnostics, including behind an LLM gateway.
 ---
 
@@ -29,6 +29,10 @@ required session ID. `--cycles 5 --top 5` bounds detail (maximum 10 each).
 `--leaf-uuid <uuid>` selects an explicit recorded conversation branch; otherwise
 the latest recorded mainline leaf is used. An unresolved/partial ancestry means
 the report is incomplete; inspect its warnings before drawing conclusions.
+Invalid parent references cannot establish complete ancestry. Unsupported trailing
+metadata does not select a new conversation leaf; unknown ancestry bridges remain
+available with a warning. Invalid/out-of-range timestamps are unavailable and
+disclosed, not inferred or exposed through a traceback.
 
 Interpret the report:
 
