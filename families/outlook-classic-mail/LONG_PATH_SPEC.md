@@ -34,15 +34,25 @@ Authorization: user requested helper support on 29 October 2026.
 1. Complete attachment implementation and verification (LP1-LP4): COMPLETE.
 2. Source-bound release, installation and final verification (LP5): COMPLETE.
 3. Filename truncation and integrated verification (LP6): COMPLETE.
-4. Follow-up release, install, synchronization and cleanup (LP5/LP6): ACTIVE.
+4. Follow-up release, install, synchronization and cleanup (LP5/LP6): COMPLETE.
 
 LP6 source acceptance: native saved/reopened 455-unit extended source path with
 a shortened Unicode filename, preserved extension, matching exported bytes,
 original-to-attached mapping and explicit warning; source unchanged, one
 attachment and no send. Focused regressions verify stable disambiguating suffixes,
 UTF-16 boundaries, extensionless names and existing draft/sender behavior.
-Closure review found no required consolidation. Follow-up installed release,
-remote synchronization and cleanup remain stage-4 acceptance blockers.
+Closure review found no required consolidation. Follow-up 0.16.4/df52528334e1391b
+was independently extracted (183 files), installed and verified. Installed native
+probe saved/reopened the 455-unit source with the expected shortened name,
+extension, bytes and warning; source unchanged, one attachment and no send.
+Installed client SHA-256 and Codex/shared/Claude guidance match; normal launcher
+diagnostics confirm Coordinator routing. Native desktop version/served assets
+match source 111c602; broker PID 20516 preserved and Helium policy unchanged.
+GitHub readback confirms 7b96cfc and 111c602/v0.16.4. Exact E:/D: follow-up roots
+removed by transaction 82f6cc242df1fd639be1522f013a0060 (1,854 members /
+138,363,197 logical bytes), no warnings/errors; roots independently absent.
+No blockers or deferrals remain. Archive SHA-256:
+`42fdd0b2c39b896f0b364bf0ed7e8d738362d58a878c3697dc0a0e7d8a5e4216`.
 
 No tracked deferrals. LP1-LP4: saved/reopened 404-unit Unicode source and explicit
 extended Windows path preserve filename, bytes and original; exact owned probes
