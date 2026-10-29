@@ -21,6 +21,7 @@ Each runtime family ships its own self-contained local marketplace with one plug
 
 ## Instruction-only skills
 
+- F3D Viewer: `families/f3d-viewer/codex/skills/f3d-viewer`; copy the same bundle into the personal Claude skill root. Existing F3D and the Blender gate supply runtime capabilities; no plugin installation.
 - Cybersecurity Orchestrator: `families/cybersecurity-orchestrator/codex/skills/cybersecurity-orchestrator`; copy the identical instruction-only bundle into the personal skill root. Uses available specialist skills and bundled primary-source references; it does not install a security plugin or retain the retired bulk collection.
 - FedEx Tracking: `families/fedex-tracking/codex/skills/fedex-tracking`; copy the identical bundle into the personal Claude skill root. Uses available browser tools for public pages; no plugin or account configuration.
 - Thread Cleanup: `families/thread-cleanup/codex/skills/thread-cleanup`; identical self-contained helper bundle. Explicit permanent conversation retirement is separate from generated-artifact cleanup.

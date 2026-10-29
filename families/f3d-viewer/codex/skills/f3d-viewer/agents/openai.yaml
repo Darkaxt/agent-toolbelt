@@ -1,0 +1,4 @@
+interface:
+  display_name: "F3D Model Inspection"
+  short_description: "View models with F3D; measure with gated Blender"
+  default_prompt: "Use $f3d-viewer to inspect this existing 3D model, preferring F3D for visual checks and gated Blender for measured scene or motion analysis."

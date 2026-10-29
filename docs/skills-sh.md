@@ -32,6 +32,7 @@ npx skills update
 
 | Skill | Compatibility | Local prerequisites | Safety notes |
 | --- | --- | --- | --- |
+| `f3d-viewer` | Instruction-only Codex/Claude guidance | Existing F3D; installed Blender gate for measured Blender analysis | Visual reads and explicit preview outputs; no new bridge, model edits, preferences or file associations. |
 | `recodex-policy-diagnostics` | Codex on Windows only | Installed ReCodex Policy Inspector and approach-recovery-ledger | Preflight script invocations without execution; record actual rejections separately from local predictions; no policy changes or denied-action retries. Do not install for Claude. |
 | `cybersecurity-orchestrator` | Codex and Claude | Existing specialist skills where available; no runtime | Select security workflows and focused investigative references; no automatic audit or vendor script execution. |
 | `fedex-tracking` | Codex and Claude with rendered-page browser tools | Accessible public FedEx page; no runtime or API key | Read-only public status, history and shipment facts; no login, delivery changes or access-control bypass. |
