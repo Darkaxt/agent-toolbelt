@@ -154,15 +154,44 @@ class LongAttachmentTests(unittest.TestCase):
         self.assertTrue(all(item['content_verified'] for item in details['items']))
         self.assertEqual(list(self.staging.iterdir()), [])
 
-    def test_unrepresentable_basename_fails_before_native_add(self):
-        details = client.prepare_draft_attachments([str(self.source)])
-        details['items'][0]['filename'] = 'x' * 250
+    def test_near_limit_basename_is_truncated_without_changing_source(self):
+        source = self.source.with_name('résumé-' + 'x' * 236 + '.pdf')
+        source.write_bytes(self.payload)
+        details = client.prepare_draft_attachments([str(source)])
         draft = Draft()
-        with self.assertRaisesRegex(ValueError, 'insufficient room'):
-            with client.attach_draft_files(draft, details):
-                self.fail('must not enter save')
-        self.assertEqual(draft.Attachments.calls, [])
+        with client.attach_draft_files(draft, details):
+            draft.Save()
+        item = details['items'][0]
+        self.assertTrue(item['attached'] and item['filename_truncated'] and item['filename_verified'])
+        self.assertEqual(item['filename'], source.name)
+        self.assertEqual(item['attachment_filename'], draft.Attachments[0].FileName)
+        self.assertTrue(item['attachment_filename'].endswith('.pdf'))
+        self.assertIn('attachment_filename_truncated', item['warnings'])
+        self.assertIn('attachment_filename_truncated', details['warnings'])
+        self.assertLess(len(draft.Attachments.calls[0].encode('utf-16-le')) // 2, 260)
+        self.assertEqual(source.read_bytes(), self.payload)
         self.assertEqual(list(self.staging.iterdir()), [])
+
+    def test_truncation_is_unicode_safe_stable_and_disambiguates_names(self):
+        directory = Path('E:/Temp/om-abcdefgh/0')
+        first = '😀' * 115 + 'a.pdf'
+        second = '😀' * 115 + 'b.pdf'
+        names = [client.short_attachment_filename(name, directory) for name in (first, second)]
+        self.assertNotEqual(*names)
+        self.assertEqual(names[0], client.short_attachment_filename(first, directory))
+        for name in names:
+            self.assertTrue(name.endswith('.pdf'))
+            self.assertLess(len(str(directory / name).encode('utf-16-le')) // 2, 260)
+            self.assertEqual(name.encode('utf-16-le').decode('utf-16-le'), name)
+        self.assertEqual(client.short_attachment_filename('plain.txt', directory), 'plain.txt')
+
+    def test_extensionless_names_are_shortened_and_unrepresentable_extension_fails(self):
+        directory = Path('E:/Temp/om-abcdefgh/0')
+        shortened = client.short_attachment_filename('x' * 255, directory)
+        self.assertNotIn('.', shortened)
+        self.assertLess(len(str(directory / shortened)), 260)
+        with self.assertRaisesRegex(ValueError, 'extension cannot fit'):
+            client.short_attachment_filename('x.' + 'e' * 250, directory)
 
     def test_storage_selection_prefers_external_scratch_and_never_c(self):
         with patch.object(Path, 'is_dir', side_effect=lambda: False):

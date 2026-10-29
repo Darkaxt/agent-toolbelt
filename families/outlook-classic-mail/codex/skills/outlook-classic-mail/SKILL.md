@@ -86,11 +86,15 @@ Do not use this skill when:
 
 Long `--attach` source paths are handled automatically with short-lived staging;
 do not rename user files merely to shorten their parent path. The helper keeps
-the original Unicode basename, saves the draft, then verifies the attachment's
+the original Unicode basename when it fits, saves the draft, then verifies the attachment's
 filename and exported SHA-256 before removing staging. For staged items inspect
 `transport: short_path_staging`, `filename_verified` and `content_verified`.
-Ordinary short paths remain direct. A near-filesystem-limit basename may still
-exceed Outlook's remaining native path budget; that is reported before Add.
+Ordinary short paths remain direct. If the basename exceeds the remaining native
+path budget, only the attached copy is automatically shortened, preserving the
+extension and a deterministic name-hash suffix. Results keep `filename` as the
+original and expose `attachment_filename`, `filename_truncated` and warning
+`attachment_filename_truncated`. Verify the actual saved shortened name; do not
+claim it retains the complete original name. The source is never renamed.
 Never replay a failed Add without inspecting the exact draft: Outlook can insert
 an incomplete attachment even when Add raises. Existing draft readback and sender,
 recipient, body and attachment verification requirements still apply.

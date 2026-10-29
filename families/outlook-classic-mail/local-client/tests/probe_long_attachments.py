@@ -16,13 +16,15 @@ def main():
     parser.add_argument('--report', type=Path, required=True)
     parser.add_argument('--baseline', action='store_true')
     parser.add_argument('--extended', action='store_true')
+    parser.add_argument('--truncate', action='store_true')
     args = parser.parse_args()
     sys.path.insert(0, str(args.client_home / 'src'))
     from outlook_classic_mail_client import client
     args.scratch.mkdir(parents=True, exist_ok=True)
     source_dir = args.scratch / ('source-' + uuid.uuid4().hex) / ('nested-' * 18)
     source_dir.mkdir(parents=True)
-    source = source_dir / ('attachment-résumé-' + 'long-name-' * 18 + '.txt')
+    source_name = ('résumé-' + 'x' * 236 + '.txt') if args.truncate else ('attachment-résumé-' + 'long-name-' * 18 + '.txt')
+    source = source_dir / source_name
     payload = b'Outlook long-path verification\x00\xff\n' * 32
     source.write_bytes(payload)
     short = args.scratch / ('short-' + uuid.uuid4().hex + '.txt')
@@ -65,13 +67,17 @@ def main():
                     attachment = reopened.Attachments.Item(1)
                     exported = args.scratch / ('export-' + uuid.uuid4().hex + '.bin')
                     attachment.SaveAsFile(str(exported))
-                    report.update({'filename_matches': attachment.FileName == source.name,
+                    expected_name = details['items'][0]['attachment_filename']
+                    report.update({'filename_matches': attachment.FileName == expected_name,
                                    'content_matches': exported.read_bytes() == payload,
                                    'attachment_count': reopened.Attachments.Count,
                                    'draft_attachments': details,
                                    'source_unchanged': source.read_bytes() == payload})
                     assert report['filename_matches'] and report['content_matches']
                     assert report['attachment_count'] == 1 and report['source_unchanged']
+                    if args.truncate:
+                        assert details['items'][0]['filename_truncated']
+                        assert expected_name != source.name and expected_name.endswith(source.suffix)
             finally:
                 if saved:
                     item.Delete()  # Only our exact saved probe; never permanent deletion.

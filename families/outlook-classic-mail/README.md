@@ -22,9 +22,12 @@ Use this family when an agent needs local mailbox access through Microsoft Outlo
 Long-path input is copied into an isolated `E:/Temp/om-*` workspace (`D:/Temp`
 only when E: is unavailable). The input stays alive through Save; a fresh export
 checks SHA-256 and the original filename before the workspace is removed. No
-source file is renamed, and a failed native Add is never replayed. Very long
-basenames must still fit Outlook's native path budget with the short staging
-directory; the helper reports that specific constraint before Add. Staged result
+source file is renamed, and a failed native Add is never replayed. When a basename
+cannot fit the native path budget, only the staged copy is shortened with its
+extension and a deterministic name-hash suffix retained. Results map `filename`
+(original) to `attachment_filename` (actual), set `filename_truncated` and warn
+`attachment_filename_truncated`. The saved name and content are verified. An
+extension that cannot itself fit remains an explicit pre-Add error. Staged result
 items expose `transport`, `staging_drive`, `filename_verified`, `content_verified`
 and `content_sha256`. Ordinary short paths retain the direct transport.
 

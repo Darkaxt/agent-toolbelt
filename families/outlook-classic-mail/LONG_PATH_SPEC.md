@@ -23,11 +23,26 @@ Authorization: user requested helper support on 29 October 2026.
 - LP5: Deliver source-bound versioned client via Coordinator's normal local
   release/installer; verify installed content and helper discovery, commit and
   synchronize both repositories. Update installed usage guidance.
+- LP6 (user-authorized follow-up): When the basename itself prevents short-path
+  staging, automatically truncate only the staged attachment name. Preserve its
+  extension, valid Unicode and a deterministic name hash suffix; expose the
+  original-to-attached filename mapping and a truncation warning. Verify the
+  actual saved shortened name and original bytes. Never rename the source.
 
 ## Stages / reconciliation
 
 1. Complete attachment implementation and verification (LP1-LP4): COMPLETE.
 2. Source-bound release, installation and final verification (LP5): COMPLETE.
+3. Filename truncation and integrated verification (LP6): COMPLETE.
+4. Follow-up release, install, synchronization and cleanup (LP5/LP6): ACTIVE.
+
+LP6 source acceptance: native saved/reopened 455-unit extended source path with
+a shortened Unicode filename, preserved extension, matching exported bytes,
+original-to-attached mapping and explicit warning; source unchanged, one
+attachment and no send. Focused regressions verify stable disambiguating suffixes,
+UTF-16 boundaries, extensionless names and existing draft/sender behavior.
+Closure review found no required consolidation. Follow-up installed release,
+remote synchronization and cleanup remain stage-4 acceptance blockers.
 
 No tracked deferrals. LP1-LP4: saved/reopened 404-unit Unicode source and explicit
 extended Windows path preserve filename, bytes and original; exact owned probes
@@ -43,7 +58,8 @@ matching name and bytes, unchanged source, one attachment and no send.
 Native desktop ProductVersion matches b4421d9; broker PID 20516 was preserved and
 is accepting, Helium debugging remains disabled. GitHub branch/tag readback
 confirms agent-toolbelt 044d4c0 and Coordinator b4421d9/v0.16.3.
-No blockers, tracked deferrals or required consolidation remain.
+No blockers, tracked deferrals or required consolidation remained at the initial
+0.16.3 delivery. The explicitly authorized follow-up stages above track LP6.
 
 Release archive: D:/Tools/llm-coordinator/releases/0.16.3/
 LLM-Coordinator-0.16.3-win-x64.zip; SHA-256
@@ -61,9 +77,12 @@ Microsoft documents legacy MAX_PATH and that Attachments.Add DisplayName is
 ignored for HTML/plain text. A shortened transport filename therefore needs the
 original basename preserved in its short staging path, not just DisplayName.
 Native probing also showed Outlook refuses changes to PR_ATTACH_LONG_FILENAME.
-The original filename plus short staging directory must fit Outlook's native
-path budget; report this specific constraint before Add rather than renaming a
-near-filesystem-limit basename or claiming unrestricted filename support.
+The initial release retained the native filename budget limitation. The user's
+follow-up explicitly authorizes truncating the attached copy when required;
+LP6 supersedes original-name preservation only for that case. Preserve the final
+file extension and report an unrepresentable extension before Add. The actual
+saved name must fit both Outlook's full-path budget and filesystem component
+limits. This does not authorize renaming the original source.
 Filesystem component limits, unreadable paths and mailbox/provider size limits
 remain actual errors; support does not imply unlimited filename length.
 
@@ -72,3 +91,7 @@ build uses D:/Temp/outlook-long-path-20261029 for sustained small-file I/O.
 Task scratch uses transactional cleanup; product-internal staging has its own
 lexical consumer lifetime. Retain compact reports in D:/Tools/llm-coordinator/
 verification/20261029/outlook-long-path.
+
+Follow-up scratch: E:/Temp/outlook-name-truncation-20261029; package build uses
+D:/Temp/outlook-name-truncation-20261029 (small-file I/O). Retained receipts:
+D:/Tools/llm-coordinator/verification/20261029/outlook-name-truncation.

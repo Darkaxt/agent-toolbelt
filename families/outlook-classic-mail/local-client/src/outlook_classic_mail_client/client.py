@@ -2388,6 +2388,7 @@ def prepare_draft_attachments(attachments: Iterable[str] | None) -> dict[str, An
         items.append(
             {
                 "filename": resolved.name,
+                "attachment_filename": resolved.name,
                 "path": str(resolved),
                 "attached": False,
                 "warnings": [],
@@ -2415,6 +2416,24 @@ def file_sha256(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def short_attachment_filename(filename: str, directory: Path) -> str:
+    """Fit the by-value transport path without changing the source filename."""
+    budget = min(255, 259 - len(str(directory).encode("utf-16-le")) // 2 - 1)
+    if len(filename.encode("utf-16-le")) // 2 <= budget:
+        return filename
+    extension = Path(filename).suffix
+    marker = "-" + hashlib.sha256(filename.encode("utf-8")).hexdigest()[:12]
+    prefix_units = budget - len((marker + extension).encode("utf-16-le")) // 2
+    if prefix_units < 1:
+        raise ValueError("Attachment extension cannot fit Outlook's staging path budget.")
+    stem = filename[:-len(extension)] if extension else filename
+    prefix = stem.encode("utf-16-le")[:prefix_units * 2].decode("utf-16-le", errors="ignore").rstrip(" .")
+    if not prefix:
+        # A one-unit remaining budget may cut an initial supplementary codepoint.
+        prefix = "_"
+    return prefix + marker + extension
+
+
 @contextlib.contextmanager
 def attach_draft_files(draft: Any, draft_attachments: dict[str, Any]):
     """Keep by-value input alive through the caller's Save, then verify it.
@@ -2436,6 +2455,8 @@ def attach_draft_files(draft: Any, draft_attachments: dict[str, Any]):
             path = item["path"]
             long_path = len(path.encode("utf-16-le")) // 2 >= 260 or path.startswith("\\\\?\\")
             item["transport"] = "short_path_staging" if long_path else "direct"
+            item["attachment_filename"] = item["filename"]
+            item["filename_truncated"] = False
             if not long_path:
                 add_attachment(path)
                 item["attached"] = True
@@ -2445,14 +2466,17 @@ def attach_draft_files(draft: Any, draft_attachments: dict[str, Any]):
                     prefix="om-", dir=attachment_staging_root())))
             # Outlook refuses writes to its built-in long-filename property;
             # DisplayName also does not rename an HTML/plain-text attachment.
-            # Keep the original basename on disk instead. Per-input directories
-            # disambiguate identical names from different source folders.
+            # Keep the original basename when it fits; shorten only the attached
+            # copy otherwise. Separate directories also preserve duplicate names.
             input_dir = stage / str(index)
             input_dir.mkdir()
-            transport = input_dir / item["filename"]
-            if len(str(transport).encode("utf-16-le")) // 2 >= 260:
-                raise ValueError("Attachment filename leaves insufficient room for Outlook's "
-                                 "short staging directory; no attachment was added for this file.")
+            attached_name = short_attachment_filename(item["filename"], input_dir)
+            item["attachment_filename"] = attached_name
+            item["filename_truncated"] = attached_name != item["filename"]
+            if item["filename_truncated"]:
+                add_unique_warning(item.setdefault("warnings", []), "attachment_filename_truncated")
+                add_unique_warning(draft_attachments.setdefault("warnings", []), "attachment_filename_truncated")
+            transport = input_dir / attached_name
             with Path(path).open("rb") as source, transport.open("xb") as target:
                 shutil.copyfileobj(source, target)
             digest = file_sha256(transport)
@@ -2464,8 +2488,8 @@ def attach_draft_files(draft: Any, draft_attachments: dict[str, Any]):
         # and export to a new short path, verifying actual bytes rather than Size.
         for item, ordinal, digest, exported in staged:
             saved = draft.Attachments.Item(ordinal)
-            if saved.FileName != item["filename"]:
-                raise ValueError("Saved attachment filename differs from the source filename.")
+            if saved.FileName != item["attachment_filename"]:
+                raise ValueError("Saved attachment filename differs from the expected attachment filename.")
             saved.SaveAsFile(str(exported))
             if file_sha256(exported) != digest:
                 raise ValueError("Saved attachment content differs from the staged source.")
