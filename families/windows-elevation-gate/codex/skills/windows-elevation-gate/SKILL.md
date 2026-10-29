@@ -3,11 +3,18 @@ name: windows-elevation-gate
 description: Queue Windows administrator actions through an elevated session broker with broker-owned Accept/Cancel and feedback. One native UAC starts the broker; each command requires its own approval. Use for authorized administrator actions across tasks.
 license: MIT
 metadata:
-  version: "0.2.5"
+  version: "0.2.6"
   compatibility: Windows interactive login session, Python 3.11+, protected .NET Framework broker and installed shared client runtime
 ---
 
 # Windows Elevation Gate
+
+When using the activated LLM Coordinator broker, the approval form completes its
+native control-tree repaint and compositor acknowledgement before starting the
+two-second input guard and one-minute command response window. Rendering consumes
+neither clock. Presentation failure reports `approval_render_failed` and launches
+nothing. Keep genuine per-command consent and inspect the actual result; do not
+automatically resubmit a failed or uncertain approval.
 
 Use `scripts/invoke_windows_elevation_gate.py` for genuinely required, authorized
 administrator actions. Full filesystem access does not imply an elevated token.
