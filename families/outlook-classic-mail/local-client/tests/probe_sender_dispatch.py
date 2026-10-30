@@ -44,7 +44,7 @@ def main():
                     if not ordinary_match:
                         raise AssertionError("Helper assignment failed; refusing to save the probe")
                     item.Subject = probe_subject
-                    item.Save()
+                    client.save_draft_with_sender(item, account, [], diagnostics=assignment)
                     saved = True
                     persisted = client.verify_saved_draft_sender(session, item, account)
                     if persisted["verified"] is not True:
