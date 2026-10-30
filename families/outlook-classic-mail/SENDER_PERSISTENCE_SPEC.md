@@ -37,8 +37,17 @@ never send, recreate or modify it as part of qualification. No external test mai
    unchanged. Original user draft was read only. Full client regression suite
    passed; focused cached/stamp/ownership/send rejection checks passed. All six
    owned diagnostic/qualification drafts were removed from Drafts and Trash.
-2. Final delivery (SP5) — ACTIVE. Package, installed verification, mirrors and
-   scratch cleanup remain. No tracked deferrals.
+2. Final delivery (SP5) — COMPLETE. Installed Coordinator 0.17.2 release
+   fea3dcad83a92c1b contains the pinned client and updated three-agent skills.
+   Native create plus independent gated read/edit/read preserve sender/body and
+   attachment evidence. Actual product/SQLite owner and preserved broker/settings/
+   private routes were verified. Source branches/tag are mirrored. All 1951 exact
+   scratch members were removed (146179099 logical bytes), with no exclusions,
+   errors or residuals. No tracked deferrals remain.
+
+The original draft was never modified by this repair; its old EntryID later became
+unresolvable and a matching Sent Items copy was found. No real Send was called.
+Do not replay that business operation or infer recipient delivery from this test.
 
 Native verification requires the stored account name/stamp as corroboration of
 the resolved Account object. Native stamp values are never synthesized, parsed
