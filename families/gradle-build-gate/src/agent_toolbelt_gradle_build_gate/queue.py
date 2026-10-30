@@ -16,6 +16,48 @@ QUEUE_NAME = r"Local\Darka.AndroidGradleBuildQueue"
 INFINITE = 0xFFFFFFFF
 
 
+def process_creation_ticks(pid):
+    """Read identity metadata without requesting a handle to a protected process.
+
+    The NT6 process-information prefix contains the native UTC creation FILETIME.
+    This is used only to disprove an inaccessible recorded identity, never to
+    manufacture an execution/wait handle or declare an unobservable owner dead.
+    """
+    class UnicodeString(ctypes.Structure):
+        _fields_ = [('length', wintypes.USHORT), ('maximum', wintypes.USHORT), ('buffer', ctypes.c_void_p)]
+    class ProcessPrefix(ctypes.Structure):
+        _fields_ = [('next', wintypes.ULONG), ('threads', wintypes.ULONG),
+                    ('reserved', ctypes.c_longlong * 3), ('created', ctypes.c_longlong),
+                    ('times', ctypes.c_longlong * 2), ('name', UnicodeString),
+                    ('priority', wintypes.LONG), ('pid', ctypes.c_void_p)]
+    query = ctypes.WinDLL('ntdll').NtQuerySystemInformation
+    query.argtypes = [wintypes.ULONG, ctypes.c_void_p, wintypes.ULONG, ctypes.POINTER(wintypes.ULONG)]
+    query.restype = wintypes.LONG
+    size = 65536
+    while True:
+        buffer = ctypes.create_string_buffer(size)
+        returned = wintypes.ULONG()
+        status = query(5, buffer, size, ctypes.byref(returned))  # SystemProcessInformation
+        if status & 0xffffffff == 0xc0000004:  # Required buffer grew during the snapshot.
+            size = max(returned.value, size * 2)
+            continue
+        if status:
+            raise OSError('Native process identity snapshot failed: ' + hex(status & 0xffffffff))
+        break
+    offset = 0
+    while True:
+        if offset + ctypes.sizeof(ProcessPrefix) > returned.value:
+            raise OSError('Native process identity snapshot is truncated')
+        row = ProcessPrefix.from_buffer(buffer, offset)
+        if row.pid == pid:
+            return row.created
+        if not row.next:
+            return None
+        if row.next < ctypes.sizeof(ProcessPrefix):
+            raise OSError('Native process identity snapshot has an invalid offset')
+        offset += row.next
+
+
 class NativeWait:
     def __init__(self):
         if os.name != "nt":
@@ -42,6 +84,10 @@ class NativeWait:
             error = ctypes.get_last_error()
             if error == 87:  # PID no longer exists. Access denied is NOT death.
                 return None, None
+            if error == 5 and created_ticks is not None:
+                actual = process_creation_ticks(pid)
+                if actual is None or actual > 0 and actual != created_ticks:
+                    return None, None  # Native metadata proves this is not that owner.
             raise ctypes.WinError(error)
         try:
             result = self.k.WaitForSingleObject(handle, 0)

@@ -131,5 +131,32 @@ class TicketContracts(unittest.TestCase):
         self.assertEqual(head.wait(), 0)
 
 
+@unittest.skipUnless(os.name == 'nt','Native Windows process identities')
+class RebootIdentityContracts(unittest.TestCase):
+    def test_denied_recorded_pid_requires_authoritative_different_identity(self):
+        import ctypes
+        from unittest.mock import Mock
+        from agent_toolbelt_gradle_build_gate import queue
+        native=queue.NativeWait.__new__(queue.NativeWait)
+        native.k=Mock();native.k.OpenProcess.return_value=None
+        for value in (None,200):
+            with patch.object(ctypes,'get_last_error',return_value=5),patch.object(queue,'process_creation_ticks',return_value=value):
+                self.assertEqual(native.process(42,100),(None,None))
+        for value in (100,0):
+            with patch.object(ctypes,'get_last_error',return_value=5),patch.object(queue,'process_creation_ticks',return_value=value):
+                with self.assertRaises(PermissionError):native.process(42,100)
+        with patch.object(ctypes,'get_last_error',return_value=5),patch.object(queue,'process_creation_ticks',side_effect=OSError('unavailable')):
+            with self.assertRaises(OSError):native.process(42,100)
+        with patch.object(ctypes,'get_last_error',return_value=5),patch.object(queue,'process_creation_ticks') as query:
+            with self.assertRaises(PermissionError):native.process(42)
+            query.assert_not_called()
+
+    def test_native_snapshot_creation_time_matches_real_identity(self):
+        from agent_toolbelt_gradle_build_gate import queue
+        native=queue.NativeWait();handle,ticks=native.process(os.getpid())
+        try:self.assertEqual(queue.process_creation_ticks(os.getpid()),ticks)
+        finally:native.k.CloseHandle(handle)
+
+
 if __name__ == "__main__":
     unittest.main()
