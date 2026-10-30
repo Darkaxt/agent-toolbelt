@@ -18,6 +18,20 @@ Use `scripts/invoke_outlook_mail.py` for local mailbox access through Outlook Cl
 
 ## Workflows
 
+- Native saved-sender verification also requires the committed Outlook account
+  name/stamp in `sender_verification.persistence`; a cached Account object alone
+  is not proof. The helper initializes a hidden compose editor and closes only
+  an editor it created with Save to commit From. It never displays or closes an
+  existing user editor. `not_persisted` is a concrete native-state failure.
+- For `apply-action --action send`, `--account` locates the saved draft; it does
+  not override its From account. The helper preserves the verified persisted
+  transport, checks assignment immediately before the single Send call and refuses
+  an unset sender or assignment failure. Repair that same draft with an explicitly
+  requested `edit-draft --send-using-account`; do not ask for repeated authorization
+  already given or require manual Outlook selection when the supported repair is
+  available. `submitted: true` / legacy `sent: true` means Outlook accepted Send;
+  `delivery_verified: false` still requires separate delivery/Sent evidence.
+
 - For "latest emails from X" or similar service/sender lookups: Search the cached folder inventory first with `find-folders`, then search matching folders.
 - If folder discovery finds nothing, search Inbox and state the scope unless a bounded all-folder search is needed.
 - Use the metadata cache for repeated contact/sender/subject lookups. It stores message identifiers, contacts, subjects, timestamps, and folder locations, but not full message bodies.

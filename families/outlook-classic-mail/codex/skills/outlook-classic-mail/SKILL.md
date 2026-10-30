@@ -29,6 +29,20 @@ Do not use this skill when:
 
 ## Behavior
 
+- Native saved-sender verification also requires the committed Outlook account
+  name/stamp in `sender_verification.persistence`; a cached Account object alone
+  is not proof. The helper initializes a hidden compose editor and closes only
+  an editor it created with Save to commit From. It never displays or closes an
+  existing user editor. `not_persisted` is a concrete native-state failure.
+- For `apply-action --action send`, `--account` locates the saved draft; it does
+  not override its From account. The helper preserves the verified persisted
+  transport, checks assignment immediately before the single Send call and refuses
+  an unset sender or assignment failure. Repair that same draft with an explicitly
+  requested `edit-draft --send-using-account`; do not ask for repeated authorization
+  already given or require manual Outlook selection when the supported repair is
+  available. `submitted: true` / legacy `sent: true` means Outlook accepted Send;
+  `delivery_verified: false` still requires separate delivery/Sent evidence.
+
 - Prefer Outlook Classic for generic local mail tasks.
 - Fall back to the Gmail connector only when the user explicitly asks for Gmail, Outlook Classic is unavailable, or the request truly depends on Gmail-only behavior.
 - Keep mailbox reads and triage non-mutating by default.

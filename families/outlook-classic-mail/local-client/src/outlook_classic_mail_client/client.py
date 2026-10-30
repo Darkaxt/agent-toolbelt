@@ -2024,7 +2024,7 @@ def read_message(
     try:
         drafts = account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
         if folder_paths_match(safe_get(item, "Parent"), drafts):
-            result["draft_sender"] = {**inspect_sender_account(item), "source": "resolved_message"}
+            result["draft_sender"] = {**inspect_persisted_sender(item), "source": "resolved_message"}
     except Exception as exc:
         result["draft_sender_context"] = {"status": "context_read_error", "errors": [exception_diagnostics(exc)]}
     return result
@@ -2931,6 +2931,32 @@ def send_using_account_smtp(item: Any) -> str:
     return str(inspect_sender_account(item)["actual"] or "")
 
 
+def inspect_persisted_sender(item: Any, *, expected: str | None = None) -> dict[str, Any]:
+    result = inspect_sender_account(item, expected=expected)
+    if getattr(item, "_oleobj_", None) is None:
+        return result
+    # Outlook can retain SendUsingAccount only in its live object. Its hidden
+    # compose editor commits these native account properties when saved/closed.
+    # Their stamp format is implementation-dependent; never synthesize or parse it.
+    evidence = {"account_name_present": False, "account_stamp_present": False,
+                "account_name_matches": False}
+    try:
+        prefix = "http://schemas.microsoft.com/mapi/id/{00062008-0000-0000-C000-000000000046}/"
+        name = str(item.PropertyAccessor.GetProperty(prefix + "8580001F") or "").strip()
+        stamp = str(item.PropertyAccessor.GetProperty(prefix + "8581001F") or "").strip()
+        account = item.SendUsingAccount
+        display_name = str(account.DisplayName or "").strip() if account is not None else ""
+        evidence.update(account_name_present=bool(name), account_stamp_present=bool(stamp),
+                        account_name_matches=bool(name and display_name and name.casefold() == display_name.casefold()))
+        if result["actual"] and not all(evidence.values()):
+            result.update(actual=None, status="not_persisted", verified=False if expected else None)
+    except Exception as exc:
+        result.update(actual=None, status="persistence_read_error", verified=False if expected else None)
+        result["errors"].append({"stage": "persisted_account_read", **exception_diagnostics(exc)})
+    result["persistence"] = evidence
+    return result
+
+
 def set_send_using_account(item: Any, account_info: dict[str, Any], warnings: list[str], *,
                            diagnostics: dict[str, Any] | None = None) -> str:
     expected = str(account_info.get("smtp_address") or "").strip().lower()
@@ -2966,6 +2992,32 @@ def set_send_using_account(item: Any, account_info: dict[str, Any], warnings: li
     return actual
 
 
+def save_draft_with_sender(item: Any, account_info: dict[str, Any], warnings: list[str], *,
+                           diagnostics: dict[str, Any]) -> None:
+    inspector = None
+    owned = False
+    commit = {"created": False, "closed_saved": False, "existing_preserved": False}
+    diagnostics["editor_commit"] = commit
+    if getattr(item, "_oleobj_", None) is not None:
+        existing = list(iterate_collection(item.Application.Inspectors))
+        inspector = item.GetInspector  # Initialize without Display or activation.
+        owned = not any(candidate is inspector or (
+            getattr(candidate, "_oleobj_", None) is not None and
+            candidate._oleobj_ == inspector._oleobj_) for candidate in existing)
+        commit.update(created=owned, existing_preserved=not owned)
+    try:
+        set_send_using_account(item, account_info, warnings, diagnostics=diagnostics)
+        item.Save()
+        if owned:
+            inspector.Close(0)  # olSave commits native From-account properties.
+            commit["closed_saved"] = True
+    except BaseException:
+        if owned and not commit["closed_saved"]:
+            try:inspector.Close(1)  # Discard only our hidden editor, never a user's.
+            except Exception:pass
+        raise
+
+
 def verify_saved_draft_sender(session: Any, draft: Any, account_info: dict[str, Any], *,
                               expected: str | None = None, compare_account: bool = True,
                               assignment: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -2988,7 +3040,7 @@ def verify_saved_draft_sender(session: Any, draft: Any, account_info: dict[str, 
         actual_store = str(safe_get(safe_get(saved, "Parent"), "StoreID", "") or "")
         if actual_store and actual_store.casefold() != store_id.casefold():
             raise ValueError("Reopened item store differs from the saved draft binding")
-        result.update(inspect_sender_account(saved, expected=requested))
+        result.update(inspect_persisted_sender(saved, expected=requested))
         result["reopened"] = True
     except Exception as exc:
         result["errors"] = [{"stage": stage, **exception_diagnostics(exc, sensitive_values=(entry_id, store_id))}]
@@ -3110,11 +3162,10 @@ def save_target_store_draft(
     draft = create_mail_item_in_folder(target_folder)
     copy_draft_fields(template, draft)
     sender_assignment: dict[str, Any] = {}
-    set_send_using_account(draft, target_account_info, warnings, diagnostics=sender_assignment)
     if initial_assignment is not None:
         sender_assignment["native_template"] = initial_assignment
     with attach_draft_files(draft, draft_attachments or {}):
-        draft.Save()
+        save_draft_with_sender(draft, target_account_info, warnings, diagnostics=sender_assignment)
     placement = draft_placement_summary(
         strategy="target_store_drafts",
         target_account_info=target_account_info,
@@ -3148,9 +3199,8 @@ def create_target_store_draft(
     if body:
         draft.Body = body
     sender_assignment: dict[str, Any] = {}
-    set_send_using_account(draft, account_info, warnings, diagnostics=sender_assignment)
     with attach_draft_files(draft, draft_attachments or {}):
-        draft.Save()
+        save_draft_with_sender(draft, account_info, warnings, diagnostics=sender_assignment)
     placement = draft_placement_summary(
         strategy="target_store_drafts",
         target_account_info=account_info,
@@ -3375,7 +3425,7 @@ def draft_reply(
                 body_format = prepend_draft_body(reply, suggested_body)
                 draft_content["body_format"] = body_format
                 with attach_draft_files(reply, draft_attachments):
-                    reply.Save()
+                    save_draft_with_sender(reply, send_account_info, warnings, diagnostics=sender_assignment)
                 target_folder = account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
                 draft_placement = draft_placement_summary(
                     strategy="native_reply",
@@ -3500,7 +3550,7 @@ def draft_forward(
                 body_format = prepend_draft_body(forward, suggested_body)
                 draft_content["body_format"] = body_format
                 with attach_draft_files(forward, draft_attachments):
-                    forward.Save()
+                    save_draft_with_sender(forward, send_account_info, warnings, diagnostics=sender_assignment)
                 target_folder = account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
                 draft_placement = draft_placement_summary(
                     strategy="native_forward",
@@ -3718,7 +3768,7 @@ def edit_draft(
     sender_assignment: dict[str, Any] | None = None
     warnings: list[str] = []
     body_update: dict[str, Any] | None = None
-    original_sender = inspect_sender_account(item)
+    original_sender = inspect_persisted_sender(item)
     if body is not None:
         body_update = set_draft_body(item, body)
     if subject is not None:
@@ -3727,8 +3777,9 @@ def edit_draft(
     with attach_draft_files(item, draft_attachments):
         if send_account is not None:
             sender_assignment = {}
-            set_send_using_account(item, send_account, warnings, diagnostics=sender_assignment)
-        item.Save()
+            save_draft_with_sender(item, send_account, warnings, diagnostics=sender_assignment)
+        else:
+            item.Save()
     expected_sender = send_account["smtp_address"] if send_account is not None else original_sender["actual"]
     sender = verify_saved_draft_sender(session, item, account_info, expected=expected_sender,
                                       compare_account=False, assignment=sender_assignment)
@@ -3801,12 +3852,22 @@ def apply_action(
 
     item = resolve_message(session, account_info, message_id or "")
     if action == "send":
-        try:
-            item.SendUsingAccount = account_info["account"]
-        except Exception:
-            pass
+        drafts = account_info["store"].GetDefaultFolder(OL_FOLDER_DRAFTS)
+        if not folder_paths_match(safe_get(item, "Parent"), drafts) or safe_get(item, "Sent", False):
+            raise ValueError("Sending requires an exact unsent Drafts-folder item.")
+        sender = inspect_persisted_sender(item)
+        if not sender["actual"] or sender["status"] != "observed":
+            raise ValueError("Persisted draft sender is unverified; correct that same draft with edit-draft --send-using-account before sending.")
+        send_account = resolve_account(session, sender["actual"])
+        assignment = {}
+        set_send_using_account(item, send_account, [], diagnostics=assignment)
+        verified = inspect_sender_account(item, expected=sender["actual"])
+        if not assignment["write_succeeded"] or verified["verified"] is not True:
+            raise ValueError("Draft sender assignment failed before send; draft retained and no Send call dispatched.")
         item.Send()
-        return {"account": account_info["smtp_address"], "store": account_info["delivery_store"], "sent": True}
+        return {"account": account_info["smtp_address"], "store": account_info["delivery_store"],
+                "sent": True, "submitted": True, "delivery_verified": False,
+                "send_using_account": sender["actual"], "sender_verification": verified}
 
     if action == "move":
         if not target_folder:
