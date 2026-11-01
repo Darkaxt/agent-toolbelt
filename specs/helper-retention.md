@@ -27,7 +27,7 @@ into disk-maintenance installations, automatic cleanup-ticket expiry and trimmin
 | --- | --- | --- |
 | Cleanup and maintenance retention | COMPLETE | RC1–RC4 implemented. The affected cleanup family suite passed, including expiry/no target deletion/live-operation exclusion/current tickets, legacy routing and Android expiry. Canonical/Claude bundle parity checked. Installed delivery is the final stage. |
 | Coordinator release retirement | COMPLETE | Manifest/hash-bound retirement, real consumers, idle CUA/console handling and bytecode ownership verified. Live installation reduced from 54 builds to one active build; 53 obsolete builds and both idle adapters retired, no rollback exemption. |
-| Delivery and reconciliation | ACTIVE | RC5, installed parity, remote commits, delivered version/package, existing state trimming, exact scratch cleanup and final report. |
+| Delivery and reconciliation | COMPLETE | Cleanup 0.8.0 and Coordinator 0.18.3 installed and read back; archives independently extracted/verified; matching GitHub branch/tags read back. Existing cleanup state shrank from about 706 MiB to 1.5 MiB without target deletion. Exact ticket removed 474,173,759 task-output bytes with no residuals. |
 
 Temporary hot test databases/builds use exact D:/Temp/helper-retention-20261101
 because sustained SQLite/native build I/O must stay on the internal drive.
@@ -38,3 +38,12 @@ No additional architecture or debt-remediation stage is required.
 Stage-two closure review: retirement uses the installer lifecycle and existing
 native identity/ownership primitives. No schedule, service or generalized pruning
 framework was introduced. Concrete old-runtime consumers are the only exception.
+Delivery correction: the user's native startup-error screenshot requires fixing
+the false Explorer job-membership rejection. Actual Explorer identity/session and
+the detached Coordinator's job-free lifetime remain required; final Coordinator
+delivery is 0.18.3. Real native scheduled activation passed on this desktop.
+
+Final reconciliation: RC1–RC5 satisfied, no blockers or tracked deferrals. Unique
+historical DualDex evidence was not copied or deleted. Changed bundle/discovery
+checks passed; the unchanged context-transfer global lint failure and unexercised
+background dashboard rendering are recorded without claiming broader validation.
