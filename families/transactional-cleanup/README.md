@@ -1,5 +1,11 @@
 # Transactional Cleanup
 
+Version 0.8.0 adds internal seven-day inactive authority expiry. Each command trims
+expired inventories and tickets, including legacy Windows and Android records,
+before dispatch. Expiry deletes no target files, does not interrupt a live root
+claim and cannot replay an operation. Expired work needs a fresh reviewed ticket.
+Completed/expired state retains bounded compact receipts, not target-file copies.
+
 Version 0.7.3 corrects the same false positive for nested package modules named
 `boot`. Volume-root Boot/EFI/Recovery and the Windows tree stay protected;
 unattributed user files, ancestry, Git, identity/content and signed-ticket checks

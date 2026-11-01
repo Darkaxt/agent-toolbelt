@@ -252,6 +252,8 @@ class AndroidCleanup:
         return self.root / (identifier + '.json')
 
     def save(self, identifier, payload):
+        if payload.get('state') and payload['state'] not in {'applied', 'revoked', 'discarded', 'expired'}:
+            payload['updated_at'] = now()
         path = self.record_path(identifier)
         fs.check_chain(path)
         pending = path.with_suffix('.pending')
@@ -348,8 +350,10 @@ class AndroidCleanup:
         return self.summary(record)
 
     def summary(self, record):
+        from .retention import deadline, TERMINAL
         manifest = record['manifest']
         return {'ok': True, 'transaction_id': record['transaction_id'], 'state': record['state'],
+                'expires_at': None if record['state'] in TERMINAL else deadline(record).isoformat(),
                 'manifest_sha256': record['manifest_sha256'], 'kind': manifest['kind'],
                 'device': manifest['device'], 'root': manifest.get('root'), 'package': manifest.get('package'),
                 'candidate_count': record.get('candidate_count', len(manifest.get('items', []))),
@@ -375,6 +379,8 @@ class AndroidCleanup:
         before = self.load(identifier)
         with self.host.locked(self.locks(before['manifest']), operation='adb-ticket', transaction=identifier):
             record = self.load(identifier)
+            from .retention import require_current
+            require_current(record)
             if record['state'] != 'reviewed' or record['manifest_sha256'] != manifest_sha256:
                 raise CleanupError('invalid_android_review', 'A separately inspected current manifest digest is required')
             if record['manifest']['kind'] == 'package' and not confirm_test_app_data:
@@ -451,6 +457,8 @@ class AndroidCleanup:
         before = self.ticket_record(ticket)
         with self.host.locked(self.locks(before['manifest']), operation='adb-apply', transaction=before['transaction_id']):
             record = self.ticket_record(ticket)
+            from .retention import require_current
+            require_current(record)
             if record['state'] == 'applied':
                 return self.summary(record)
             if record['state'] not in {'ticketed', 'partially_applied'}:

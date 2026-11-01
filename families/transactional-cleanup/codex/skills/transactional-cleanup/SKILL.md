@@ -3,7 +3,7 @@ name: transactional-cleanup
 description: Clean task-generated Windows or Android artifacts through reviewed snapshots and exact-file tickets, including temporary test apps with recorded installation provenance.
 license: MIT
 metadata:
-  version: "0.7.3"
+  version: "0.8.0"
   compatibility: Windows 10/11, Python 3.11+, NTFS/ReFS or content-bound exFAT; Android cleanup requires ADB and device shell tools. Codex and Claude.
 ---
 
@@ -246,7 +246,10 @@ require a fresh begin/register/review/inspect/ticket sequence after upgrading.
   options never authorize another link name or traversal/deletion of a link target.
 - Directories are removed only when empty. No recursive directory deletion occurs.
 - USN/ETW tracking is unavailable in v2; never claim complete host coverage.
-- No expiry or execution cancellation timeout. No process killing, backups or quarantine.
+- Cleanup authority expires after seven inactive days; the next invocation compacts
+  its metadata and requires a fresh reviewed ticket. Expiry never deletes target
+  files or cancels an operation holding a live root claim. No execution cancellation
+  timeout, process killing, backups or quarantine.
 - Terminal transactions retain a compact summary; detailed inventories are removed.
 - This helper remains subject to command policy. If its invocation is rejected,
   report the rejection; do not switch shells or methods to bypass it.
@@ -300,6 +303,15 @@ as a workaround; report it separately from the producer\'s lifecycle defect.
 
 ## Keep Helper State Small
 
+Every actual helper command automatically expires seven-day inactive inventories
+and tickets before dispatch, including legacy Windows and Android state. Mutating
+calls refresh activity; status/inspection does not renew authority. Expired tickets
+cannot be resumed. New deletion requires begin/register/review/inspect/ticket again.
+Keep at most 100 compact terminal summaries per backend, without target-file copies.
+An in-progress operation is protected by its actual held lock, not merely its PID.
+Its expiry can be processed on a subsequent call after the operation releases it.
+This explicit lifetime supersedes the former no-expiry retention behavior.
+
 Run `state-inventory` to see retained files, unfinished transactions and live
 root claims without scanning the targets. Distinguish large active manifests from
 abandoned unissued inventories; age, low CPU or a recorded PID is not ownership
@@ -308,9 +320,10 @@ SQLite detail and reclaims database pages while retaining a compact reasoned
 summary. It also authenticates and compacts unissued v1 open snapshots using
 bounded reads. Legacy compaction rejects overlapping live operations and leaves
 already running disjoint operations alone.
-Issued/partial tickets require completion or an explicit `revoke`, never discard.
+Unexpired issued/partial tickets require completion or explicit `revoke`, never
+discard. Automatic expiry invalidates their authority and compacts metadata only.
 
-Do not delete the state directory/key/database, prune pending tickets by age, or
+Do not delete the state directory/key/database or manually purge pending tickets, or
 move durable state into routinely purged Temp. Do not call VACUUM a cure for live
 inventory rows. Report remaining valid state separately from reclaimed metadata.
 

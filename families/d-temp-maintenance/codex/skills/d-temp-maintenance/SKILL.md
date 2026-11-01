@@ -3,7 +3,7 @@ name: d-temp-maintenance
 description: Maintain D:/Temp agent-generated leftovers through owner-aware review and verified cleanup. Use for LLM temporary clones, worktrees, build trees, captures and downloads accumulating on D drive; not general drive cleanup or age-based purging.
 license: MIT
 metadata:
-  version: "0.1.0"
+  version: "0.1.1"
   compatibility: Windows; installed transactional-cleanup for deletion. Everything and existing task-owner tools improve discovery. Same instructions for Codex and Claude.
 ---
 
@@ -14,6 +14,15 @@ Do not create a monitor or schedule. Maintenance authorization covers verified
 disposable leftovers, not everything beneath a directory named Temp. When asked
 to execute maintenance, clean actionable targets rather than returning only sizes.
 Creating/installing this skill alone is not authorization to purge existing data.
+
+Never copy or move project files, captures, reports, source, backups or retained
+evidence into this skill or any maintenance/helper installation directory. Cleanup
+must not create another copy of the data being cleaned. Preserve originals at
+their existing project destination; when retention is required, use the authorized
+project evidence location on D: or long-term archive on G:. A compact private
+maintenance ledger may record paths, hashes and receipts outside the installation.
+Storage correction requires verified consumer/path migration before source removal;
+an old `retained` directory is not deletion authority for unique project evidence.
 
 ## Discover Without Repeating The Expensive Scan
 

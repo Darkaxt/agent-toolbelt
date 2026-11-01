@@ -604,6 +604,7 @@ class Engine:
     def _payload(row):
         return {'transaction_id': row['transaction_id'], 'host': row['host'], 'policy': row['policy'],
                 'workspace': row['workspace'], 'created_at': row['created_at'], 'state': row['state'],
+                'progress_updated_at': row['progress_updated_at'], 'manifest_created_at': row['manifest_created_at'],
                 'roots': json.loads(row['roots_json']), 'scan_roots': json.loads(row['roots_json']),
                 'scan_mode': row['scan_mode'], 'free_space': json.loads(row['free_space_json']),
                 'discovery_coverage': json.loads(row['discovery_json']),
@@ -718,6 +719,7 @@ class Engine:
             if marker_proof:
                 connection.execute('UPDATE registrations SET git_marker_json=? WHERE id=last_insert_rowid()',
                                    (encoded(marker_proof).decode(),))
+            connection.execute('UPDATE transactions SET progress_updated_at=? WHERE transaction_id=?', (now(), transaction))
             connection.commit()
             return self.report('register', self._payload(self._row(connection, transaction)))
         finally:
@@ -999,8 +1001,8 @@ class Engine:
                 VALUES (?,?,?,?,?,?,'issued',?,?)''',
                                (ticket_id, transaction, ticket['host'], POLICY, manifest_sha256,
                                 candidate_count, ticket['issued_at'], self._ticket_mac(ticket)))
-            connection.execute("UPDATE transactions SET state='ticketed',ticket_id=? WHERE transaction_id=?",
-                               (ticket_id, transaction)); connection.commit()
+            connection.execute("UPDATE transactions SET state='ticketed',ticket_id=?,progress_updated_at=? WHERE transaction_id=?",
+                               (ticket_id, now(), transaction)); connection.commit()
             return self.report('ticket', self._payload(self._row(connection, transaction)), ticket_id=ticket_id,
                                manifest_sha256=manifest_sha256, ticket_state='issued')
         finally:
@@ -1047,6 +1049,8 @@ class Engine:
         connection = self.connect()
         try:
             ticket = self._ticket(connection, ticket_id)
+            if ticket['state'] == 'expired':
+                raise CleanupError('ticket_expired', 'Cleanup authority expired; create and inspect a fresh review. No target files deleted.')
             if ticket['state'] not in {'issued', 'partially_applied'}:
                 raise CleanupError('ticket_terminal', 'Ticket is unknown, already applied, or revoked')
             transaction_row = self._row(connection, ticket['transaction_id'])
@@ -1293,7 +1297,7 @@ class Engine:
             return {'ok': True, 'operation': 'state-inventory', 'state_root': str(self.root),
                     'state_bytes': sum(item['bytes'] for item in files), 'files': files,
                     'unfinished_transactions': transactions, 'live_claims': live,
-                    'warnings': ['Age and recorded owner PID do not establish abandonment. No automatic discard.'],
+                    'warnings': ['Seven-day authority expiry trims metadata only; live root claims are preserved. Expired work requires a fresh review.'],
                     'errors': [], 'failure_kind': None}
         finally:
             connection.close()
@@ -1331,9 +1335,11 @@ class Engine:
 
     @staticmethod
     def report(operation, payload, items=(), **extra):
+        from .retention import deadline, TERMINAL
         candidates = [item for item in items if item.get('decision') == 'candidate']
         return {'ok': True, 'operation': operation, 'transaction_id': payload['transaction_id'],
                 'workspace': payload['workspace'], 'state': payload['state'],
+                'expires_at': None if payload['state'] in TERMINAL else deadline(payload).isoformat(),
                 'discovery_coverage': payload['discovery_coverage'],
                 'candidate_count': payload.get('candidate_count', len(candidates)),
                 'candidate_bytes': payload.get('candidate_bytes', sum(item.get('size', 0) for item in candidates

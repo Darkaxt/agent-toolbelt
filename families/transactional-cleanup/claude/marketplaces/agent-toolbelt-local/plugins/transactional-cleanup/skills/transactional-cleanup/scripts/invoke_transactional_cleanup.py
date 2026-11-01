@@ -31,10 +31,8 @@ def source_root(arguments=None):
         state = Path(arguments[arguments.index("--state-root") + 1]) if "--state-root" in arguments else base / "Tools/transactional-cleanup/state"
         identifier = legacy_state_id(arguments)
         legacy = metadata.get("legacy_source")
-        if identifier and legacy and "discard" not in arguments and (state / f"{identifier}.json").is_file():
-            source = Path(legacy)
-        else:
-            source = Path(metadata["source"])
+        # Current runtime always expires state before any legacy delegation.
+        source = Path(metadata["source"])
         if (source / PACKAGE / "cli.py").is_file():
             return source
         raise RuntimeError("Installed cleanup runtime is incomplete; rerun the installer")

@@ -3,7 +3,7 @@ name: c-drive-maintenance
 description: Use for active Windows disk maintenance, reclaiming C drive space, repeated cache or emulator snapshot growth, and consolidating Gradle, Android SDK/NDK or other toolchain versions across projects and existing tasks. Execute verified cleanup and dependency-owner coordination, not just a passive size report.
 license: MIT
 metadata:
-  version: "0.1.1"
+  version: "0.1.2"
   compatibility: Windows, Python 3.11+, installed transactional-cleanup; gradle-build-gate for Gradle operations. Existing task APIs are needed for cross-task requests.
 ---
 
@@ -13,6 +13,12 @@ Operate on demand. A request to maintain disk space authorizes scoped maintenanc
 not deletion of every large directory. Do not create a monitor, scheduled task or
 background collector unless separately requested. Do not stop at a list of sizes
 when actionable cleanup is authorized and evidence is available.
+
+Never copy or move target/project data, reports, captures or backups into a skill
+or maintenance/helper installation. Preserve originals in place; retain required
+project evidence at its authorized D: location or long-term G: archive. Store only
+a compact private ledger of paths, hashes, decisions and receipts outside helper
+installations. Do not create redundant copies merely to claim cleanup or evidence.
 
 ## Operator Loop
 
