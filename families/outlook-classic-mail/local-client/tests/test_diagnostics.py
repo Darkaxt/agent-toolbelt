@@ -238,7 +238,7 @@ class OutlookDiagnosticsTests(unittest.TestCase):
 
             install_fake_com()
             original_dispatch = sys.modules["win32com.client"].Dispatch
-            sys.modules["win32com.client"].Dispatch = lambda name: events.append("dispatch") or original_dispatch(name)
+            sys.modules["win32com.client"].Dispatch = lambda name: events.append("attach") or original_dispatch(name)
             application, session = client.connect_outlook(diagnostics=diagnostics)
         finally:
             client.outlook_runtime_state = original_state
@@ -248,7 +248,7 @@ class OutlookDiagnosticsTests(unittest.TestCase):
 
         self.assertIsNotNone(application)
         self.assertIsNotNone(session)
-        self.assertEqual(events, ["launch", "dispatch"])
+        self.assertEqual(events, ["launch", "attach"])
         self.assertEqual(diagnostics["outlook_startup"]["action"], "desktop_launch_requested")
         self.assertEqual(diagnostics["outlook_startup"]["launch_pid"], 4321)
 
@@ -337,10 +337,13 @@ class OutlookDiagnosticsTests(unittest.TestCase):
         fake_process = mock.Mock(pid=2468)
 
         with mock.patch.object(client, "resolve_outlook_executable", return_value=executable):
-            with mock.patch.object(client.subprocess, "Popen", return_value=fake_process) as popen:
+            with mock.patch.object(client.subprocess, "Popen", return_value=fake_process) as popen, \
+                 mock.patch.object(client, "wait_for_outlook_desktop") as ready:
                 result = client.launch_outlook_desktop()
 
         self.assertEqual(result["pid"], 2468)
+        ready.assert_called_once_with(fake_process)
+        self.assertTrue(result["desktop_ready"])
         popen.assert_called_once_with(
             [str(executable)],
             cwd=str(executable.parent),

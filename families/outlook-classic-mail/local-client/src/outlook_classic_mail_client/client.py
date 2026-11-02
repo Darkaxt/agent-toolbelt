@@ -44,6 +44,12 @@ class OutlookBusyError(RuntimeError):
     pass
 
 
+class OutlookDesktopNotReadyError(RuntimeError):
+    def __init__(self, launch, error):
+        super().__init__('Outlook was launched but no usable desktop was established: '+str(error))
+        self.launch = launch
+
+
 class OutlookComUnavailableError(RuntimeError):
     def __init__(self, message: str, *, failure_kind: str, diagnostics: dict[str, Any]):
         super().__init__(message)
@@ -153,17 +159,37 @@ def outlook_visible_window() -> bool | None:
     try:
         import ctypes
 
-        user32 = ctypes.windll.user32
+        from ctypes import wintypes
+        user32 = ctypes.WinDLL('user32', use_last_error=True)
         found = False
         callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        user32.IsWindowVisible.restype = wintypes.BOOL
+        user32.IsWindowEnabled.argtypes = [wintypes.HWND]
+        user32.IsWindowEnabled.restype = wintypes.BOOL
+        user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+        user32.GetWindowTextLengthW.restype = ctypes.c_int
+        user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        user32.GetClassNameW.restype = ctypes.c_int
+        user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        user32.GetClientRect.restype = wintypes.BOOL
+        user32.EnumWindows.argtypes = [callback_type, ctypes.c_void_p]
+        user32.EnumWindows.restype = wintypes.BOOL
 
         def inspect_window(hwnd, _lparam):
             nonlocal found
-            if not user32.IsWindowVisible(hwnd):
+            if not user32.IsWindowVisible(hwnd) or not user32.IsWindowEnabled(hwnd):
                 return True
             class_name = ctypes.create_unicode_buffer(256)
             user32.GetClassNameW(hwnd, class_name, len(class_name))
             if class_name.value.casefold() == "rctrl_renwnd32":
+                # Outlook also uses this class for untitled support/placeholder
+                # windows. They do not establish a usable desktop or COM readiness.
+                if user32.GetWindowTextLengthW(hwnd) <= 0:
+                    return True
+                rect = wintypes.RECT()
+                if not user32.GetClientRect(hwnd, ctypes.byref(rect)) or rect.right <= rect.left or rect.bottom <= rect.top:
+                    return True
                 found = True
                 return False
             return True
@@ -257,10 +283,83 @@ def launch_outlook_desktop() -> dict[str, Any]:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    return {
+    launch = {
         "executable": str(executable),
         "pid": process.pid,
     }
+    try:
+        wait_for_outlook_desktop(process)
+    except Exception as error:
+        raise OutlookDesktopNotReadyError(launch, error) from error
+    return {**launch, "desktop_ready": True}
+
+
+def wait_for_outlook_desktop(process) -> None:
+    """Observe the native window before COM can race the desktop startup.
+
+    WinEvent notifications and process exit drive this wait, not a delay or an
+    execution deadline. A launcher that exits without a window is not permission
+    to activate another embedded Outlook. Never close the user's application.
+    """
+    if outlook_visible_window() is True:
+        return
+    import ctypes
+    from ctypes import wintypes
+    import win32gui
+
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    user = ctypes.WinDLL('user32', use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    callback_type = ctypes.WINFUNCTYPE(None, wintypes.HANDLE, wintypes.DWORD,
+        wintypes.HWND, wintypes.LONG, wintypes.LONG, wintypes.DWORD, wintypes.DWORD)
+    user.SetWinEventHook.argtypes = [wintypes.DWORD, wintypes.DWORD,
+        wintypes.HMODULE, callback_type, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD]
+    user.SetWinEventHook.restype = wintypes.HANDLE
+    user.UnhookWinEvent.argtypes = [wintypes.HANDLE]
+    user.UnhookWinEvent.restype = wintypes.BOOL
+    user.MsgWaitForMultipleObjects.argtypes = [wintypes.DWORD,
+        ctypes.POINTER(wintypes.HANDLE), wintypes.BOOL, wintypes.DWORD, wintypes.DWORD]
+    user.MsgWaitForMultipleObjects.restype = wintypes.DWORD
+
+    @callback_type
+    def window_event(_hook, _event, _window, _object, _child, _thread, _time):
+        # Out-of-context callbacks arrive on this thread's message queue. The
+        # loop rechecks the real window, including a normal existing-instance handoff.
+        pass
+
+    handle = kernel.OpenProcess(0x100000 | 0x1000, False, process.pid)
+    if not handle:
+        if outlook_visible_window() is True:
+            return
+        raise OSError(ctypes.get_last_error(), 'Outlook desktop launcher is unavailable')
+    hook = None
+    try:
+        hook = user.SetWinEventHook(0x8000, 0x800c, None, window_event, 0, 0, 0)
+        if not hook:
+            raise ctypes.WinError(ctypes.get_last_error())
+        handles = (wintypes.HANDLE * 1)(handle)
+        while True:
+            if outlook_visible_window() is True:
+                return
+            if process.poll() is not None:
+                # Drain an already-delivered handoff/show event before inspecting.
+                win32gui.PumpWaitingMessages()
+                if outlook_visible_window() is True:
+                    return
+                raise RuntimeError('Outlook desktop launcher exited without a usable window; preserve the existing Outlook state')
+            result = user.MsgWaitForMultipleObjects(1, handles, False, 0xffffffff, 0x04ff)
+            if result == 1:
+                if win32gui.PumpWaitingMessages():
+                    raise RuntimeError('Outlook desktop readiness observer was cancelled')
+            elif result != 0:
+                raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        if hook:
+            user.UnhookWinEvent(hook)
+        kernel.CloseHandle(handle)
 
 
 def _raise_outlook_startup_error(
@@ -328,6 +427,14 @@ def prepare_outlook_for_com(diagnostics: dict[str, Any] | None = None) -> None:
 
     try:
         launch = launch_outlook_desktop()
+    except OutlookDesktopNotReadyError as exc:
+        startup.update(action="desktop_not_ready", desktop_ready=False,
+                       launch_executable=exc.launch['executable'], launch_pid=exc.launch['pid'])
+        _raise_outlook_startup_error(
+            diagnostics, failure_kind="outlook_desktop_not_ready",
+            message="Outlook started but did not establish a usable desktop; no COM activation was attempted.",
+            exception=exc,
+        )
     except Exception as exc:
         startup["action"] = "desktop_launch_failed"
         _raise_outlook_startup_error(
@@ -340,6 +447,7 @@ def prepare_outlook_for_com(diagnostics: dict[str, Any] | None = None) -> None:
     startup["action"] = "desktop_promotion_requested" if process_running is True else "desktop_launch_requested"
     startup["launch_executable"] = launch.get("executable")
     startup["launch_pid"] = launch.get("pid")
+    startup["desktop_ready"] = launch.get("desktop_ready", False)
 
 
 def build_client_diagnostics(operation: str) -> dict[str, Any]:
@@ -498,14 +606,19 @@ def connect_outlook(diagnostics: dict[str, Any] | None = None):
     if sys.platform == "win32":
         prepare_outlook_for_com(diagnostics)
     try:
+        # The real desktop must be ready before reaching the COM class factory.
+        # GetActiveObject alone is not compatible with Outlook versions that do
+        # not expose the application in the ROT. Do not add an activation retry.
         application = win32com.client.Dispatch("Outlook.Application")
+        if diagnostics is not None:
+            diagnostics['com_attachment'] = 'single_class_factory_binding'
     except Exception as exc:
         mark_com_stage(diagnostics, "dispatch_outlook_application", "failed")
         failure_kind = "outlook_dispatch_failed"
         if diagnostics is not None:
             finish_client_diagnostics(diagnostics, failure_kind=failure_kind, exception=exc)
         raise OutlookComUnavailableError(
-            "Outlook.Application COM dispatch failed.",
+            "Outlook.Application COM binding failed after startup policy; no retry was attempted.",
             failure_kind=failure_kind,
             diagnostics=diagnostics or {},
         ) from exc

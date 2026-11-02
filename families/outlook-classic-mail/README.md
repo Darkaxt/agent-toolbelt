@@ -85,6 +85,8 @@ COM-backed commands enter a local FIFO queue before they touch Outlook. Do not l
 
 After queue and COM-lock admission, interactive commands apply a desktop startup policy. If Outlook Classic is stopped, the helper resolves and launches the normal Outlook executable before COM dispatch. If only a hidden COM `-Embedding` instance exists, it requests a normal desktop launch to promote the existing instance instead of killing it. `client_diagnostics.outlook_startup` records the observed process/window state and action.
 
+After requesting a desktop launch, the helper observes native window/process events until an enabled, titled desktop with a nonempty client area exists. Untitled support windows do not establish readiness. Only then does it bind COM once. If the launcher exits without a usable desktop, it reports `outlook_desktop_not_ready`, preserves native state and does not attempt COM activation. There is no launch delay, execution deadline or attachment retry. A transient COM activation process may hand off to the original desktop; process count alone does not establish a competing persistent instance.
+
 `diagnostics-probe` never launches Outlook. Background invocations (`pythonw.exe`, `OUTLOOK_CLASSIC_MAIL_BACKGROUND=1`, or `OUTLOOK_CLASSIC_MAIL_NO_UI=1`) also never create a visible Outlook window; when Outlook is absent they fail with `outlook_interactive_session_required`. The helper never terminates Outlook or active client processes automatically.
 
 Wrapper responses also include `wrapper_diagnostics` so callers can distinguish
