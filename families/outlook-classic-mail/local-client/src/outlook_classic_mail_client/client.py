@@ -153,7 +153,7 @@ def outlook_process_running() -> bool | None:
     return "OUTLOOK.EXE" in output.upper()
 
 
-def outlook_visible_window() -> bool | None:
+def outlook_visible_window(*, allow_minimized: bool = True) -> bool | None:
     if sys.platform != "win32":
         return None
     try:
@@ -167,6 +167,8 @@ def outlook_visible_window() -> bool | None:
         user32.IsWindowVisible.restype = wintypes.BOOL
         user32.IsWindowEnabled.argtypes = [wintypes.HWND]
         user32.IsWindowEnabled.restype = wintypes.BOOL
+        user32.IsIconic.argtypes = [wintypes.HWND]
+        user32.IsIconic.restype = wintypes.BOOL
         user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
         user32.GetWindowTextLengthW.restype = ctypes.c_int
         user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
@@ -187,6 +189,11 @@ def outlook_visible_window() -> bool | None:
                 # windows. They do not establish a usable desktop or COM readiness.
                 if user32.GetWindowTextLengthW(hwnd) <= 0:
                     return True
+                # A minimized existing Explorer remains usable by COM. Its
+                # empty client area must not trigger another desktop launch.
+                if allow_minimized and user32.IsIconic(hwnd):
+                    found=True
+                    return False
                 rect = wintypes.RECT()
                 if not user32.GetClientRect(hwnd, ctypes.byref(rect)) or rect.right <= rect.left or rect.bottom <= rect.top:
                     return True
@@ -276,7 +283,7 @@ def launch_outlook_desktop() -> dict[str, Any]:
     if executable is None:
         raise FileNotFoundError("Outlook Classic executable could not be resolved.")
     process = subprocess.Popen(
-        [str(executable)],
+        [str(executable), '/recycle'],
         cwd=str(executable.parent),
         close_fds=True,
         stdin=subprocess.DEVNULL,
@@ -301,7 +308,7 @@ def wait_for_outlook_desktop(process) -> None:
     execution deadline. A launcher that exits without a window is not permission
     to activate another embedded Outlook. Never close the user's application.
     """
-    if outlook_visible_window() is True:
+    if outlook_visible_window(allow_minimized=False) is True:
         return
     import ctypes
     from ctypes import wintypes
@@ -332,7 +339,7 @@ def wait_for_outlook_desktop(process) -> None:
 
     handle = kernel.OpenProcess(0x100000 | 0x1000, False, process.pid)
     if not handle:
-        if outlook_visible_window() is True:
+        if outlook_visible_window(allow_minimized=False) is True:
             return
         raise OSError(ctypes.get_last_error(), 'Outlook desktop launcher is unavailable')
     hook = None
@@ -342,12 +349,12 @@ def wait_for_outlook_desktop(process) -> None:
             raise ctypes.WinError(ctypes.get_last_error())
         handles = (wintypes.HANDLE * 1)(handle)
         while True:
-            if outlook_visible_window() is True:
+            if outlook_visible_window(allow_minimized=False) is True:
                 return
             if process.poll() is not None:
                 # Drain an already-delivered handoff/show event before inspecting.
                 win32gui.PumpWaitingMessages()
-                if outlook_visible_window() is True:
+                if outlook_visible_window(allow_minimized=False) is True:
                     return
                 raise RuntimeError('Outlook desktop launcher exited without a usable window; preserve the existing Outlook state')
             result = user.MsgWaitForMultipleObjects(1, handles, False, 0xffffffff, 0x04ff)

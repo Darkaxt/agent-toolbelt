@@ -87,6 +87,7 @@ class StartupLifecycleTests(unittest.TestCase):
                 fake=mock.Mock()
                 fake.IsWindowVisible.return_value=visible
                 fake.IsWindowEnabled.return_value=enabled
+                fake.IsIconic.return_value=False
                 fake.GetClassNameW.side_effect=lambda hwnd,buffer,count:setattr(buffer,'value','rctrl_renwnd32') or 1
                 fake.GetWindowTextLengthW.return_value=title
                 def rectangle(hwnd,rect):
@@ -97,6 +98,35 @@ class StartupLifecycleTests(unittest.TestCase):
                 fake.EnumWindows.side_effect=lambda callback,param:callback(1,0)
                 with mock.patch.object(ctypes,'WinDLL',return_value=fake):
                     self.assertIs(client.outlook_visible_window(),expected)
+
+    def test_minimized_desktop_is_reused_but_not_cold_start_readiness(self):
+        import ctypes
+        fake=mock.Mock()
+        fake.IsWindowVisible.return_value=True
+        fake.IsWindowEnabled.return_value=True
+        fake.IsIconic.return_value=True
+        fake.GetWindowTextLengthW.return_value=20
+        fake.GetClassNameW.side_effect=lambda hwnd,buffer,count:setattr(buffer,'value','rctrl_renwnd32') or 1
+        fake.EnumWindows.side_effect=lambda callback,param:callback(1,0)
+        def empty(hwnd,rect):
+            rect._obj.right=rect._obj.bottom=0
+            return True
+        fake.GetClientRect.side_effect=empty
+        with mock.patch.object(ctypes,'WinDLL',return_value=fake):
+            self.assertTrue(client.outlook_visible_window())
+            self.assertFalse(client.outlook_visible_window(allow_minimized=False))
+
+    def test_existing_minimized_desktop_never_launches_or_moves_windows(self):
+        with mock.patch.object(client,'outlook_runtime_state',return_value={'process_running':True,'visible_window':True}),mock.patch.object(client,'launch_outlook_desktop') as launch:
+            diagnostics={'operation':'accounts'}
+            client.prepare_outlook_for_com(diagnostics)
+            launch.assert_not_called()
+            self.assertEqual(diagnostics['outlook_startup']['action'],'existing_visible_instance')
+
+    def test_desktop_launch_requests_existing_window_reuse(self):
+        with mock.patch.object(client,'resolve_outlook_executable',return_value=Path('Outlook.exe')),mock.patch.object(client.subprocess,'Popen',return_value=mock.Mock(pid=123)) as launch,mock.patch.object(client,'wait_for_outlook_desktop'):
+            client.launch_outlook_desktop()
+        self.assertEqual(launch.call_args.args[0],[str(Path('Outlook.exe')),'/recycle'])
 
 
 if __name__=='__main__':unittest.main()
