@@ -345,7 +345,7 @@ class OutlookDiagnosticsTests(unittest.TestCase):
         ready.assert_called_once_with(fake_process)
         self.assertTrue(result["desktop_ready"])
         popen.assert_called_once_with(
-            [str(executable)],
+            [str(executable), '/recycle'],
             cwd=str(executable.parent),
             close_fds=True,
             stdin=client.subprocess.DEVNULL,
