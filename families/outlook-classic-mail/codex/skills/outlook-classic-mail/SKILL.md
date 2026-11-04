@@ -44,6 +44,8 @@ Do not use this skill when:
   `delivery_verified: false` still requires separate delivery/Sent evidence.
 
 - Prefer Outlook Classic for generic local mail tasks.
+- Read [native search performance](references/search-performance.md) for search planning and coverage. For known identifiers, words or phrases, prefer explicit `search --indexed` with the relevant account/folder and `--since YYYY-MM-DD` (or `--days`, not both). This uses Outlook indexed phrase semantics; substring search without `--indexed` remains available and can be slow. Never silently substitute one mode for the other or claim a phrase miss proves no substring match.
+- Searches filter inside Outlook and open only candidate messages. Inspect `search` / `searched_folders[].search` counters and `scope.limited`; output/folder limits and cache-selected folders do not establish complete mailbox coverage. Plain-text body matching covers the full body, not just its excerpt. Use `cache-show` for metadata lookups before live content search; cached metadata does not contain bodies.
 - Fall back to the Gmail connector only when the user explicitly asks for Gmail, Outlook Classic is unavailable, or the request truly depends on Gmail-only behavior.
 - Keep mailbox reads and triage non-mutating by default.
 - For "latest emails from X" or similar sender/service lookups: Search the cached folder inventory first with `find-folders`, then search matching folders.

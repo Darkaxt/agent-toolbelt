@@ -12,6 +12,8 @@ Use `scripts/invoke_outlook_mail.py` for local mailbox access through Outlook Cl
 ## Routing
 
 - Prefer Outlook Classic for generic local mail tasks.
+- Read [native search performance](references/search-performance.md) for search planning and coverage. For known identifiers, words or phrases, prefer explicit `search --indexed` with the relevant account/folder and `--since YYYY-MM-DD` (or `--days`, not both). This uses Outlook indexed phrase semantics; substring search without `--indexed` remains available and can be slow. Never silently substitute one mode for the other or claim a phrase miss proves no substring match.
+- Searches filter inside Outlook and open only candidate messages. Inspect `search` / `searched_folders[].search` counters and `scope.limited`; output/folder limits and cache-selected folders do not establish complete mailbox coverage. Plain-text body matching covers the full body, not just its excerpt. Use `cache-show` for metadata lookups before live content search; cached metadata does not contain bodies.
 - Use Gmail only when the user explicitly asks for Gmail or needs Gmail-only semantics such as labels, archive behavior, or Gmail query syntax.
 - Treat Gmail-backed accounts in Outlook as Outlook stores, not Gmail-native accounts.
 - Do not use this skill when Outlook Classic is unavailable or the account is not configured in the local Outlook profile.

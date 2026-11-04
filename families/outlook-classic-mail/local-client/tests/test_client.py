@@ -178,6 +178,19 @@ class FakeMessage:
         self.saved = True
 
 
+class FakeTable:
+    def __init__(self,items):
+        from unittest.mock import Mock
+        self.items=list(items);self.index=0;self.Columns=Mock()
+    def Sort(self,key,descending):self.items.sort(key=lambda item:item.ReceivedTime.timestamp(),reverse=descending)
+    def GetRowCount(self):return len(self.items)
+    @property
+    def EndOfTable(self):return self.index==len(self.items)
+    def GetNextRow(self):
+        item=self.items[self.index];self.index+=1
+        return {'EntryID':item.EntryID,'ReceivedTime':item.ReceivedTime}
+
+
 @dataclass
 class FakeFolder:
     Name: str
@@ -185,6 +198,12 @@ class FakeFolder:
     Items: FakeItems = field(default_factory=FakeItems)
     Folders: list = field(default_factory=list)
     EntryID: str = ""
+
+    def GetTable(self,filter):
+        # Native predicate semantics are covered by the native acceptance probe.
+        # These fakes deliberately return a superset for literal/date verification.
+        self.last_filter=filter
+        return FakeTable(self.Items)
 
     def __post_init__(self):
         self.Items.parent = self

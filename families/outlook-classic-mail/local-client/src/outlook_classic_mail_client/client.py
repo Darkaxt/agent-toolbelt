@@ -725,7 +725,7 @@ def format_datetime(value: Any) -> str | None:
     return None
 
 
-def body_excerpt(item: Any, limit: int = 280) -> str:
+def body_excerpt(item: Any, limit: int | None = 280) -> str:
     body = safe_get(item, "Body", "") or ""
     normalized = " ".join(str(body).split())
     return normalized[:limit]
@@ -1213,7 +1213,7 @@ def matches_filters(
                 str(safe_get(item, "SenderName", "")),
                 str(safe_get(item, "SenderEmailAddress", "")),
                 str(safe_get(item, "To", "")),
-                body_excerpt(item, limit=500),
+                body_excerpt(item, limit=None),
             ]
         ).lower()
         if query_lower not in searchable:
@@ -1277,6 +1277,40 @@ def try_local_state_write(
         raise
 
 
+def search_cutoff(days, since):
+    if days is not None and since:raise ValueError('Use --days or --since, not both')
+    if days is not None and days < 1:raise ValueError('--days must be positive')
+    if since:return datetime.fromisoformat(since.replace('Z','+00:00')).astimezone()
+    return datetime.now().astimezone()-timedelta(days=days) if days else None
+
+
+def search_progress(**fields):
+    if os.environ.get('OUTLOOK_CLASSIC_MAIL_PROGRESS')=='1':
+        print('OUTLOOK_PROGRESS '+json.dumps(fields),file=sys.stderr,flush=True)
+
+
+def native_search_filter(query, unread, sender, recipient, cutoff, indexed=False):
+    def contains(prop,text):
+        # Native wildcard/whitespace matching is a superset. Full literal
+        # verification below removes false positives without truncating bodies.
+        value=re.sub(r'[\s%_\[\]]+','%',text).replace("'","''")
+        return '"'+prop+'" LIKE \'%'+value+"%'"
+    terms=[]
+    if cutoff:
+        utc=cutoff.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+        terms.append('"urn:schemas:httpmail:datereceived" >= \''+utc+"'")
+    if unread:terms.append('"urn:schemas:httpmail:read" = false')
+    if sender:terms.append(contains('urn:schemas:mailheader:from',sender))
+    if recipient:terms.append(contains('urn:schemas:mailheader:to',recipient))
+    if query:
+        def match(prop):
+            return ('"'+prop+'" ci_phrasematch \''+query.replace("'","''")+"'") if indexed else contains(prop,query)
+        terms.append('('+' OR '.join(match(prop) for prop in (
+            'urn:schemas:httpmail:subject','urn:schemas:mailheader:from',
+            'urn:schemas:mailheader:to','urn:schemas:httpmail:textdescription'))+')')
+    return '@SQL='+' AND '.join(terms) if terms else ''
+
+
 def search_messages(
     session: Any,
     *,
@@ -1291,15 +1325,29 @@ def search_messages(
     cache: mail_cache.MailCache | None = None,
     update_cache: bool = False,
     resolved_folder: Any | None = None,
+    since: str | None = None,
+    indexed: bool = False,
 ) -> dict[str, Any]:
     account_info = resolve_account(session, account_selector)
     folder = resolved_folder if resolved_folder is not None else resolve_folder(account_info, folder_selector)
-    cutoff = datetime.now() - timedelta(days=days) if days else None
-    scan_limit = max(limit * 25, 200)
+    if limit < 1:raise ValueError('Search limit must be positive')
+    cutoff = search_cutoff(days,since)
+    started=time.monotonic()
+    search_progress(stage='filtering_folder')
+    instant=bool(safe_get(account_info['store'],'IsInstantSearchEnabled',False))
+    if indexed and query and not instant:raise ValueError('Indexed search unavailable for this store; narrow scope and explicitly use substring search')
+    table=folder.GetTable(native_search_filter(query,unread,sender,recipient,cutoff,indexed))
+    table.Columns.RemoveAll()
+    table.Columns.Add('EntryID');table.Columns.Add('ReceivedTime')
+    table.Sort('ReceivedTime',True)
+    candidate_rows=table.GetRowCount();examined=0;opened=0
+    search_progress(stage='reading_candidates',candidate_rows=candidate_rows)
 
     messages: list[dict[str, Any]] = []
     warnings: list[str] = []
-    for item in iter_recent_messages(folder, scan_limit):
+    while not table.EndOfTable:
+        entry=table.GetNextRow();examined+=1
+        item=session.GetItemFromID(entry['EntryID'],account_info['store_id']);opened+=1
         if not matches_filters(
             item,
             query=query,
@@ -1325,13 +1373,14 @@ def search_messages(
         if len(messages) >= limit:
             break
 
-    return {
-        "account": account_info["smtp_address"],
-        "store": account_info["delivery_store"],
-        "folder": folder_summary(folder),
-        "messages": messages,
-        "warnings": warnings,
-    }
+    metrics={'backend':'outlook-table-dasl','candidate_rows':candidate_rows,
+             'rows_examined':examined,'items_opened':opened,'result_count':len(messages),
+             'elapsed_seconds':round(time.monotonic()-started,3),
+             'remaining_candidates':not bool(table.EndOfTable),'body_search':'full_plain_text',
+             'instant_search_enabled':instant,'query_mode':'indexed_phrase' if indexed else 'literal_substring'}
+    search_progress(stage='folder_complete',**{k:metrics[k] for k in ('candidate_rows','rows_examined','items_opened','result_count','elapsed_seconds')})
+    return {'account':account_info['smtp_address'],'store':account_info['delivery_store'],
+            'folder':folder_summary(folder),'messages':messages,'warnings':warnings,'search':metrics}
 
 
 def inspect_domains(
@@ -1859,7 +1908,11 @@ def search_all_folders(
     update_cache: bool = False,
     broad_scan: bool = False,
     cache_path: str | None = None,
+    since: str | None = None,
+    indexed: bool = False,
 ) -> dict[str, Any]:
+    search_cutoff(days,since)
+    if folder_limit < 1 or per_folder_limit < 1:raise ValueError('Folder/result limits must be positive')
     account_infos = iter_account_infos(
         session,
         account_selector=account_selector,
@@ -1924,6 +1977,8 @@ def search_all_folders(
                     cache=cache,
                     update_cache=update_cache,
                     resolved_folder=folder,
+                    since=since,
+                    indexed=indexed,
                 )
             except Exception as exc:
                 cache_warnings.append(
@@ -1931,6 +1986,7 @@ def search_all_folders(
                 )
                 continue
             folder = search_result["folder"]
+            search_progress(stage='folders_complete',folders_completed=len(searched_folders)+1,folders_total=min(len(cache_entries),folder_limit))
             searched_folders.append(
                 {
                     "name": folder.get("name", ""),
@@ -1939,6 +1995,7 @@ def search_all_folders(
                     "account": search_result["account"],
                     "store": search_result["store"],
                     "source": "mail-cache",
+                    "search":search_result['search'],
                     "hit_count": entry.get("hit_count", 0),
                     "latest_message_date": entry.get("latest_message_date", ""),
                 }
@@ -1963,7 +2020,8 @@ def search_all_folders(
                     "strategy": "mail-cache",
                     "folder_limit": folder_limit,
                     "per_folder_limit": per_folder_limit,
-                    "limited": len(cache_entries) > folder_limit,
+                    "limited": True,
+                    "coverage":'cache-selected folders only; metadata cache does not index bodies',
                     "all_accounts": all_accounts or not account_selector,
                 },
             }
@@ -1998,7 +2056,7 @@ def search_all_folders(
     search_entries = dedupe_folder_entries([*hint_entries, *discovery_entries])
     strategy = "matched-folders"
     limited = bool(discovery["scope"]["limited"])
-    if not search_entries:
+    if broad_scan or not search_entries:
         search_entries, limited = fallback_folder_entries(
             account_infos,
             folder_limit=folder_limit,
@@ -2008,6 +2066,7 @@ def search_all_folders(
 
     messages: list[dict[str, Any]] = []
     searched_folders: list[dict[str, Any]] = []
+    search_progress(stage='searching_folders',folders_completed=0,folders_total=min(len(search_entries),folder_limit))
     for entry in search_entries[:folder_limit]:
         entry_account = str(entry.get("account") or "").strip().lower()
         entry_account_info = account_by_smtp.get(entry_account)
@@ -2026,20 +2085,19 @@ def search_all_folders(
         if folder is None:
             continue
         searched_folders.append(entry)
-        search_result = search_messages(
-            session,
-            account_selector=entry["account"],
-            folder_selector=entry["folder_selector"],
-            query=query,
-            unread=unread,
-            sender=sender,
-            recipient=recipient,
-            days=days,
-            limit=per_folder_limit,
-            cache=cache,
-            update_cache=update_cache,
-            resolved_folder=folder,
-        )
+        try:
+            search_result = search_messages(
+                session,account_selector=entry['account'],folder_selector=entry['folder_selector'],
+                query=query,unread=unread,sender=sender,recipient=recipient,days=days,
+                limit=per_folder_limit,cache=cache,update_cache=update_cache,
+                resolved_folder=folder,since=since,indexed=indexed)
+        except Exception as error:
+            entry['search']={'backend':'unavailable','error':str(error)}
+            cache_warnings.append('Selected folder search unavailable: '+str(error))
+            search_progress(stage='folders_complete',folders_completed=len(searched_folders),folders_total=min(len(search_entries),folder_limit))
+            continue
+        entry['search']=search_result['search']
+        search_progress(stage='folders_complete',folders_completed=len(searched_folders),folders_total=min(len(search_entries),folder_limit))
         messages.extend(search_result["messages"])
         cache_warnings.extend(search_result.get("warnings", []))
 
@@ -2060,7 +2118,8 @@ def search_all_folders(
             "strategy": strategy,
             "folder_limit": folder_limit,
             "per_folder_limit": per_folder_limit,
-            "limited": limited or len(search_entries) > folder_limit,
+            "limited": limited or len(search_entries) > folder_limit or bool(cache_warnings) or any(e.get('search',{}).get('remaining_candidates') for e in searched_folders),
+            "coverage":'selected known folder inventory; not proof of complete mailbox coverage',
             "all_accounts": all_accounts or not account_selector,
         },
     }
@@ -4174,6 +4233,8 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
                 update_cache=not args.no_update_cache,
                 broad_scan=args.broad_scan,
                 cache_path=args.cache_path,
+                since=getattr(args,'since',None),
+                indexed=getattr(args,'indexed',False),
             )
             return make_result(
                 ok=True,
@@ -4195,13 +4256,15 @@ def dispatch_operation(args: argparse.Namespace, *, application: Any, session: A
             limit=args.limit,
             cache=None if args.no_update_cache else mail_cache.MailCache(args.cache_path),
             update_cache=not args.no_update_cache,
+            since=getattr(args,'since',None),
+            indexed=getattr(args,'indexed',False),
         )
         return make_result(
             ok=True,
             operation="search",
             account=payload["account"],
             store=payload["store"],
-            result={"folder": payload["folder"], "messages": payload["messages"]},
+            result={"folder": payload["folder"], "messages": payload["messages"], "search":payload['search']},
             warnings=payload.get("warnings", []),
         )
 
@@ -4525,7 +4588,10 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--unread", action="store_true")
     search.add_argument("--from", dest="sender")
     search.add_argument("--to", dest="recipient")
-    search.add_argument("--days", type=int)
+    search_dates=search.add_mutually_exclusive_group()
+    search_dates.add_argument("--days", type=int)
+    search_dates.add_argument("--since", help='Inclusive ISO date/time; naive values use local timezone')
+    search.add_argument('--indexed',action='store_true',help='Explicit indexed phrase matching; requires store Instant Search')
     search.add_argument("--limit", type=int, default=20)
     search.add_argument("--folder-limit", type=int, default=10)
     search.add_argument("--per-folder-limit", type=int, default=5)

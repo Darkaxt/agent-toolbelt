@@ -841,7 +841,9 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("desktop_promotion_requested", skill_text)
         self.assertIn("`diagnostics-probe` is launch-free", skill_text)
         self.assertIn("OUTLOOK_CLASSIC_MAIL_BACKGROUND", skill_text)
-        self.assertIn("Do not use `taskkill`", skill_text)
+        self.assertIn("Each chat may cancel its own exact queued or running Outlook request", skill_text)
+        self.assertIn("search --indexed",skill_text)
+        self.assertIn("--since YYYY-MM-DD",skill_text)
         self.assertIn("Search the cached folder inventory first", skill_text)
         self.assertIn("--rediscover-folders", skill_text)
         self.assertIn("folder_hierarchy_enumerated", skill_text)
@@ -940,7 +942,8 @@ class OutlookClassicMailBridgeTests(unittest.TestCase):
         self.assertIn("Do not run live folder rediscovery routinely", skill_text)
         self.assertIn("`diagnostics-probe` is launch-free", skill_text)
         self.assertIn("OUTLOOK_CLASSIC_MAIL_BACKGROUND", skill_text)
-        self.assertIn("Do not use `taskkill`", skill_text)
+        self.assertIn("Each chat may cancel its own exact queued or running Outlook request", skill_text)
+        self.assertIn("search --indexed",skill_text)
 
 
 if __name__ == "__main__":
