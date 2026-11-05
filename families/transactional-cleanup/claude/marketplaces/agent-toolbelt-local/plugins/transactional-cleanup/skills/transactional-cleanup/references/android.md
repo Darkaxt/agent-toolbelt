@@ -115,3 +115,27 @@ invent one retrospectively or claim task attribution from a package name alone.
 Report the missing provenance and obtain a separately scoped removal decision
 when the original task evidence cannot establish it. Do not erase an original
 installation or upgrade to make a new baseline possible.
+
+## Explicit Exact Test-App Removal
+
+When the user has explicitly authorized removal of the exact diagnostic apps,
+but the original helper absence baseline is missing or failed, use a separate
+removal-decision review. This is not historical installation proof. Check the
+original task installation evidence and exact APK hashes; a package name alone
+does not establish authority. Never use this mode to evade a policy rejection.
+
+```text
+adb-package-explicit-review --serial <serial> --package <exact.package> --confirm-package <same.exact.package> --apk-sha256 <expected-hash> --owner-task "<operation>" --evidence "<explicit user removal decision and original installation evidence>"
+adb-inspect --transaction <id>
+adb-ticket --transaction <id> --manifest-sha256 <inspected-hash> --confirm-test-app-data
+adb-apply --ticket <id>
+```
+
+Repeat `--apk-sha256` for every installed split. Review and application query only
+the user-0 installation, reject system apps and APKs outside `/data/app`, and bind
+the device, install/update metadata and APK identities/content. Application
+rechecks this same scoped identity before `pm uninstall --user 0`; it neither
+queries nor removes another profile's installation/data. Changed packages survive.
+The inspect result labels `removal_authority: explicit_user0` and the confirmed
+package; it must not be described as an absent-before-install baseline. The
+baseline-based workflow above retains its all-user absence/exclusivity checks.

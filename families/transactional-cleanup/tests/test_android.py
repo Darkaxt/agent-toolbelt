@@ -64,6 +64,9 @@ class FakeDevice:
         return None if not self.installed else {'package': package, 'apk_hashes': [{'sha256': 'a' * 64}],
                                               'install_identity': self.install_stamp}
 
+    def package_user0(self, package):
+        return self.package(package)
+
     def uninstall(self, package):
         self.calls.append(('uninstall', package))
         if self.uninstall_failure:
@@ -285,6 +288,48 @@ class AndroidTests(unittest.TestCase):
         self.assertEqual(failure.exception.kind, 'test_package_mismatch')
         self.assertFalse(self.device.calls)
 
+    def test_explicit_package_review_requires_exact_confirmation_and_hash(self):
+        self.device.installed = True
+        for confirmation, hashes in [('other.package', ['a' * 64]),
+                                     ('org.example.test', ['b' * 64])]:
+            with self.assertRaises(CleanupError):
+                self.engine.package_explicit_review('org.example.test', 'task',
+                    'User explicitly requested removal of this diagnostic app', hashes, confirmation)
+        self.assertFalse(self.device.calls)
+
+    def test_explicit_user0_removal_is_signed_scoped_and_preserves_replacement(self):
+        self.device.installed = True
+        def protected_profiles(_):
+            raise AssertionError('Explicit user-0 removal must not enumerate other profiles')
+        self.device.package = protected_profiles
+        self.device.package_user0 = lambda p: (None if not self.device.installed else
+            {'package': p, 'apk_hashes': [{'sha256': 'a' * 64}], 'install_identity': self.device.install_stamp})
+        review = self.engine.package_explicit_review('org.example.test', 'task',
+            'Explicit removal decision with original installation evidence', ['a' * 64], 'org.example.test')
+        page = self.engine.inspect(review['transaction_id'])
+        self.assertEqual(page['removal_authority'], 'explicit_user0')
+        self.assertEqual(page['confirmed_package'], 'org.example.test')
+        self.assertNotIn('baseline_created_at', self.engine.load(review['transaction_id'])['manifest'])
+        with self.assertRaises(CleanupError):
+            self.ticket(review)
+        ticket = self.ticket(review, confirm_test_app_data=True)
+        self.assertTrue(self.engine.apply(ticket, True)['ok'])
+        self.device.install_stamp = 'replacement'
+        self.assertFalse(self.engine.apply(ticket)['ok'])
+        self.assertFalse(self.device.calls)
+        self.device.install_stamp = 'first-install'
+        self.assertTrue(self.engine.apply(ticket)['ok'])
+        self.assertEqual(self.device.calls, [('uninstall', 'org.example.test')])
+
+    def test_explicit_review_cli_is_distinct_from_absence_baseline(self):
+        self.device.installed = True
+        argv = ['adb-package-explicit-review', '--serial', 'test-serial',
+                '--package', 'org.example.test', '--confirm-package', 'org.example.test',
+                '--apk-sha256', 'a' * 64, '--owner-task', 'task', '--evidence', 'Explicit user removal']
+        with patch.object(android, 'AndroidCleanup', return_value=self.engine):
+            result = android.dispatch(cli.parser().parse_args(argv))
+        self.assertEqual(result['state'], 'reviewed')
+
     def test_state_inventory_and_missing_root_retry(self):
         review = self.review()
         ticket = self.ticket(review)
@@ -414,6 +459,40 @@ class AdbTransportTests(unittest.TestCase):
             return value
         with self.assertRaises(CleanupError):
             self.device(diagnostic).package('org.example.test')
+
+    def test_explicit_transport_reads_only_user0_and_rejects_system_and_diagnostics(self):
+        scripts = []
+        def runner(command, **kwargs):
+            script = kwargs.get('input', b'').decode()
+            scripts.append(script)
+            if script == 'pm list packages --user 0\n':
+                output = b'package:org.example.test\n'
+            elif script.startswith('dumpsys'):
+                output = b' codePath=/data/app/test\n versionCode=1\n firstInstallTime=2026-10-14\n lastUpdateTime=2026-10-14\n appId=12345\n pkgFlags=[ HAS_CODE ]\n'
+            elif script.startswith('pm path'):
+                output = b'package:/data/app/test/base.apk\n'
+            elif script.startswith('set -eu'):
+                output = b'1:2:81a4:5:1:1\nfile\n' + b'a' * 64 + b'\n'
+            else:
+                raise AssertionError(script)
+            return subprocess.CompletedProcess(command, 0, output, b'')
+        self.assertEqual(self.device(runner).package_user0('org.example.test')['user'], 0)
+        self.assertFalse(any('list users' in s or '--user 150' in s for s in scripts))
+        for failed_command in ('pm list packages', 'dumpsys', 'pm path'):
+            def diagnostic(command, **kwargs):
+                value = runner(command, **kwargs)
+                if kwargs.get('input', b'').decode().startswith(failed_command):
+                    value.stderr = b'SecurityException'
+                return value
+            with self.subTest(failed_command=failed_command), self.assertRaises(CleanupError):
+                self.device(diagnostic).package_user0('org.example.test')
+        def system(command, **kwargs):
+            value = runner(command, **kwargs)
+            if kwargs.get('input', b'').startswith(b'dumpsys'):
+                value.stdout = value.stdout.replace(b'HAS_CODE', b'SYSTEM HAS_CODE')
+            return value
+        with self.assertRaises(CleanupError):
+            self.device(system).package_user0('org.example.test')
 
     def test_real_shell_hash_checks_quoting_and_exact_unlink(self):
         bash = r'C:\Program Files\Git\bin\bash.exe' if os.name == 'nt' else shutil.which('sh')

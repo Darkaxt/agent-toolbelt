@@ -1,5 +1,12 @@
 # Transactional Cleanup
 
+Version 0.9.0 adds a separate explicitly authorized, exact user-0 test-app
+removal review. It requires the confirmed package, removal-decision evidence and
+every expected APK hash, followed by signed inspection/ticket/application. It
+does not fabricate an absence baseline or query other Android profiles. The
+existing automatic task-installation baseline remains strict across all users.
+Updated/reinstalled apps are preserved; system apps remain protected.
+
 Version 0.8.0 adds internal seven-day inactive authority expiry. Each command trims
 expired inventories and tickets, including legacy Windows and Android records,
 before dispatch. Expiry deletes no target files, does not interrupt a live root

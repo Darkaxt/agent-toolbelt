@@ -3,7 +3,7 @@ name: transactional-cleanup
 description: Clean task-generated Windows or Android artifacts through reviewed snapshots and exact-file tickets, including temporary test apps with recorded installation provenance.
 license: MIT
 metadata:
-  version: "0.8.0"
+  version: "0.9.0"
   compatibility: Windows 10/11, Python 3.11+, NTFS/ReFS or content-bound exFAT; Android cleanup requires ADB and device shell tools. Codex and Claude.
 ---
 
@@ -16,8 +16,10 @@ ticket is a procedural review gate, not a request for another user approval.
 For Android test files or temporary test-app removal, read
 [Android Task Cleanup](references/android.md) and use the separate `adb-*`
 commands. Windows-only file identity rules below do not apply to Android.
-App removal requires a pre-install absence baseline and intended APK hashes;
-never invent missing historical provenance. Normal task cleanup authorization
+Automatic task-app removal requires a pre-install absence baseline and intended
+APK hashes; never invent missing historical provenance. A separate explicit
+user-0 removal decision can use the exact-package contract in the reference.
+Normal task cleanup authorization
 does not require repeated user approval, but does not cover unrelated device data.
 
 ## Prevent Litter Before Creation
