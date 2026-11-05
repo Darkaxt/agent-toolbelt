@@ -11,6 +11,19 @@ metadata:
 
 Use `scripts/invoke_adb_archive_transfer.py` for endpoint-bound, manifest-driven transfers. The helper never selects arbitrarily among multiple ready ADB endpoints and never merges into or replaces an existing destination.
 
+## Coordinator device permission
+
+USB transfer keeps existing task authorization. Wireless device reads/transfers
+require the Android device gate in the installed android-emulator-gate skill,
+references/physical-devices.md. Start one reservation and use device.helper.start
+with helper transfer for plan/apply/cleanup; keep the existing manifest review,
+hash verification, absent destination and confirmation requirements. Never set
+lease environment variables yourself or bypass a rejection with direct ADB.
+Host inventory may list wireless endpoints without probing identity/capabilities.
+Selecting one requires Coordinator's Allow/Reject window even when already paired.
+Unplugging USB is not permission to switch to wireless. The adapter pins each
+actual transport; no shared ADB reset or automatic reconnection is performed.
+
 ## Required Workflow
 
 1. Run `devices` and inspect every connected endpoint, state, model, identity hash, and transfer capability.

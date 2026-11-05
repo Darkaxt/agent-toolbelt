@@ -11,6 +11,7 @@ import stat
 import subprocess
 import tarfile
 import uuid
+import importlib.util
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -44,6 +45,15 @@ CommandRunner = Callable[[list[str], str | None], subprocess.CompletedProcess[st
 
 
 def run_process(command: list[str], cwd: str | None = None) -> subprocess.CompletedProcess[str]:
+    if os.name == 'nt' and len(command) >= 4 and command[1] == '-s':
+        adapter = Path(os.environ['LOCALAPPDATA']) / 'Tools/llm-coordinator/android-device-access.py'
+        if not adapter.is_file():
+            if ':' in command[2] or command[2].endswith('._tcp'):
+                raise TransferError('wireless_permission_required', 'Wireless transfer requires the Coordinator device gate')
+        else:
+            spec = importlib.util.spec_from_file_location('coordinator_android_device_access', adapter)
+            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+            command = module.adb_command(command[0], command[2], *command[3:])
     return subprocess.run(
         command,
         cwd=cwd,
@@ -233,6 +243,7 @@ def inventory_devices(
     *,
     adb_path: str,
     runner: CommandRunner = run_process,
+    serial: str | None = None,
 ) -> list[dict[str, Any]]:
     listed = runner([adb_path, "devices", "-l"], None)
     if listed.returncode != 0:
@@ -247,9 +258,17 @@ def inventory_devices(
         if endpoint.get("state") != "device":
             enriched.append(endpoint)
             continue
-        serial = str(endpoint["serial"])
-        properties = runner(adb_command(adb_path, serial, "shell", "getprop"), None)
-        toybox = runner(adb_command(adb_path, serial, "shell", "toybox"), None)
+        selected = serial or os.environ.get('COORDINATOR_ADB_SERIAL')
+        if (selected and endpoint['serial'] != selected) or (
+                not selected and ':' in endpoint['serial']) or (
+                not selected and endpoint['serial'].endswith('._tcp')):
+            # Host discovery is not permission to probe another phone. Network
+            # endpoints remain visible without reading identity/capabilities.
+            enriched.append({**endpoint, 'access': 'not_probed'})
+            continue
+        endpoint_serial = str(endpoint["serial"])
+        properties = runner(adb_command(adb_path, endpoint_serial, "shell", "getprop"), None)
+        toybox = runner(adb_command(adb_path, endpoint_serial, "shell", "toybox"), None)
         identity = enrich_endpoint_identity(endpoint, properties.stdout if properties.returncode == 0 else "")
         identity["capabilities"] = parse_toybox_capabilities(
             toybox.stdout if toybox.returncode == 0 else ""
@@ -550,7 +569,7 @@ def selected_endpoint(
     serial: str | None,
     runner: CommandRunner,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    devices = inventory_devices(adb_path=adb_path, runner=runner)
+    devices = inventory_devices(adb_path=adb_path, runner=runner, serial=serial)
     selected = select_device(devices, serial=serial)
     capabilities = selected.get("capabilities") or {}
     if not capabilities.get("transfer_ready"):

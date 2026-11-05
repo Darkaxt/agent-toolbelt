@@ -25,6 +25,30 @@ TEMP_ROOT = Path(r"D:\Temp")
 TEMP_ROOT.mkdir(parents=True, exist_ok=True)
 
 
+class InventoryPrivacyTests(unittest.TestCase):
+    def test_selected_usb_inventory_does_not_probe_connected_wireless_phone(self):
+        calls=[]
+        def runner(command,cwd):
+            calls.append(command)
+            output=('List of devices attached\nUSB123 device transport_id:2\n192.0.2.9:5555 device transport_id:7\n'
+                    if command[1:]==['devices','-l'] else '')
+            return subprocess.CompletedProcess(command,0,output,'')
+        with patch.dict('os.environ',{},clear=True):
+            rows=transfer.inventory_devices(adb_path='adb.exe',runner=runner,serial='USB123')
+        self.assertEqual('not_probed',rows[1]['access'])
+        self.assertEqual(3,len(calls))
+        self.assertTrue(all('192.0.2.9:5555' not in command for command in calls))
+
+    def test_unscoped_inventory_lists_but_does_not_probe_wireless(self):
+        calls=[]
+        def runner(command,cwd):
+            calls.append(command)
+            return subprocess.CompletedProcess(command,0,'List of devices attached\n192.0.2.9:5555 device transport_id:7\n','')
+        with patch.dict('os.environ',{},clear=True):
+            rows=transfer.inventory_devices(adb_path='adb.exe',runner=runner)
+        self.assertEqual('not_probed',rows[0]['access']);self.assertEqual(1,len(calls))
+
+
 def record(path: str, size: int, digest: str = "a" * 64) -> dict[str, object]:
     return {
         "relative_path": path,
