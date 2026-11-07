@@ -51,6 +51,42 @@ class CleanupTests(unittest.TestCase):
                        check=True, capture_output=True)
         return repository
 
+    def test_overlapping_roots_and_ancestor_registration_have_one_signed_row_per_path(self):
+        output = self.root / 'out'
+        first, second = output / 'first', output / 'second'
+        first.mkdir(parents=True); second.mkdir()
+        (first / 'a.bin').write_bytes(b'one')
+        (second / 'b.bin').write_bytes(b'two')
+        transaction = self.engine.begin(self.work, [first, second])['transaction_id']
+        registered = self.engine.register(transaction, output, 'compiler-output', 'owned fixture outputs', regenerated=True)
+        self.assertIn(str(output), registered['discovery_coverage']['known_or_explicit_roots'])
+        self.assertIn(str(output), self.engine.transaction_roots(transaction))
+        review = self.engine.review(transaction)
+        inspected = self.engine.inspect(transaction, limit=1000)
+        paths = [member['path'] for member in inspected['page_items']]
+        self.assertEqual(len(paths), len(set(path.casefold() for path in paths)))
+        self.assertEqual(set(paths), {str(p) for p in (output, first, second, first/'a.bin', second/'b.bin')})
+        self.assertEqual(review['candidate_count'], 5)
+        self.assertEqual(review['candidate_bytes'], 6)
+        self.assertTrue((first / 'a.bin').is_file())
+
+    def test_directory_enumeration_failure_has_one_excluded_observation(self):
+        output = self.output()
+        original = Path.iterdir
+        def enumerate_directory(path):
+            if path == output:
+                raise PermissionError('fixture directory enumeration denied')
+            return original(path)
+        with patch.object(Path, 'iterdir', enumerate_directory):
+            review = self.engine.review(self.transaction)
+        inspected = self.engine.inspect(self.transaction, limit=1000)
+        matches = [member for member in inspected['page_items'] if member['path'] == str(output)]
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]['decision'], 'excluded')
+        self.assertEqual(matches[0]['reason'], 'PermissionError')
+        self.assertGreaterEqual(review['excluded_count'], 1)
+        self.assertTrue((output / 'a.bin').is_file())
+
     def ticket(self):
         review = self.engine.review(self.transaction)
         return self.engine.ticket(self.transaction, review['manifest_sha256'])['ticket_id']

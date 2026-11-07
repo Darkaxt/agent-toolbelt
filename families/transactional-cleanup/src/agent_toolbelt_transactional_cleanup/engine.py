@@ -437,12 +437,21 @@ class Engine:
     def scan(self, roots, disposable_roots=(), git_marker_paths=()):
         """Yield metadata one object at a time; callers own bounded persistence."""
         disposable_roots = [fs.canonical(path) for path in disposable_roots]
+        # Registering an uncovered ancestor legitimately extends coverage. Keep
+        # that scope, but delegate each explicit root to its own traversal once.
+        # This is O(root count) memory, not a per-inventory-member seen set.
+        unique_roots = {}
         for root_value in roots:
             root = fs.canonical(root_value)
+            unique_roots.setdefault(path_key(root), root)
+        for root_key, root in unique_roots.items():
             pending = [root]
             while pending:
                 path = pending.pop()
                 if not os.path.lexists(path):
+                    continue
+                member_key = path_key(path)
+                if member_key != root_key and member_key in unique_roots:
                     continue
                 key = str(path)
                 reason = self.protection(path, allow_git_marker=key in git_marker_paths)
@@ -460,11 +469,18 @@ class Engine:
                     continue
                 try:
                     info = fs.identity(path, allow_leaf_reparse=True)
-                    yield {'path': key, **info}
-                    if info['directory'] and not info['reparse']:
-                        pending.extend(path.iterdir())
                 except (OSError, ValueError) as exc:
                     yield {'path': key, 'excluded': type(exc).__name__}
+                    continue
+                item = {'path': key, **info}
+                if info['directory'] and not info['reparse']:
+                    try:
+                        pending.extend(path.iterdir())
+                    except (OSError, ValueError) as exc:
+                        # Record one failed observation, rather than yielding a
+                        # successful row and a second row with the same identity.
+                        item.update(excluded=type(exc).__name__, scan_error=type(exc).__name__)
+                yield item
 
     def _known_temp_roots(self):
         candidates = [Path(os.environ.get('TEMP', 'D:/Temp')), Path('D:/Temp'), Path('E:/Temp'),
@@ -701,8 +717,10 @@ class Engine:
                                              (transaction,)).fetchone()[0]
                 connection.execute('INSERT INTO roots VALUES (?,?,?,?)',
                                    (transaction, ordinal, str(path), path_key(path)))
-                connection.execute('UPDATE transactions SET roots_json=? WHERE transaction_id=?',
-                                   (encoded(roots).decode(), transaction))
+                coverage = json.loads(row['discovery_json'])
+                coverage['known_or_explicit_roots'] = roots
+                connection.execute('UPDATE transactions SET roots_json=?,discovery_json=? WHERE transaction_id=?',
+                                   (encoded(roots).decode(), encoded(coverage).decode(), transaction))
                 # Do not retain a SQLite writer while the new root is traversed.
                 connection.commit()
                 self._insert_baseline(connection, transaction, [str(path)])

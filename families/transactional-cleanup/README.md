@@ -1,5 +1,12 @@
 # Transactional Cleanup
 
+Version 0.9.1 reviews overlapping roots once, using root-bounded memory and
+preserving the existing signed manifest/identity safeguards. Coverage reports show
+new roots added by registration. Directory enumeration
+errors produce one excluded row. Registration can extend the inventory to an
+uncovered path: when only selected leaf folders are authorized, register those
+exact leaves rather than a broader ancestor.
+
 Version 0.9.0 adds a separate explicitly authorized, exact user-0 test-app
 removal review. It requires the confirmed package, removal-decision evidence and
 every expected APK hash, followed by signed inspection/ticket/application. It

@@ -3,7 +3,7 @@ name: transactional-cleanup
 description: Clean task-generated Windows or Android artifacts through reviewed snapshots and exact-file tickets, including temporary test apps with recorded installation provenance.
 license: MIT
 metadata:
-  version: "0.9.0"
+  version: "0.9.1"
   compatibility: Windows 10/11, Python 3.11+, NTFS/ReFS or content-bound exFAT; Android cleanup requires ADB and device shell tools. Codex and Claude.
 ---
 
@@ -89,6 +89,10 @@ deleting the template does not reclaim those dependencies.
    `--scan-root` for each exact output folder. Registration does not narrow scans.
 2. Register specific outputs with `register --transaction <id> --path <output>
    --kind compiler-output --evidence "<command or tool that creates this output>"`.
+   An uncovered registration extends scan coverage. When only selected sibling
+   leaves are intended, register those exact leaves; do not register their common
+   parent merely to reduce calls. Overlapping roots are scanned once, but overlap
+   deduplication does not narrow an intentionally broader registered root.
    Register before creation when possible. A normal registration cannot authorize a
    repository root, tracked file, helper installation, or protected system path.
    Use the separate disposable-validation-repository contract below only when all
