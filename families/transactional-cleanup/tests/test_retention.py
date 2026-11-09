@@ -133,6 +133,62 @@ class RetentionTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, 'expired'):
             mobile.apply(ticket)
 
+    def legacy_ticket(self, state='issued', age=0):
+        identifier, ticket = 'b'*32, 'c'*64
+        date = (datetime.now(timezone.utc)-timedelta(days=age)).isoformat()
+        payload = {'host': host(), 'policy': '1', 'transaction_id': identifier,
+                   'ticket_id': ticket, 'issued_at': date, 'state': state,
+                   'deleted_bytes': 19, 'entries': [{'data': 'x'*(9*1024*1024)}]}
+        path = self.engine.root/(ticket+'.json')
+        retention.save_summary(path, payload, self.engine)
+        parent = {'host': host(), 'policy': '1', 'transaction_id': identifier,
+                  'created_at': date, 'state': 'ticketed', 'roots': [str(self.work)]}
+        retention.save_summary(self.engine.root/(identifier+'.json'), parent, self.engine)
+        manifest = {'host': host(), 'policy': '1', 'transaction_id': identifier,
+                    'created_at': date, 'items': [{'data': 'x'*(9*1024*1024)}]}
+        manifest_path = self.engine.root/(identifier+'.manifest.json')
+        retention.save_summary(manifest_path, manifest, self.engine)
+        return identifier, path, manifest_path
+
+    def test_large_issued_and_partial_legacy_tickets_do_not_block_unrelated_commands(self):
+        for state in ('issued', 'partially_applied'):
+            identifier, path, manifest = self.legacy_ticket(state)
+            before = path.read_bytes()
+            code, result = self.call('state-inventory')
+            self.assertEqual(code, 0, result)
+            self.assertEqual(before, path.read_bytes())
+            self.assertTrue(manifest.exists())
+            self.assertEqual(retention.authenticated(path, self.engine)['deleted_bytes'], 19)
+
+    def test_large_expired_legacy_ticket_and_its_manifest_are_compacted(self):
+        identifier, path, manifest = self.legacy_ticket('partially_applied', age=8)
+        code, result = self.call('state-inventory')
+        self.assertEqual(code, 0, result)
+        self.assertLess(path.stat().st_size, 2048)
+        record = retention.authenticated(path, self.engine)
+        self.assertNotIn('entries', record)
+        self.assertEqual(record['deleted_bytes'], 19)
+        self.assertEqual(record['state'], 'expired')
+        self.assertFalse(manifest.exists())
+
+    def test_already_expired_bulk_receipt_is_repaired_but_live_claim_preserves_it(self):
+        identifier, path, manifest = self.legacy_ticket('expired', age=8)
+        with self.engine.locked([self.work], operation='apply', transaction=identifier):
+            result = retention.maintain(self.engine)
+            self.assertIn(path.stem, result['legacy']['live_preserved'])
+            self.assertGreater(path.stat().st_size, 8*1024*1024)
+            self.assertTrue(manifest.exists())
+        retention.maintain(self.engine)
+        self.assertLess(path.stat().st_size, 2048)
+        self.assertFalse(manifest.exists())
+
+    def test_large_legacy_ticket_tampering_is_rejected(self):
+        _, path, _ = self.legacy_ticket()
+        raw = path.read_bytes().replace(b'"deleted_bytes":19', b'"deleted_bytes":18')
+        path.write_bytes(raw)
+        with self.assertRaises(ValueError):
+            retention.authenticated(path, self.engine)
+
 
 if __name__ == '__main__':
     unittest.main()

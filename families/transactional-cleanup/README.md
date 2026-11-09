@@ -1,5 +1,11 @@
 # Transactional Cleanup
 
+Version 0.10.1 streams authentication of large legacy issued/partial tickets
+without treating them as unissued snapshots. Expiry removes their bulk entries
+and exact authenticated manifest, and repairs older terminal receipts that still
+retained those inventories. Live root claims, unexpired authority, signatures and
+target files remain protected. This fixes two source-review findings on 0.10.0.
+
 Version 0.10.0 extends the existing disposable-repository workflow to finished
 task-owned linked worktrees. Its signed review covers the working tree and only
 its verified private Git registration. Shared objects, refs and sibling worktrees
