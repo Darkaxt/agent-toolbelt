@@ -3,7 +3,7 @@ name: transactional-cleanup
 description: Clean task-generated Windows or Android artifacts through reviewed snapshots and exact-file tickets, including temporary test apps with recorded installation provenance.
 license: MIT
 metadata:
-  version: "0.9.1"
+  version: "0.10.0"
   compatibility: Windows 10/11, Python 3.11+, NTFS/ReFS or content-bound exFAT; Android cleanup requires ADB and device shell tools. Codex and Claude.
 ---
 
@@ -207,8 +207,8 @@ a previously denied deletion still needs resolution outside this helper.
 
 ## Disposable Validation Repositories
 
-For an exact standalone Git clone created only for temporary validation, begin with
-that clone as an explicit scan root and register the root itself:
+For an exact Git clone or linked worktree created for completed temporary task
+work, begin with that directory as an explicit scan root and register the root:
 
 ```text
 begin --workspace <real-workspace> --scan-root <recognized-temp>\validation-clone
@@ -218,12 +218,27 @@ register --transaction <id> --path <recognized-temp>\validation-clone --kind dis
 Use this authority only when the clone is independently reproducible and the
 evidence establishes why it is disposable. The helper requires the path to be the
 exact scan root, a strict descendant of a recognized Temp root, a normal NTFS/ReFS
-directory, and an exact Git top-level with an internal `.git` directory. It rejects
-the active workspace, linked worktrees, symlinked repositories, broad Temp roots,
+directory, and an exact Git top-level. It rejects
+the active workspace, symlinked repositories, broad Temp roots,
 repositories outside Temp, and roots replaced after authorization. Review includes
 tracked files and `.git` metadata as exact members. New concurrent files still
 survive and produce `partially_applied`; retry or start a new review rather than
 deleting them outside the helper.
+
+Linked worktrees use the same command, without another permission question or
+an ad hoc Git removal. The helper verifies clean tracked/untracked work, no active
+consumer or Git lock, the bidirectional `.git` binding and a retained common ref
+containing HEAD. It adds only that worktree's derived private administrative
+directory to the review. Inspect both roots. Shared objects, refs, configuration
+and other worktrees are outside the deletion set. Every regular member is content
+hashed; concurrent edits and new files survive. Private registration is removed
+only after the worktree root is gone. A late arrival that prevents root removal
+retains/restores its original Git binding; only the helper-created marker's signed
+identity may be resumed on the original ticket. An unrelated replacement is never
+adopted. Partial cleanup is not permission to sweep new data or use force/prune.
+An interrupted partial ticket retains the exact recovery proof until its ordinary
+expiry; resume it promptly. If authority expires, inspect retained private Git
+metadata and use a fresh review; expiry does not remove target files.
 
 ## Snapshot And Retry Contract
 

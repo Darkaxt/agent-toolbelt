@@ -206,6 +206,9 @@ def delete_exact(entry: dict, *, dry_run: bool = False) -> tuple[str, int]:
                 if str(parent) == entry.get('retired_repository_root') and (
                         parent_info['identity'] != entry['retired_repository_identity']):
                     return 'replaced_after_scan', 0
+                if str(parent) == entry.get('disposable_repository_root') and (
+                        parent_info['identity'] != entry['disposable_repository_identity']):
+                    return 'replaced_after_scan', 0
                 marker = entry.get('git_marker_proof') or {}
                 for prefix in ('repository', 'git'):
                     ancestor = marker.get('repository_root' if prefix == 'repository' else 'git_directory')

@@ -1,5 +1,12 @@
 # Transactional Cleanup
 
+Version 0.10.0 extends the existing disposable-repository workflow to finished
+task-owned linked worktrees. Its signed review covers the working tree and only
+its verified private Git registration. Shared objects, refs and sibling worktrees
+stay outside the removal set. Content/identity checks preserve edits and arrivals;
+ordered removal and ticket-bound marker restoration keep partial work recoverable.
+No extra user approval, backup, force removal or broad Git prune is introduced.
+
 Version 0.9.1 reviews overlapping roots once, using root-bounded memory and
 preserving the existing signed manifest/identity safeguards. Coverage reports show
 new roots added by registration. Directory enumeration
