@@ -109,6 +109,41 @@ class SpecGatedImplementationSkillTests(unittest.TestCase):
         self.assertIn("intermediate commits remain allowed", self.skill_text_lower)
         self.assertIn("do not validate an incomplete feature or close a stage", self.skill_text_lower)
 
+    def test_whole_scope_source_readiness_precedes_compilation(self):
+        for requirement in ("all required source changes and integration",
+                            "not merely one helper, feature or stage",
+                            "source-stage criteria", "named integrated-validation stage",
+                            "do not silently waive an existing criterion"):
+            self.assertIn(requirement, self.skill_text_lower)
+
+    def test_indirect_builds_do_not_escape_the_boundary(self):
+        for requirement in ("cargo check/test/clippy", "test --no-run", "ide build tasks",
+                            "build-on-launch wrappers", "hooks and ci", "real command chain",
+                            "do not push or trigger a hook/workflow"):
+            self.assertIn(requirement, self.skill_text_lower)
+
+    def test_readiness_is_auditable_not_a_claim_of_verified_correctness(self):
+        for requirement in ("stable source-stage ids", "file/interface evidence",
+                            "content fingerprint", "source ready for validation",
+                            "untested correctness is unknown", "not a new user-approval"):
+            self.assertIn(requirement, self.skill_text_lower)
+
+    def test_duplicate_stage_evasion_and_unsafe_retry_are_forbidden(self):
+        for requirement in ("two small corrections", "original ticket",
+                            "exact failed attempt", "changed-source evidence",
+                            "do not invent ids", "create a micro-stage", "reset the plan",
+                            "cancelled, running, successful or uncertain attempt",
+                            "respect an explicit user suspension"):
+            self.assertIn(requirement, self.skill_text_lower)
+
+    def test_progress_cannot_hide_incomplete_work_or_invalidated_evidence(self):
+        for requirement in ("source implemented but unvalidated", "original operation id",
+                            "known wiring/platform/integration work remains",
+                            "correct an invalidated earlier claim immediately",
+                            "when status is unchanged, say so",
+                            "compilation time is not delivered progress"):
+            self.assertIn(requirement, self.skill_text_lower)
+
     def consolidation_text(self):
         start = self.skill_text_lower.index("### stage-closure refactoring assessment")
         return self.skill_text_lower[start:self.skill_text_lower.index("## 5.", start)]

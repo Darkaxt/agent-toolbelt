@@ -8,7 +8,14 @@ This family intentionally has no runtime package or CLI. Its canonical cross-age
 
 Install that same folder in Codex or a Claude-compatible personal skill root. The workflow requires repeated specification reconciliation, blocker closure before stage advancement, and zero tracked deferrals before completion.
 
-Version 0.3.0 adds a lightweight refactoring assessment at verified stage closure
+Version 0.4.0 requires whole-scope source readiness before compilation or executable
+application validation, including indirect builds in launchers, hooks and CI.
+It distinguishes source readiness from verified completion, preserves the original
+managed ticket for documented failure-linked corrections, and rejects stage-ID
+renaming as a way around duplicate admission. This is instruction guidance; it
+does not claim runtime enforcement or hot-reload in another active chat.
+
+The workflow includes a lightweight refactoring assessment at verified stage closure
 and final reconciliation, not automatic refactoring after every stage. Material,
 authorized debt may justify a bounded consolidation stage with preserved behavior,
 observable acceptance and affected complete-workflow verification. Current acceptance

@@ -3,7 +3,7 @@ name: spec-gated-implementation
 description: Use for non-trivial implementation work that must start from a specification, proceed through a compact staged plan, reuse existing user authorization, reconcile every stage against the specification, and close all blockers and tracked deferrals before completion.
 license: MIT
 metadata:
-  version: "0.3.0"
+  version: "0.4.0"
   compatibility: Instruction-only workflow for Codex, Claude, and other agents that can maintain project documents and run verification.
 ---
 
@@ -44,6 +44,19 @@ later-stage scope into the current stage.
 
 Keep a cumulative reconciliation ledger in the plan or a nearby status artifact. It must show satisfied requirements, blockers, tracked deferrals, and verification evidence for each stage.
 
+Plan source implementation separately from compiled acceptance. By default,
+compilation and executable application validation wait until **all required source
+changes and integration in the currently authorized outcome are ready**, not merely
+one helper, feature or stage. A smaller verification scope does not open this gate
+early. A user-specified stricter boundary remains binding.
+
+Assign source-stage criteria that can be checked by source inspection, and map
+every compiled/runtime criterion to a named integrated-validation stage after
+whole-scope source readiness. Preserve the actual required behavior and checks.
+For an existing plan, record the user's timing instruction before reconciling
+criteria; do not silently waive an existing criterion, mark an unverified stage
+COMPLETE, fabricate a BLOCKED stage, or open parallel stages to escape it.
+
 Use the existing ledger's concise current state at meaningful integration
 checkpoints. Do not create a new document, artificial stage or checkpoint report
 for each component or small edit.
@@ -64,11 +77,11 @@ For every stage:
 
 1. Implement only the planned stage scope, with at most one ACTIVE stage.
 2. Prioritize the narrowest required integrated workflow and its remaining acceptance criteria.
-3. Validate fully implemented features against their assigned acceptance criteria; inspect applicable evidence and run affected checks when evidence is missing or invalidated, or an explicit requirement mandates a new run.
+3. Check source-stage criteria by inspection. Open the compilation boundary below only after whole-scope source reconciliation; then validate the integrated outcome against its assigned criteria and inspect actual evidence.
 4. Re-read the authoritative specification, not only the plan.
 5. Compare the delivered behavior and evidence with every applicable requirement.
 6. Update the reconciliation ledger and classify every required gap as a `blocker` or `tracked_deferral`.
-7. Resolve all blockers, rerun verification where needed, and reconcile again before ordinary advancement.
+7. Resolve all blockers, rerun verification where needed within the compilation boundary, and reconcile again before ordinary advancement.
 8. Complete deferrals in their assigned stages, before dependent work needs them.
 9. Perform the stage-closure refactoring assessment below before ordinary advancement; resolve any current-acceptance finding within the current stage.
 
@@ -76,7 +89,8 @@ Do not pass a stage merely because its tasks were checked off. The stage passes 
 
 ### Cohesive Implementation And Verification
 
-Formal validation is feature-complete only. Implement the specification-defined
+Formal validation is feature-complete only, and the project-wide compilation
+boundary below also applies. Implement the specification-defined
 feature's required behavior, wiring and integration before acceptance validation.
 Do not validate micro-implementations as checkpoints or rename an incomplete
 component a feature or vertical slice to bypass this rule. A narrow vertical
@@ -89,16 +103,19 @@ a failed check returns the same feature to implementation and affected revalidat
 Prefer cohesive patches over fragmented micro-implementations and repeated
 edit/test/report cycles. Cohesive means one meaningful integrated outcome, not a
 line-count quota or permission to mix stages or unrelated changes. Once a real
-vertical slice works, close the remaining stage criteria rather than repeatedly
+vertical slice is integrated in source, finish the remaining source-stage criteria
+rather than repeatedly
 reopening verified parts. Avoid speculative micro-optimizations, abstractions and
 optional edge-case work while required integration remains unfinished.
 
-Batch related edits when practical, without suppressing meaningful test-first
-reproductions or necessary diagnostics. Diagnostic feedback is not feature
+Batch related edits and write meaningful test-first reproductions when useful;
+do not execute a reproduction that compiles or runs the application before the
+whole-scope source boundary. Source inspection, navigation and non-building
+text/schema checks remain available. Diagnostic feedback is not feature
 validation, stage acceptance or a completion claim. It must not become repeated
-component build/device/report ceremonies. Use the smallest credible affected checks.
-An interim diagnostic must answer a concrete implementation question; do not
-relabel micro-validation as diagnostics to evade the feature-complete boundary.
+component build/device/report ceremonies. Use the smallest credible affected checks
+after the boundary opens. An interim diagnostic must answer a concrete question;
+do not relabel micro-validation as diagnostics to evade either boundary.
 Reuse inspected current-task results only when relevant code, configuration,
 environment, dependencies and integration conditions are unchanged and no
 applicable requirement mandates a new run. Otherwise rerun affected checks.
@@ -106,6 +123,69 @@ Stage closure, a new report or a commit alone does not invalidate evidence or
 require the full suite. Broaden checks when risk or an explicit requirement
 requires it. Required integration and recovery checks must not be skipped to
 make a patch appear efficient.
+
+### Compilation Boundary And Original Tickets
+
+Before the first build, reconcile the complete authorized implementation against
+the authoritative specification. Record once in the existing ledger:
+
+- the exact project/scope and stable source-stage IDs from the agreed plan;
+- required behavior, platform guards, wiring, dependencies and integrations now
+  present in source, with file/interface evidence and no known implementation gaps;
+- tests prepared, checks still unexecuted, and the actual source revision or
+  content fingerprint to which the first compilation will apply;
+- the smallest credible build/validation scope and its launch path.
+
+Call this **source ready for validation**, never verified, finished or delivered.
+Untested correctness is unknown; do not invent a passing result to open the gate.
+This is an auditable readiness record, not a new user-approval checkpoint.
+
+Do not compile, run compiled tests or launch the changing application during
+source implementation. This includes cargo check/test/clippy, test --no-run,
+IDE build tasks, build-on-launch wrappers, packaging, hooks and CI that compile
+indirectly. Inspect the real command chain before invoking a helper. Use an
+already-built executable only after checking its source applicability and the
+user's validation boundary; use supported no-build/no-restore modes when suitable.
+Do not push or trigger a hook/workflow that compiles before readiness. Do not
+disable required checks to manufacture permission to run them early.
+
+Where Coordinator exposes readiness tickets, submit the recorded project, plan,
+source-stage ID and source evidence, receive its ticket, and consume that exact
+ticket through the managed compilation launcher. Do not invent IDs, rename a
+stage, create a micro-stage, reset the plan or switch launchers to evade a duplicate
+stage rejection. A refusal means finish source work or resolve the recorded
+readiness mismatch; it is not permission to compile directly.
+
+After a failed build, preserve the original ticket, attempt, result and diagnostic
+evidence. Reopen the affected implementation honestly, collect the known related
+gaps and finish their cohesive correction before revalidation. A supported
+failure-linked correction uses the **original ticket**, the exact failed attempt,
+changed-source evidence and the narrow affected checks. It does not create a
+fresh stage/build ticket, silently replay an operation, erase a failure, or permit
+an edit/full-build loop. A cancelled, running, successful or uncertain attempt
+cannot be presented as a known failed build to obtain another compilation.
+Respect an explicit user suspension even for such a correction.
+
+Reuse current applicable build outputs and evidence. Two small corrections after
+a valid first build normally need affected package/target checks, not another
+whole-project build. Broaden only for concrete integration risk, invalidated
+evidence or an actual release requirement. Documentation/report changes alone
+do not invalidate a binary; honor real source-stamp/package requirements and
+batch the required final source changes before producing the delivery artifact.
+
+### Truthful Progress
+
+Keep stage status separate from source readiness and validation state. Report
+source implemented but unvalidated, validation running (original operation ID),
+failed (observed cause and remaining correction), or verified (applicable result).
+Only verified acceptance closes the stage. Never claim finished implementation
+while known wiring/platform/integration work remains, report an old green result
+as current, or repeat a stale completion claim while doing more implementation.
+Correct an invalidated earlier claim immediately and update the existing ledger.
+When status is unchanged, say so; compilation time is not delivered progress.
+
+Instruction validation and ticket admission do not prove that another active
+chat loaded this skill, obeyed it, or implemented its declared source correctly.
 
 ### Stage-Closure Refactoring Assessment
 
