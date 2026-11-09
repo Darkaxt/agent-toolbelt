@@ -20,7 +20,8 @@ from agent_toolbelt_transactional_cleanup import cli
 
 class CleanupTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(dir='D:/Temp' if Path('D:/Temp').is_dir() else None)
+        scratch = os.environ.get('TRANSACTIONAL_CLEANUP_TEST_ROOT')
+        self.temp = tempfile.TemporaryDirectory(dir=scratch or ('D:/Temp' if Path('D:/Temp').is_dir() else None))
         self.root = Path(self.temp.name)
         self.work = self.root / 'work'
         self.work.mkdir()
@@ -49,6 +50,42 @@ class CleanupTests(unittest.TestCase):
                         '-c', 'user.email=cleanup@example.invalid', 'commit', '-m', 'fixture'],
                        check=True, capture_output=True)
         return repository
+
+    def test_overlapping_roots_and_ancestor_registration_have_one_signed_row_per_path(self):
+        output = self.root / 'out'
+        first, second = output / 'first', output / 'second'
+        first.mkdir(parents=True); second.mkdir()
+        (first / 'a.bin').write_bytes(b'one')
+        (second / 'b.bin').write_bytes(b'two')
+        transaction = self.engine.begin(self.work, [first, second])['transaction_id']
+        registered = self.engine.register(transaction, output, 'compiler-output', 'owned fixture outputs', regenerated=True)
+        self.assertIn(str(output), registered['discovery_coverage']['known_or_explicit_roots'])
+        self.assertIn(str(output), self.engine.transaction_roots(transaction))
+        review = self.engine.review(transaction)
+        inspected = self.engine.inspect(transaction, limit=1000)
+        paths = [member['path'] for member in inspected['page_items']]
+        self.assertEqual(len(paths), len(set(path.casefold() for path in paths)))
+        self.assertEqual(set(paths), {str(p) for p in (output, first, second, first/'a.bin', second/'b.bin')})
+        self.assertEqual(review['candidate_count'], 5)
+        self.assertEqual(review['candidate_bytes'], 6)
+        self.assertTrue((first / 'a.bin').is_file())
+
+    def test_directory_enumeration_failure_has_one_excluded_observation(self):
+        output = self.output()
+        original = Path.iterdir
+        def enumerate_directory(path):
+            if path == output:
+                raise PermissionError('fixture directory enumeration denied')
+            return original(path)
+        with patch.object(Path, 'iterdir', enumerate_directory):
+            review = self.engine.review(self.transaction)
+        inspected = self.engine.inspect(self.transaction, limit=1000)
+        matches = [member for member in inspected['page_items'] if member['path'] == str(output)]
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]['decision'], 'excluded')
+        self.assertEqual(matches[0]['reason'], 'PermissionError')
+        self.assertGreaterEqual(review['excluded_count'], 1)
+        self.assertTrue((output / 'a.bin').is_file())
 
     def ticket(self):
         review = self.engine.review(self.transaction)
@@ -921,6 +958,68 @@ with Engine(Path(sys.argv[1])).locked([Path(sys.argv[2])], operation='review', t
         marker.parent.mkdir(parents=True)
         marker.touch()
         self.assertEqual(self.engine.protection(marker), 'filesystem_or_repository_metadata')
+
+    def test_generated_package_recovery_directory_uses_normal_ticket_checks(self):
+        out = self.output()
+        recovery = out / 'dist' / 'javascript' / 'recovery'
+        recovery.mkdir(parents=True)
+        source = b'export const recovered = true;'
+        (recovery / 'RecoveryFiles.js').write_bytes(source)
+        review = self.engine.review(self.transaction)
+        self.assertEqual(review['candidate_bytes'], 9 + len(source))
+        ticket = self.engine.ticket(self.transaction, review['manifest_sha256'])['ticket_id']
+        self.assertEqual(self.engine.apply(ticket)['ticket_state'], 'applied')
+        self.assertFalse(out.exists())
+
+    def test_volume_recovery_and_windows_recovery_remain_protected(self):
+        for relative in ('Recovery', 'rEcOvErY/WindowsRE'):
+            with self.subTest(relative=relative):
+                path = Path(self.root.anchor) / relative
+                self.assertEqual(self.engine.protection(path), 'filesystem_or_repository_metadata')
+        if os.environ.get('SystemRoot'):
+            path = Path(os.environ['SystemRoot']) / 'System32' / 'Recovery'
+            self.assertEqual(self.engine.protection(path), 'protected_root')
+
+    def test_attributed_package_boot_directory_uses_normal_ticket_checks(self):
+        out = self.output()
+        boot = out / 'go-modules' / 'example.org' / 'module@v1' / 'boot'
+        boot.mkdir(parents=True)
+        source = b'package boot\n'
+        (boot / 'boot.go').write_bytes(source)
+        review = self.engine.review(self.transaction)
+        self.assertEqual(review['candidate_bytes'], 9 + len(source))
+        ticket = self.engine.ticket(self.transaction, review['manifest_sha256'])['ticket_id']
+        self.assertEqual(self.engine.apply(ticket)['ticket_state'], 'applied')
+        self.assertFalse(out.exists())
+
+    def test_volume_boot_efi_and_windows_boot_remain_protected(self):
+        for relative in ('Boot', 'bOoT/BCD', 'EFI', 'eFi/Microsoft/Boot'):
+            with self.subTest(relative=relative):
+                path = Path(self.root.anchor) / relative
+                self.assertEqual(self.engine.protection(path), 'filesystem_or_repository_metadata')
+        if os.environ.get('SystemRoot'):
+            path = Path(os.environ['SystemRoot']) / 'Boot'
+            self.assertEqual(self.engine.protection(path), 'protected_root')
+
+    def test_unattributed_preexisting_package_boot_remains_excluded(self):
+        boot = self.work / 'boot'
+        boot.mkdir()
+        source = boot / 'notes.txt'
+        source.write_text('preserve user notes', encoding='utf-8')
+        transaction = self.engine.begin(self.work, [boot])['transaction_id']
+        review = self.engine.review(transaction)
+        self.assertEqual(review['candidate_count'], 0)
+        self.assertTrue(source.exists())
+
+    def test_unattributed_preexisting_recovery_content_remains_excluded(self):
+        recovery = self.work / 'recovery'
+        recovery.mkdir()
+        source = recovery / 'notes.txt'
+        source.write_text('preserve user notes', encoding='utf-8')
+        transaction = self.engine.begin(self.work, [recovery])['transaction_id']
+        review = self.engine.review(transaction)
+        self.assertEqual(review['candidate_count'], 0)
+        self.assertTrue(source.exists())
 
     def test_marker_that_gains_repository_content_is_not_deleted(self):
         out = self.work / 'cache'

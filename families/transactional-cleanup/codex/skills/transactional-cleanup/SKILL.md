@@ -3,7 +3,7 @@ name: transactional-cleanup
 description: Clean task-generated Windows or Android artifacts through reviewed snapshots and exact-file tickets, including temporary test apps with recorded installation provenance.
 license: MIT
 metadata:
-  version: "0.6.0"
+  version: "0.10.0"
   compatibility: Windows 10/11, Python 3.11+, NTFS/ReFS or content-bound exFAT; Android cleanup requires ADB and device shell tools. Codex and Claude.
 ---
 
@@ -16,8 +16,10 @@ ticket is a procedural review gate, not a request for another user approval.
 For Android test files or temporary test-app removal, read
 [Android Task Cleanup](references/android.md) and use the separate `adb-*`
 commands. Windows-only file identity rules below do not apply to Android.
-App removal requires a pre-install absence baseline and intended APK hashes;
-never invent missing historical provenance. Normal task cleanup authorization
+Automatic task-app removal requires a pre-install absence baseline and intended
+APK hashes; never invent missing historical provenance. A separate explicit
+user-0 removal decision can use the exact-package contract in the reference.
+Normal task cleanup authorization
 does not require repeated user approval, but does not cover unrelated device data.
 
 ## Prevent Litter Before Creation
@@ -57,6 +59,10 @@ a blanket refusal to remove anything inside a repository. Classify each target:
   that exact clone satisfies its contract; tracked members can then be ticketed.
 - Entire obsolete checkout, including outside Temp: use Explicit Repository
   Retirement below, not the disposable-validation shortcut.
+- Generated CMake dependency clone under `.cxx/.../_deps/<name>-src`: read
+  [Generated Dependency Clones](references/generated-dependencies.md). Exact
+  provenance, pin/patch reproduction and local-work checks permit this narrow
+  cache class outside Temp without creating a full repository backup.
 - Obsolete tracked source or templates: removal is a normal source change, not a
   cleanup ticket. If removal is within the user's authorized scope, inspect
   references, build/package consumers and local changes, make the narrow reviewed
@@ -83,14 +89,19 @@ deleting the template does not reclaim those dependencies.
    `--scan-root` for each exact output folder. Registration does not narrow scans.
 2. Register specific outputs with `register --transaction <id> --path <output>
    --kind compiler-output --evidence "<command or tool that creates this output>"`.
+   An uncovered registration extends scan coverage. When only selected sibling
+   leaves are intended, register those exact leaves; do not register their common
+   parent merely to reduce calls. Overlapping roots are scanned once, but overlap
+   deduplication does not narrow an intentionally broader registered root.
    Register before creation when possible. A normal registration cannot authorize a
    repository root, tracked file, helper installation, or protected system path.
    Use the separate disposable-validation-repository contract below only when all
    of its safeguards apply.
-3. Finish and verify the primary task, then run `review --transaction <id>`.
-   Inspect candidate/exclusion diagnostics and byte estimate. When diagnostics are
-   capped, page the signed manifest with `inspect --transaction <id> --offset <n>
-   --limit 100`, optionally filtering with `--decision candidate|excluded`.
+3. Once the selected outputs' last consumers have exited and required retained
+   evidence is verified, run `review --transaction <id>` once. Inspect the signed
+   manifest with `inspect --transaction <id> --offset <n> --limit 1000`, using its
+   returned `next_offset` for further pages. Optional `--decision` filters must
+   not conceal exclusions or leave required candidates uninspected.
 4. In a separate invocation run `ticket --transaction <id>
    --manifest-sha256 <reviewed hash>`. No paths can be added after review.
 5. Use `apply --ticket <opaque id> --dry-run` if useful, then
@@ -107,6 +118,38 @@ deleting the template does not reclaim those dependencies.
 
 All commands accept `--state-root <directory>` before the command for test isolation.
 Keep normal installed commands on their default helper state.
+
+## Avoid Call Amplification
+
+Batch outputs ready at the same cleanup checkpoint into one bounded transaction;
+do not create a transaction per file or inspection page. This does not postpone
+cleanup of spent D: output until the whole thread ends or combine unrelated owners.
+
+For a large Windows manifest, use `inspect`'s supported maximum of **1,000 members
+per call** (not its 100-member default). Android `adb-inspect` has a separate
+maximum of **100**; follow that backend's reference instead. Read each required
+page once and retain the
+transaction, manifest hash and inspection coverage. Capture large JSON in the
+calling process or an attributable task file and inspect every member there;
+summarize the results instead of dumping all rows into the conversation. A tool
+display cap is not a reason to spawn dozens of small-page helper processes.
+Keep inspection output outside the frozen deletion targets; files created after
+review are not covered by that ticket.
+Do not repeat begin/review/inspect for an unchanged snapshot or merely to report
+status. Ticket issuance remains a separate invocation after inspection.
+
+Serialize commands for the same transaction or overlapping roots, **including
+inspect calls**; parallel pages can return `target_busy`. When the original tool
+session is still running, observe it through its supported wait interface rather
+than launching duplicate helper commands. Use status for a concrete progress or
+recovery question, not a tight polling loop. Dry-run is optional when it resolves
+an actual uncertainty, not a mandatory extra apply for every batch.
+
+Use the helper's reported byte totals. `candidate_count` includes directories,
+but `candidate_bytes` and deletion byte totals exclude directory sizes. If an
+independent census is needed, sum `size` only for non-directory members and report
+logical bytes, not physically reclaimed space. A caller's accounting error does
+not justify re-reading the entire unchanged manifest or weakening its checks.
 
 If an operation returns `target_busy`, its root overlaps a live operation; use
 lock-free `status` to observe it and retry after that operation completes. Disjoint
@@ -164,8 +207,8 @@ a previously denied deletion still needs resolution outside this helper.
 
 ## Disposable Validation Repositories
 
-For an exact standalone Git clone created only for temporary validation, begin with
-that clone as an explicit scan root and register the root itself:
+For an exact Git clone or linked worktree created for completed temporary task
+work, begin with that directory as an explicit scan root and register the root:
 
 ```text
 begin --workspace <real-workspace> --scan-root <recognized-temp>\validation-clone
@@ -175,12 +218,27 @@ register --transaction <id> --path <recognized-temp>\validation-clone --kind dis
 Use this authority only when the clone is independently reproducible and the
 evidence establishes why it is disposable. The helper requires the path to be the
 exact scan root, a strict descendant of a recognized Temp root, a normal NTFS/ReFS
-directory, and an exact Git top-level with an internal `.git` directory. It rejects
-the active workspace, linked worktrees, symlinked repositories, broad Temp roots,
+directory, and an exact Git top-level. It rejects
+the active workspace, symlinked repositories, broad Temp roots,
 repositories outside Temp, and roots replaced after authorization. Review includes
 tracked files and `.git` metadata as exact members. New concurrent files still
 survive and produce `partially_applied`; retry or start a new review rather than
 deleting them outside the helper.
+
+Linked worktrees use the same command, without another permission question or
+an ad hoc Git removal. The helper verifies clean tracked/untracked work, no active
+consumer or Git lock, the bidirectional `.git` binding and a retained common ref
+containing HEAD. It adds only that worktree's derived private administrative
+directory to the review. Inspect both roots. Shared objects, refs, configuration
+and other worktrees are outside the deletion set. Every regular member is content
+hashed; concurrent edits and new files survive. Private registration is removed
+only after the worktree root is gone. A late arrival that prevents root removal
+retains/restores its original Git binding; only the helper-created marker's signed
+identity may be resumed on the original ticket. An unrelated replacement is never
+adopted. Partial cleanup is not permission to sweep new data or use force/prune.
+An interrupted partial ticket retains the exact recovery proof until its ordinary
+expiry; resume it promptly. If authority expires, inspect retained private Git
+metadata and use a fresh review; expiry does not remove target files.
 
 ## Snapshot And Retry Contract
 
@@ -209,7 +267,10 @@ require a fresh begin/register/review/inspect/ticket sequence after upgrading.
   options never authorize another link name or traversal/deletion of a link target.
 - Directories are removed only when empty. No recursive directory deletion occurs.
 - USN/ETW tracking is unavailable in v2; never claim complete host coverage.
-- No expiry or execution cancellation timeout. No process killing, backups or quarantine.
+- Cleanup authority expires after seven inactive days; the next invocation compacts
+  its metadata and requires a fresh reviewed ticket. Expiry never deletes target
+  files or cancels an operation holding a live root claim. No execution cancellation
+  timeout, process killing, backups or quarantine.
 - Terminal transactions retain a compact summary; detailed inventories are removed.
 - This helper remains subject to command policy. If its invocation is rejected,
   report the rejection; do not switch shells or methods to bypass it.
@@ -263,6 +324,15 @@ as a workaround; report it separately from the producer\'s lifecycle defect.
 
 ## Keep Helper State Small
 
+Every actual helper command automatically expires seven-day inactive inventories
+and tickets before dispatch, including legacy Windows and Android state. Mutating
+calls refresh activity; status/inspection does not renew authority. Expired tickets
+cannot be resumed. New deletion requires begin/register/review/inspect/ticket again.
+Keep at most 100 compact terminal summaries per backend, without target-file copies.
+An in-progress operation is protected by its actual held lock, not merely its PID.
+Its expiry can be processed on a subsequent call after the operation releases it.
+This explicit lifetime supersedes the former no-expiry retention behavior.
+
 Run `state-inventory` to see retained files, unfinished transactions and live
 root claims without scanning the targets. Distinguish large active manifests from
 abandoned unissued inventories; age, low CPU or a recorded PID is not ownership
@@ -271,9 +341,10 @@ SQLite detail and reclaims database pages while retaining a compact reasoned
 summary. It also authenticates and compacts unissued v1 open snapshots using
 bounded reads. Legacy compaction rejects overlapping live operations and leaves
 already running disjoint operations alone.
-Issued/partial tickets require completion or an explicit `revoke`, never discard.
+Unexpired issued/partial tickets require completion or explicit `revoke`, never
+discard. Automatic expiry invalidates their authority and compacts metadata only.
 
-Do not delete the state directory/key/database, prune pending tickets by age, or
+Do not delete the state directory/key/database or manually purge pending tickets, or
 move durable state into routinely purged Temp. Do not call VACUUM a cure for live
 inventory rows. Report remaining valid state separately from reclaimed metadata.
 

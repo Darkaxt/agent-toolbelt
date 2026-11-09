@@ -21,6 +21,7 @@ class FakeDevice:
         self.identity = {'serial': 'test-serial', 'android_serial': 'hardware',
                          'fingerprint': 'build', 'model': 'fixture'}
         self.files = {'/storage/emulated/0/S12-fixture/a.bin': b'alpha'}
+        self.directories = {'/storage/emulated/0/S12-fixture': 'dir'}
         self.calls = []
         self.installed = False
         self.install_stamp = 'first-install'
@@ -34,8 +35,8 @@ class FakeDevice:
             self.snapshot(path) for path in sorted(self.files) if path.startswith(root + '/')]]
 
     def snapshot(self, path):
-        if path == '/storage/emulated/0/S12-fixture':
-            return {'path': path, 'directory': True, 'identity': 'dir'}
+        if path in self.directories:
+            return {'path': path, 'directory': True, 'identity': self.directories[path]}
         if path not in self.files:
             return None
         value = self.files[path]
@@ -45,7 +46,11 @@ class FakeDevice:
     def remove(self, item, dry_run):
         self.calls.append(('remove', item['path'], dry_run))
         if item['directory']:
-            return 'not_empty' if self.files else ('would_delete' if dry_run else 'deleted')
+            if any(path.startswith(item['path'] + '/') for path in self.files):
+                return 'not_empty'
+            if not dry_run:
+                self.directories.pop(item['path'], None)
+            return 'would_delete' if dry_run else 'deleted'
         path = item['path']
         if path not in self.files:
             return 'missing'
@@ -58,6 +63,9 @@ class FakeDevice:
     def package(self, package):
         return None if not self.installed else {'package': package, 'apk_hashes': [{'sha256': 'a' * 64}],
                                               'install_identity': self.install_stamp}
+
+    def package_user0(self, package):
+        return self.package(package)
 
     def uninstall(self, package):
         self.calls.append(('uninstall', package))
@@ -146,6 +154,96 @@ class AndroidTests(unittest.TestCase):
             with self.subTest(path=path), self.assertRaises(CleanupError):
                 self.engine.review(path, 'task', 'evidence')
 
+    def download_fixture(self):
+        self.root = '/storage/emulated/0/Download/20MTD-Revamped-1.0.0-deployer'
+        self.shared_parent = '/storage/emulated/0/Download'
+        self.device.directories = {self.root: 'dir', self.shared_parent: 'download-dir'}
+        self.device.files = {self.root + '/installer.ps1': b'installer',
+                             self.shared_parent + '/personal.pdf': b'preserve sibling'}
+
+    def test_download_task_ticket_removes_only_reviewed_files_and_empty_task_root(self):
+        self.download_fixture()
+        review = self.review()
+        page = self.engine.inspect(review['transaction_id'])
+        self.assertEqual(page['root_ancestors'],
+                         [{'path': self.shared_parent, 'directory': True, 'identity': 'download-dir'}])
+        self.assertEqual({item['path'] for item in page['items']},
+                         {self.root, self.root + '/installer.ps1'})
+        ticket = self.ticket(review)
+        self.assertTrue(self.engine.apply(ticket, True)['ok'])
+        self.assertIn(self.root + '/installer.ps1', self.device.files)
+        self.assertTrue(self.engine.apply(ticket)['ok'])
+        self.assertEqual(self.device.files,
+                         {self.shared_parent + '/personal.pdf': b'preserve sibling'})
+        self.assertEqual(self.device.directories, {self.shared_parent: 'download-dir'})
+        self.assertNotIn(('remove', self.shared_parent, False), self.device.calls)
+
+    def test_download_new_and_changed_task_files_survive_exact_retry(self):
+        self.download_fixture()
+        ticket = self.ticket(self.review())
+        self.device.files[self.root + '/installer.ps1'] = b'changed installer'
+        self.device.files[self.root + '/new.txt'] = b'new user content'
+        result = self.engine.apply(ticket)
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['counts']['changed_after_review'], 1)
+        self.assertEqual(self.device.files[self.root + '/new.txt'], b'new user content')
+        self.device.files[self.root + '/installer.ps1'] = b'installer'
+        result = self.engine.apply(ticket)
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['deleted_bytes'], 9)
+        self.assertEqual(self.device.files, {self.root + '/new.txt': b'new user content',
+                                           self.shared_parent + '/personal.pdf': b'preserve sibling'})
+
+    def test_download_shared_parent_replacement_blocks_apply(self):
+        self.download_fixture()
+        ticket = self.ticket(self.review())
+        self.device.directories[self.shared_parent] = 'replacement-parent'
+        with self.assertRaises(CleanupError) as failure:
+            self.engine.apply(ticket)
+        self.assertEqual(failure.exception.kind, 'android_ancestor_changed')
+        self.assertFalse(self.device.calls)
+
+    def test_download_shared_parent_replacement_during_inventory_rejects_review(self):
+        self.download_fixture()
+        inventory = self.device.inventory
+        def replaced(root):
+            items = inventory(root)
+            self.device.directories[self.shared_parent] = 'replacement-parent'
+            return items
+        self.device.inventory = replaced
+        with self.assertRaises(CleanupError) as failure:
+            self.review()
+        self.assertEqual(failure.exception.kind, 'android_ancestor_changed')
+        self.assertFalse(self.device.calls)
+
+    def test_download_shared_parent_change_between_members_preserves_remaining_files(self):
+        self.download_fixture()
+        self.device.files[self.root + '/second.ps1'] = b'second installer'
+        ticket = self.ticket(self.review())
+        remove = self.device.remove
+        def replace_after_first(item, dry_run):
+            result = remove(item, dry_run)
+            if not dry_run and result == 'deleted':
+                self.device.directories[self.shared_parent] = 'replacement-parent'
+            return result
+        self.device.remove = replace_after_first
+        with self.assertRaises(CleanupError) as failure:
+            self.engine.apply(ticket)
+        self.assertEqual(failure.exception.kind, 'android_ancestor_changed')
+        self.assertEqual(sum(path.startswith(self.root + '/') for path in self.device.files), 1)
+        self.assertIn(self.shared_parent + '/personal.pdf', self.device.files)
+
+    def test_download_broad_roots_protected_names_and_aliases_fail_before_transport(self):
+        for path in ('/storage/emulated/0/Download', '/storage/emulated/0/Download/',
+                     '/storage/emulated/0/Downloads/task', '/storage/emulated/0/Documents/task',
+                     '/storage/emulated/0/Download/Android', '/storage/emulated/0/Download/Saves',
+                     '/storage/emulated/0/Download/task/nested', '/sdcard/Download/task',
+                     '/storage/emulated/0/Download/task/../other'):
+            with self.subTest(path=path), self.assertRaises(CleanupError) as failure:
+                self.engine.review(path, 'task', 'evidence')
+            self.assertEqual(failure.exception.kind, 'protected_android_path')
+        self.assertFalse(self.device.calls)
+
     def test_package_absence_baseline_and_data_acknowledgement_required(self):
         baseline = self.engine.package_baseline('org.example.test', 'S12', 'temporary test APK', ['a' * 64])
         self.device.installed = True
@@ -189,6 +287,48 @@ class AndroidTests(unittest.TestCase):
             self.engine.package_review(baseline['transaction_id'])
         self.assertEqual(failure.exception.kind, 'test_package_mismatch')
         self.assertFalse(self.device.calls)
+
+    def test_explicit_package_review_requires_exact_confirmation_and_hash(self):
+        self.device.installed = True
+        for confirmation, hashes in [('other.package', ['a' * 64]),
+                                     ('org.example.test', ['b' * 64])]:
+            with self.assertRaises(CleanupError):
+                self.engine.package_explicit_review('org.example.test', 'task',
+                    'User explicitly requested removal of this diagnostic app', hashes, confirmation)
+        self.assertFalse(self.device.calls)
+
+    def test_explicit_user0_removal_is_signed_scoped_and_preserves_replacement(self):
+        self.device.installed = True
+        def protected_profiles(_):
+            raise AssertionError('Explicit user-0 removal must not enumerate other profiles')
+        self.device.package = protected_profiles
+        self.device.package_user0 = lambda p: (None if not self.device.installed else
+            {'package': p, 'apk_hashes': [{'sha256': 'a' * 64}], 'install_identity': self.device.install_stamp})
+        review = self.engine.package_explicit_review('org.example.test', 'task',
+            'Explicit removal decision with original installation evidence', ['a' * 64], 'org.example.test')
+        page = self.engine.inspect(review['transaction_id'])
+        self.assertEqual(page['removal_authority'], 'explicit_user0')
+        self.assertEqual(page['confirmed_package'], 'org.example.test')
+        self.assertNotIn('baseline_created_at', self.engine.load(review['transaction_id'])['manifest'])
+        with self.assertRaises(CleanupError):
+            self.ticket(review)
+        ticket = self.ticket(review, confirm_test_app_data=True)
+        self.assertTrue(self.engine.apply(ticket, True)['ok'])
+        self.device.install_stamp = 'replacement'
+        self.assertFalse(self.engine.apply(ticket)['ok'])
+        self.assertFalse(self.device.calls)
+        self.device.install_stamp = 'first-install'
+        self.assertTrue(self.engine.apply(ticket)['ok'])
+        self.assertEqual(self.device.calls, [('uninstall', 'org.example.test')])
+
+    def test_explicit_review_cli_is_distinct_from_absence_baseline(self):
+        self.device.installed = True
+        argv = ['adb-package-explicit-review', '--serial', 'test-serial',
+                '--package', 'org.example.test', '--confirm-package', 'org.example.test',
+                '--apk-sha256', 'a' * 64, '--owner-task', 'task', '--evidence', 'Explicit user removal']
+        with patch.object(android, 'AndroidCleanup', return_value=self.engine):
+            result = android.dispatch(cli.parser().parse_args(argv))
+        self.assertEqual(result['state'], 'reviewed')
 
     def test_state_inventory_and_missing_root_retry(self):
         review = self.review()
@@ -267,6 +407,13 @@ class AdbTransportTests(unittest.TestCase):
     def device(self, runner):
         return android.AdbDevice('fixture-serial', adb_path=sys.executable, runner=runner)
 
+    def test_endpoint_accepts_adb_crlf_output(self):
+        def runner(command, **kwargs):
+            output = (b'device\r\n' if command[-1] == 'get-state' else
+                      b'[ro.serialno]: [hardware]\r\n[ro.build.fingerprint]: [build]\r\n[ro.product.model]: [model]\r\n')
+            return subprocess.CompletedProcess(command, 0, output, b'')
+        self.assertEqual(self.device(runner).endpoint()['android_serial'], 'hardware')
+
     def test_exact_serial_identity_and_offline_rejection(self):
         calls = []
         def runner(command, **kwargs):
@@ -312,6 +459,40 @@ class AdbTransportTests(unittest.TestCase):
             return value
         with self.assertRaises(CleanupError):
             self.device(diagnostic).package('org.example.test')
+
+    def test_explicit_transport_reads_only_user0_and_rejects_system_and_diagnostics(self):
+        scripts = []
+        def runner(command, **kwargs):
+            script = kwargs.get('input', b'').decode()
+            scripts.append(script)
+            if script == 'pm list packages --user 0\n':
+                output = b'package:org.example.test\n'
+            elif script.startswith('dumpsys'):
+                output = b' codePath=/data/app/test\n versionCode=1\n firstInstallTime=2026-10-14\n lastUpdateTime=2026-10-14\n appId=12345\n pkgFlags=[ HAS_CODE ]\n'
+            elif script.startswith('pm path'):
+                output = b'package:/data/app/test/base.apk\n'
+            elif script.startswith('set -eu'):
+                output = b'1:2:81a4:5:1:1\nfile\n' + b'a' * 64 + b'\n'
+            else:
+                raise AssertionError(script)
+            return subprocess.CompletedProcess(command, 0, output, b'')
+        self.assertEqual(self.device(runner).package_user0('org.example.test')['user'], 0)
+        self.assertFalse(any('list users' in s or '--user 150' in s for s in scripts))
+        for failed_command in ('pm list packages', 'dumpsys', 'pm path'):
+            def diagnostic(command, **kwargs):
+                value = runner(command, **kwargs)
+                if kwargs.get('input', b'').decode().startswith(failed_command):
+                    value.stderr = b'SecurityException'
+                return value
+            with self.subTest(failed_command=failed_command), self.assertRaises(CleanupError):
+                self.device(diagnostic).package_user0('org.example.test')
+        def system(command, **kwargs):
+            value = runner(command, **kwargs)
+            if kwargs.get('input', b'').startswith(b'dumpsys'):
+                value.stdout = value.stdout.replace(b'HAS_CODE', b'SYSTEM HAS_CODE')
+            return value
+        with self.assertRaises(CleanupError):
+            self.device(system).package_user0('org.example.test')
 
     def test_real_shell_hash_checks_quoting_and_exact_unlink(self):
         bash = r'C:\Program Files\Git\bin\bash.exe' if os.name == 'nt' else shutil.which('sh')

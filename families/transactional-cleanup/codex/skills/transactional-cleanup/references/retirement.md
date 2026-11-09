@@ -31,7 +31,7 @@ No recovery repository is created automatically.
 begin --workspace <separate-current-workspace> --scan-root <obsolete-checkout>
 register --transaction <id> --path <obsolete-checkout> --kind retired-repository --regenerated --retirement-evidence <external-json> --confirm-retire-repository <obsolete-checkout> --evidence "<actual retirement purpose>"
 review --transaction <id>
-inspect --transaction <id> --decision candidate --offset 0 --limit 100
+inspect --transaction <id> --offset 0 --limit 1000
 ticket --transaction <id> --manifest-sha256 <inspected-review-hash>
 apply --ticket <id> --dry-run
 apply --ticket <id>

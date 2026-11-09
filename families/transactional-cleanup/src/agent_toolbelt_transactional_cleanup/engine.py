@@ -20,11 +20,13 @@ from . import filesystem as fs
 from . import retirement
 from . import legacy
 from . import git_markers
+from . import worktrees
 
 POLICY = '2'
 KINDS = ('temporary', 'compiler-output', 'package-cache', 'browser-artifact',
          'media-intermediate', 'test-output', 'generated-report', 'explicit-generated-output',
-         'disposable-repository', 'retired-repository', 'generated-git-marker')
+         'disposable-repository', 'retired-repository', 'generated-git-marker',
+         'generated-dependency-repository')
 GENERATED = {'__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache'}
 RETRY = {'locked', 'failed', 'not_empty'}
 BATCH_SIZE = 256
@@ -159,6 +161,11 @@ class Engine:
                 connection.execute('ALTER TABLE registrations ADD COLUMN retirement_json TEXT')
             if 'git_marker_json' not in registration_columns:
                 connection.execute('ALTER TABLE registrations ADD COLUMN git_marker_json TEXT')
+            if 'worktree_json' not in registration_columns:
+                connection.execute('ALTER TABLE registrations ADD COLUMN worktree_json TEXT')
+            ticket_columns = {row[1] for row in connection.execute('PRAGMA table_info(tickets)')}
+            if 'worktree_recovery_json' not in ticket_columns:
+                connection.execute('ALTER TABLE tickets ADD COLUMN worktree_recovery_json TEXT')
             transaction_columns = {row[1] for row in connection.execute('PRAGMA table_info(transactions)')}
             if 'discard_reason' not in transaction_columns:
                 connection.execute('ALTER TABLE transactions ADD COLUMN discard_reason TEXT')
@@ -383,7 +390,11 @@ class Engine:
             if os.environ.get(var) and path == fs.canonical(os.environ[var]):
                 return 'critical_root'
         parts = {part.casefold() for part in path.parts}
-        if parts & {'$recycle.bin', 'system volume information', 'recovery', 'boot', '$extend'}:
+        # Windows boot, EFI and recovery are volume-root trees, not arbitrary
+        # package modules with those names. SystemRoot is protected above.
+        volume_child = path.parts[1].casefold() if len(path.parts) > 1 else ''
+        if (parts & {'$recycle.bin', 'system volume information', '$extend'}
+                or volume_child in {'boot', 'efi', 'recovery'}):
             return 'filesystem_or_repository_metadata'
         empty_leaf_marker = (path.name.casefold() == '.git'
                              and '.git' not in {part.casefold() for part in path.parent.parts}
@@ -432,12 +443,21 @@ class Engine:
     def scan(self, roots, disposable_roots=(), git_marker_paths=()):
         """Yield metadata one object at a time; callers own bounded persistence."""
         disposable_roots = [fs.canonical(path) for path in disposable_roots]
+        # Registering an uncovered ancestor legitimately extends coverage. Keep
+        # that scope, but delegate each explicit root to its own traversal once.
+        # This is O(root count) memory, not a per-inventory-member seen set.
+        unique_roots = {}
         for root_value in roots:
             root = fs.canonical(root_value)
+            unique_roots.setdefault(path_key(root), root)
+        for root_key, root in unique_roots.items():
             pending = [root]
             while pending:
                 path = pending.pop()
                 if not os.path.lexists(path):
+                    continue
+                member_key = path_key(path)
+                if member_key != root_key and member_key in unique_roots:
                     continue
                 key = str(path)
                 reason = self.protection(path, allow_git_marker=key in git_marker_paths)
@@ -455,11 +475,18 @@ class Engine:
                     continue
                 try:
                     info = fs.identity(path, allow_leaf_reparse=True)
-                    yield {'path': key, **info}
-                    if info['directory'] and not info['reparse']:
-                        pending.extend(path.iterdir())
                 except (OSError, ValueError) as exc:
                     yield {'path': key, 'excluded': type(exc).__name__}
+                    continue
+                item = {'path': key, **info}
+                if info['directory'] and not info['reparse']:
+                    try:
+                        pending.extend(path.iterdir())
+                    except (OSError, ValueError) as exc:
+                        # Record one failed observation, rather than yielding a
+                        # successful row and a second row with the same identity.
+                        item.update(excluded=type(exc).__name__, scan_error=type(exc).__name__)
+                yield item
 
     def _known_temp_roots(self):
         candidates = [Path(os.environ.get('TEMP', 'D:/Temp')), Path('D:/Temp'), Path('E:/Temp'),
@@ -599,6 +626,7 @@ class Engine:
     def _payload(row):
         return {'transaction_id': row['transaction_id'], 'host': row['host'], 'policy': row['policy'],
                 'workspace': row['workspace'], 'created_at': row['created_at'], 'state': row['state'],
+                'progress_updated_at': row['progress_updated_at'], 'manifest_created_at': row['manifest_created_at'],
                 'roots': json.loads(row['roots_json']), 'scan_roots': json.loads(row['roots_json']),
                 'scan_mode': row['scan_mode'], 'free_space': json.loads(row['free_space_json']),
                 'discovery_coverage': json.loads(row['discovery_json']),
@@ -611,7 +639,8 @@ class Engine:
     def register(self, transaction, path, kind, evidence, regenerated=False,
                  allow_hardlinks=False, allow_leaf_reparse=False,
                  allow_disposable_repository=False, retirement_evidence=None,
-                 confirm_retire_repository=None, confirm_git_marker=None):
+                 confirm_retire_repository=None, confirm_git_marker=None,
+                 dependency_evidence=None, confirm_dependency_repository=None):
         path = fs.canonical(path)
         reason = self.protection(path)
         if kind not in KINDS or not evidence.strip():
@@ -625,7 +654,25 @@ class Engine:
             repository_identity = None
             retirement_proof = None
             marker_proof = None
-            if kind == 'generated-git-marker' or confirm_git_marker:
+            worktree_proof = None
+            if kind == 'generated-dependency-repository' or dependency_evidence or confirm_dependency_repository:
+                if (kind != 'generated-dependency-repository' or not regenerated
+                        or not dependency_evidence or not confirm_dependency_repository
+                        or fs.canonical(confirm_dependency_repository) != path
+                        or allow_hardlinks or allow_leaf_reparse or allow_disposable_repository
+                        or retirement_evidence or confirm_retire_repository or confirm_git_marker):
+                    raise CleanupError('dependency_authority_required',
+                                       'Generated dependency cleanup requires evidence and exact root confirmation')
+                if (reason != 'repository_root' or path == Path(row['workspace'])
+                        or path_key(path) not in {path_key(root) for root in roots}):
+                    raise CleanupError('dependency_exact_root_required', 'Use one exact generated clone scan root')
+                loaded = retirement.load_evidence(dependency_evidence, path)
+                if loaded.get('mode') != 'cmake-fetchcontent':
+                    raise CleanupError('dependency_evidence_invalid', 'Expected CMake FetchContent provenance')
+                retirement_proof = retirement.validate(path, loaded)
+                repository_identity = retirement_proof['root_identity']
+                reason = None
+            elif kind == 'generated-git-marker' or confirm_git_marker:
                 if (kind != 'generated-git-marker' or not regenerated or not confirm_git_marker
                         or fs.canonical(confirm_git_marker) != path or allow_hardlinks
                         or allow_leaf_reparse or allow_disposable_repository
@@ -649,7 +696,10 @@ class Engine:
                     raise CleanupError('protected_path', reason or 'workspace_overlap')
                 if path_key(path) not in {path_key(root) for root in roots}:
                     raise CleanupError('retirement_exact_root_required', 'Retired checkout must be an exact scan root')
-                retirement_proof = retirement.validate(path, retirement.load_evidence(retirement_evidence, path))
+                loaded = retirement.load_evidence(retirement_evidence, path)
+                if loaded.get('mode') == 'cmake-fetchcontent':
+                    raise CleanupError('retirement_evidence_invalid', 'Use the explicit generated-dependency contract')
+                retirement_proof = retirement.validate(path, loaded)
                 repository_identity = retirement_proof['root_identity']
                 reason = None
             elif allow_disposable_repository:
@@ -661,7 +711,14 @@ class Engine:
                 if path_key(path) not in {path_key(root) for root in roots}:
                     raise CleanupError('disposable_repository_contract',
                                        'Disposable repository must be an exact transaction scan root')
-                repository_identity = self._validate_disposable_repository(path)
+                if (path/'.git').is_file():
+                    try:
+                        worktree_proof = worktrees.validate(path, self._temp_roots())
+                    except (ValueError, OSError) as exc:
+                        raise CleanupError(getattr(exc, 'kind', 'worktree_invalid'), str(exc)) from exc
+                    repository_identity = worktree_proof['root_identity']
+                else:
+                    repository_identity = self._validate_disposable_repository(path)
                 reason = None
             elif kind == 'disposable-repository':
                 raise CleanupError('disposable_repository_authority_required',
@@ -674,8 +731,10 @@ class Engine:
                                              (transaction,)).fetchone()[0]
                 connection.execute('INSERT INTO roots VALUES (?,?,?,?)',
                                    (transaction, ordinal, str(path), path_key(path)))
-                connection.execute('UPDATE transactions SET roots_json=? WHERE transaction_id=?',
-                                   (encoded(roots).decode(), transaction))
+                coverage = json.loads(row['discovery_json'])
+                coverage['known_or_explicit_roots'] = roots
+                connection.execute('UPDATE transactions SET roots_json=?,discovery_json=? WHERE transaction_id=?',
+                                   (encoded(roots).decode(), encoded(coverage).decode(), transaction))
                 # Do not retain a SQLite writer while the new root is traversed.
                 connection.commit()
                 self._insert_baseline(connection, transaction, [str(path)])
@@ -692,6 +751,31 @@ class Engine:
             if marker_proof:
                 connection.execute('UPDATE registrations SET git_marker_json=? WHERE id=last_insert_rowid()',
                                    (encoded(marker_proof).decode(),))
+            if worktree_proof:
+                proof_text = encoded(worktree_proof).decode()
+                connection.execute('UPDATE registrations SET worktree_json=? WHERE id=last_insert_rowid()',
+                                   (proof_text,))
+                # Only Git's verified private registration is added, never the
+                # shared .git directory or another worktree's administrative root.
+                metadata = worktree_proof['metadata']
+                if metadata not in roots:
+                    roots.append(metadata)
+                    ordinal = connection.execute('SELECT COALESCE(MAX(ordinal),-1)+1 FROM roots WHERE transaction_id=?',
+                                                 (transaction,)).fetchone()[0]
+                    connection.execute('INSERT INTO roots VALUES (?,?,?,?)',
+                                       (transaction, ordinal, metadata, path_key(metadata)))
+                    coverage = json.loads(row['discovery_json'])
+                    coverage['known_or_explicit_roots'] = roots
+                    connection.execute('UPDATE transactions SET roots_json=?,discovery_json=? WHERE transaction_id=?',
+                                       (encoded(roots).decode(), encoded(coverage).decode(), transaction))
+                    connection.commit()
+                    self._insert_baseline(connection, transaction, [metadata])
+                connection.execute('''INSERT INTO registrations
+                    (transaction_id,path,path_key,kind,evidence,regenerated,allow_disposable_repository,
+                     repository_identity,worktree_json) VALUES (?,?,?,?,?,1,1,?,?)''',
+                    (transaction, metadata, path_key(metadata), kind, evidence,
+                     worktree_proof['metadata_identity'], proof_text))
+            connection.execute('UPDATE transactions SET progress_updated_at=? WHERE transaction_id=?', (now(), transaction))
             connection.commit()
             return self.report('register', self._payload(self._row(connection, transaction)))
         finally:
@@ -736,6 +820,8 @@ class Engine:
             allow_disposable = bool(disposable and fs.within(path, Path(disposable['path'])))
             retirement_proof = (json.loads(disposable['retirement_json'])
                                 if disposable and disposable.get('retirement_json') else None)
+            worktree_proof = (json.loads(disposable['worktree_json'])
+                             if disposable and disposable.get('worktree_json') else None)
             marker_proof = (json.loads(registration['git_marker_json'])
                             if registration and registration.get('git_marker_json')
                             and path_key(path) == registration['path_key'] else None)
@@ -784,6 +870,16 @@ class Engine:
                     item['retirement_proof'] = retirement_proof
                 if not reason and not info['directory']:
                     item['content_sha256'] = fs.content_snapshot(item)
+            if worktree_proof:
+                worktree_root = Path(worktree_proof['root'])
+                phase = (2 if fs.within(path, Path(worktree_proof['metadata'])) else
+                         1 if path in (worktree_root, worktree_root/'.git') else 0)
+                item.update(worktree_root=str(worktree_root), worktree_phase=phase,
+                            worktree_proof_sha256=digest(worktree_proof))
+                if path == worktree_root:
+                    item['worktree_proof'] = worktree_proof
+                if not reason and not info['directory']:
+                    item['content_sha256'] = fs.content_snapshot(item)
             if marker_proof and not reason:
                 item['git_marker_proof'] = marker_proof
                 item['content_sha256'] = fs.content_snapshot(item)
@@ -826,13 +922,19 @@ class Engine:
 
     def _apply_rows(self, connection, transaction):
         """Exhaust each bounded SELECT before yielding: no WAL snapshot across commits."""
+        for phase in range(3):
+            yield from self._apply_phase_rows(connection, transaction, phase)
+
+    def _apply_phase_rows(self, connection, transaction, phase):
         position = None
         while True:
             condition = '' if position is None else ' AND (directory,-LENGTH(path),path) > (?,?,?)'
-            parameters = (transaction, BATCH_SIZE) if position is None else (transaction, *position, BATCH_SIZE)
+            parameters = ((transaction, phase, BATCH_SIZE) if position is None else
+                          (transaction, phase, *position, BATCH_SIZE))
             cursor = connection.execute('''SELECT ordinal,item_json,result,deleted_bytes,
                 directory,-LENGTH(path) AS length_key,path,row_sha256,row_mac FROM manifest
-                WHERE transaction_id=? AND decision='candidate' ''' + condition +
+                WHERE transaction_id=? AND decision='candidate'
+                AND COALESCE(json_extract(item_json,'$.worktree_phase'),0)=? ''' + condition +
                 ' ORDER BY directory,-LENGTH(path),path LIMIT ?', parameters)
             try:
                 rows = cursor.fetchall()
@@ -859,7 +961,15 @@ class Engine:
             registrations, created_at = self._registrations(connection, transaction), now()
             disposable_roots = []
             git_marker_paths = []
+            verified_worktrees = set()
             for registration in registrations.values():
+                if registration.get('worktree_json'):
+                    proof = json.loads(registration['worktree_json'])
+                    if proof['root'] not in verified_worktrees:
+                        worktrees.validate(Path(proof['root']), self._temp_roots(), proof)
+                        verified_worktrees.add(proof['root'])
+                    disposable_roots.append(registration['path'])
+                    continue
                 if registration.get('git_marker_json'):
                     proof = json.loads(registration['git_marker_json'])
                     git_markers.validate(Path(registration['path']), proof)
@@ -973,8 +1083,8 @@ class Engine:
                 VALUES (?,?,?,?,?,?,'issued',?,?)''',
                                (ticket_id, transaction, ticket['host'], POLICY, manifest_sha256,
                                 candidate_count, ticket['issued_at'], self._ticket_mac(ticket)))
-            connection.execute("UPDATE transactions SET state='ticketed',ticket_id=? WHERE transaction_id=?",
-                               (ticket_id, transaction)); connection.commit()
+            connection.execute("UPDATE transactions SET state='ticketed',ticket_id=?,progress_updated_at=? WHERE transaction_id=?",
+                               (ticket_id, now(), transaction)); connection.commit()
             return self.report('ticket', self._payload(self._row(connection, transaction)), ticket_id=ticket_id,
                                manifest_sha256=manifest_sha256, ticket_state='issued')
         finally:
@@ -1019,20 +1129,35 @@ class Engine:
         if os.name != 'nt':
             raise CleanupError('platform_unsupported', 'Application requires Windows identity and handle disposition')
         connection = self.connect()
+        worktree_apply_started = False
         try:
             ticket = self._ticket(connection, ticket_id)
+            if ticket['state'] == 'expired':
+                raise CleanupError('ticket_expired', 'Cleanup authority expired; create and inspect a fresh review. No target files deleted.')
             if ticket['state'] not in {'issued', 'partially_applied'}:
                 raise CleanupError('ticket_terminal', 'Ticket is unknown, already applied, or revoked')
             transaction_row = self._row(connection, ticket['transaction_id'])
             self._verify_ticket_membership(connection, ticket, transaction_row)
             disposable_roots = {}
             retired_roots = {}
+            linked_roots = {}
+            recovery = json.loads(ticket['worktree_recovery_json'] or '{}')
+            for root, entry in recovery.items():
+                value = [ticket_id, ticket['manifest_sha256'], root, entry['identity'], entry['sha256']]
+                mac = hmac.new(self.key, encoded(value), 'sha256').hexdigest()
+                if not hmac.compare_digest(mac, entry['mac']):
+                    raise CleanupError('review_mismatch', 'Invalid worktree marker recovery identity')
             for record in connection.execute("""SELECT item_json FROM manifest
                     WHERE transaction_id=? AND decision='candidate'""", (ticket['transaction_id'],)):
                 item = json.loads(record['item_json'])
                 root = item.get('disposable_repository_root')
                 identity = item.get('disposable_repository_identity')
                 proof = item.get('retirement_proof')
+                linked = item.get('worktree_proof')
+                if linked:
+                    if item['path'] != linked['root'] or digest(linked) != item.get('worktree_proof_sha256'):
+                        raise CleanupError('review_mismatch', 'Invalid signed worktree root proof')
+                    linked_roots[linked['root']] = linked
                 if proof:
                     if (item['path'] != item.get('retired_repository_root')
                             or digest(proof) != item.get('retirement_proof_sha256')):
@@ -1043,6 +1168,13 @@ class Engine:
                         raise CleanupError('review_mismatch', 'Disposable repository identity is inconsistent')
                     disposable_roots[root] = identity
             for root, identity in disposable_roots.items():
+                linked = next((proof for proof in linked_roots.values()
+                               if root in (proof['root'], proof['metadata'])), None)
+                if linked:
+                    if root == linked['root']:
+                        worktrees.validate(Path(root), self._temp_roots(), linked,
+                            require_git=ticket['state'] == 'issued', restored=recovery.get(root))
+                    continue
                 if root in retired_roots:
                     if os.path.lexists(root):
                         proof = retired_roots[root]
@@ -1058,6 +1190,10 @@ class Engine:
                                    (ticket['transaction_id'],))
                 self._set_progress(connection, ticket['transaction_id'], 'apply', 'deleting', 0,
                                    ticket['candidate_count'], ticket['deleted_bytes']); connection.commit()
+                worktree_apply_started = True
+                if ticket['state'] == 'partially_applied':
+                    for proof in linked_roots.values():
+                        self._restore_worktree_marker(connection, ticket, proof, recovery)
             self.repo_cache.clear()
             diagnostics, result_counts, batch = [], Counter(), []
             processed, processed_bytes = 0, ticket['deleted_bytes']
@@ -1069,6 +1205,15 @@ class Engine:
                     continue
                 item = json.loads(row['item_json'])
                 path = fs.canonical(item['path'])
+                linked = linked_roots.get(item.get('worktree_root'))
+                if item.get('worktree_root'):
+                    if not linked or digest(linked) != item.get('worktree_proof_sha256'):
+                        raise CleanupError('review_mismatch', 'Worktree member lacks its signed root proof')
+                    if path == Path(linked['root'])/'.git' and linked['root'] in recovery:
+                        restored = recovery[linked['root']]
+                        if restored['sha256'] != item.get('content_sha256'):
+                            raise CleanupError('review_mismatch', 'Restored Git binding content differs')
+                        item = {**item, 'identity': restored['identity']}
                 disposable_root = item.get('disposable_repository_root')
                 allow_disposable = bool(
                     item.get('allow_disposable_repository') and disposable_root and
@@ -1093,7 +1238,9 @@ class Engine:
                     reason = None
                 if not reason and not allow_disposable and not marker_valid:
                     reason = self.git_reason(path)
-                result, count = ('protected', 0) if reason else fs.delete_exact(item, dry_run=dry_run)
+                blocked = worktrees.before_member(item, linked) if linked else None
+                result, count = (('protected', 0) if reason else (blocked, 0) if blocked else
+                                 fs.delete_exact(item, dry_run=dry_run))
                 result_counts[result] += 1; processed += 1
                 if len(diagnostics) < 100:
                     diagnostics.append({'path': str(path), 'result': result})
@@ -1101,6 +1248,9 @@ class Engine:
                     batch.append((row['ordinal'], result, count)); processed_bytes += count
                     if len(batch) >= BATCH_SIZE:
                         self._flush_results(connection, ticket, batch, processed, processed_bytes)
+                    if linked and path == Path(linked['root']):
+                        self._flush_results(connection, ticket, batch, processed, processed_bytes)
+                        self._restore_worktree_marker(connection, ticket, linked, recovery)
             if not dry_run:
                 self._flush_results(connection, ticket, batch, processed, processed_bytes)
                 self._verify_ticket_membership(connection, ticket, transaction_row)
@@ -1129,12 +1279,29 @@ class Engine:
         except BaseException:
             if 'ticket' in locals() and not dry_run:
                 try:
+                    if worktree_apply_started:
+                        for proof in locals().get('linked_roots', {}).values():
+                            self._restore_worktree_marker(connection, ticket, proof, recovery)
                     self._clear_progress(connection, ticket['transaction_id'], 'interrupted'); connection.commit()
                 except sqlite3.Error:
                     pass
             raise
         finally:
             connection.close()
+
+    def _restore_worktree_marker(self, connection, ticket, proof, recovery):
+        restored = worktrees.restore_marker_if_needed(proof)
+        if restored is None:
+            return
+        value = [ticket['ticket_id'], ticket['manifest_sha256'], proof['root'],
+                 restored['identity'], restored['sha256']]
+        restored['mac'] = hmac.new(self.key, encoded(value), 'sha256').hexdigest()
+        recovery[proof['root']] = restored
+        connection.execute('UPDATE tickets SET worktree_recovery_json=? WHERE ticket_id=?',
+                           (encoded(recovery).decode(), ticket['ticket_id']))
+        connection.execute("UPDATE manifest SET result='not_empty' WHERE transaction_id=? AND path_key=?",
+                           (ticket['transaction_id'], path_key(Path(proof['root'])/'.git')))
+        connection.commit()
 
     @staticmethod
     def _result_counts(connection, transaction):
@@ -1267,7 +1434,7 @@ class Engine:
             return {'ok': True, 'operation': 'state-inventory', 'state_root': str(self.root),
                     'state_bytes': sum(item['bytes'] for item in files), 'files': files,
                     'unfinished_transactions': transactions, 'live_claims': live,
-                    'warnings': ['Age and recorded owner PID do not establish abandonment. No automatic discard.'],
+                    'warnings': ['Seven-day authority expiry trims metadata only; live root claims are preserved. Expired work requires a fresh review.'],
                     'errors': [], 'failure_kind': None}
         finally:
             connection.close()
@@ -1305,9 +1472,11 @@ class Engine:
 
     @staticmethod
     def report(operation, payload, items=(), **extra):
+        from .retention import deadline, TERMINAL
         candidates = [item for item in items if item.get('decision') == 'candidate']
         return {'ok': True, 'operation': operation, 'transaction_id': payload['transaction_id'],
                 'workspace': payload['workspace'], 'state': payload['state'],
+                'expires_at': None if payload['state'] in TERMINAL else deadline(payload).isoformat(),
                 'discovery_coverage': payload['discovery_coverage'],
                 'candidate_count': payload.get('candidate_count', len(candidates)),
                 'candidate_bytes': payload.get('candidate_bytes', sum(item.get('size', 0) for item in candidates

@@ -1,5 +1,48 @@
 # Transactional Cleanup
 
+Version 0.10.0 extends the existing disposable-repository workflow to finished
+task-owned linked worktrees. Its signed review covers the working tree and only
+its verified private Git registration. Shared objects, refs and sibling worktrees
+stay outside the removal set. Content/identity checks preserve edits and arrivals;
+ordered removal and ticket-bound marker restoration keep partial work recoverable.
+No extra user approval, backup, force removal or broad Git prune is introduced.
+
+Version 0.9.1 reviews overlapping roots once, using root-bounded memory and
+preserving the existing signed manifest/identity safeguards. Coverage reports show
+new roots added by registration. Directory enumeration
+errors produce one excluded row. Registration can extend the inventory to an
+uncovered path: when only selected leaf folders are authorized, register those
+exact leaves rather than a broader ancestor.
+
+Version 0.9.0 adds a separate explicitly authorized, exact user-0 test-app
+removal review. It requires the confirmed package, removal-decision evidence and
+every expected APK hash, followed by signed inspection/ticket/application. It
+does not fabricate an absence baseline or query other Android profiles. The
+existing automatic task-installation baseline remains strict across all users.
+Updated/reinstalled apps are preserved; system apps remain protected.
+
+Version 0.8.0 adds internal seven-day inactive authority expiry. Each command trims
+expired inventories and tickets, including legacy Windows and Android records,
+before dispatch. Expiry deletes no target files, does not interrupt a live root
+claim and cannot replay an operation. Expired work needs a fresh reviewed ticket.
+Completed/expired state retains bounded compact receipts, not target-file copies.
+
+Version 0.7.3 corrects the same false positive for nested package modules named
+`boot`. Volume-root Boot/EFI/Recovery and the Windows tree stay protected;
+unattributed user files, ancestry, Git, identity/content and signed-ticket checks
+remain unchanged. The test scratch parent can be set through
+`TRANSACTIONAL_CLEANUP_TEST_ROOT` without changing application/global settings.
+
+Version 0.7.2 supports exact task-owned immediate children of Android Download.
+The shared Download parent is identity-bound and rechecked but never ticketed;
+normal endpoint, ancestry, content and signed-ticket protections remain in place.
+See [Android Task Cleanup](codex/skills/transactional-cleanup/references/android.md).
+
+Version 0.7.1 corrects a Recovery path false positive: volume-root `Recovery`
+trees and the protected Windows tree remain excluded, while nested package
+modules named `recovery` use the normal provenance, Git, identity/content and
+signed-ticket checks. No file is eligible merely because of its directory name.
+
 Version 0.6 adds a separate device-bound Android backend: exact task-file
 review/inspect/ticket/apply, plus task-installed test-app cleanup with a pre-install
 absence baseline and planned APK hashes. Read [Android Task Cleanup](codex/skills/transactional-cleanup/references/android.md).
@@ -78,7 +121,7 @@ agent-toolbelt-transactional-cleanup begin --workspace <repo> --scan-root <temp-
 agent-toolbelt-transactional-cleanup register --transaction <id> --path <output> --kind compiler-output --evidence <provenance>
 agent-toolbelt-transactional-cleanup register --transaction <id> --path <temp-clone> --kind disposable-repository --evidence <provenance> --regenerated --allow-disposable-repository
 agent-toolbelt-transactional-cleanup review --transaction <id>
-agent-toolbelt-transactional-cleanup inspect --transaction <id> --decision candidate --offset 0 --limit 100
+agent-toolbelt-transactional-cleanup inspect --transaction <id> --offset 0 --limit 1000
 agent-toolbelt-transactional-cleanup ticket --transaction <id> --manifest-sha256 <reviewed-hash>
 agent-toolbelt-transactional-cleanup apply --ticket <id> --dry-run
 agent-toolbelt-transactional-cleanup apply --ticket <id>
@@ -106,6 +149,11 @@ rather than launching an overlapping operation. Operations on disjoint explicit
 roots may run concurrently. `state_busy` is reserved for a pre-upgrade runtime that
 still owns the legacy global lock. A completed `reviewed` transaction should not be
 reviewed again.
+Large-manifest inspection supports 1,000 members per call. Follow next_offset,
+inspect each needed page once and serialize access to the same transaction,
+including read-only inspect calls. Capture large JSON outside the conversation
+instead of spawning small-page processes. Candidate/deletion byte totals exclude
+directory sizes; do not add directory metadata sizes to an independent census.
 For pre-existing known
 generated output, registration requires `--regenerated` with explicit provenance.
 Without it, pre-existing modified files are protected. New untracked source files

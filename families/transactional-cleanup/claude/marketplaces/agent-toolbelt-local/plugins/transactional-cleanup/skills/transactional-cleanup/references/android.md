@@ -27,11 +27,26 @@ boundary honestly. A host mutex cannot prevent arbitrary Android-side writers.
 
 ## Exact File Tickets
 
-Use one exact task-owned top-level directory under `/storage/emulated/0`, for
-example `/storage/emulated/0/RShopS12Reference-20261014`. Broad roots, standard
-user-data directories, Android app-data paths, traversal, links and special
-objects are protected. The inventory is capped at 10,000 members; narrow scope
-rather than scanning all storage. Only ordinary files and directories qualify.
+Use one exact task-owned top-level directory under `/storage/emulated/0`, or
+one exact task-owned immediate child of `/storage/emulated/0/Download`, for
+example `/storage/emulated/0/Download/20MTD-Revamped-1.0.0-deployer`.
+Use one transaction per exact task directory, with its actual producer and
+disposable purpose; do not pass a wildcard or select Download as a whole.
+The shared Download parent's identity is recorded and rechecked, but that parent
+and its unrelated contents are never ticketed. `adb-inspect` exposes this proof
+separately as `root_ancestors`, outside the deletion `items`. Broad roots, other
+standard user-data directories, protected task-root names, Android app-data paths,
+traversal, aliases, links and special objects remain protected. The inventory is
+capped at 10,000 members; narrow scope rather than scanning all storage. Only
+ordinary files and directories qualify.
+
+`protected_android_path` is the helper's scope validation, not a command-policy
+denial. For a valid task-owned path, diagnose an unsupported capability and
+correct the helper rather than routinely requesting a Files/manual-cleanup
+override. Existing task authorization already covers its expendable outputs;
+the signed ticket is still required. Never switch tools to evade an actual
+command-policy denial. Wait until the final installer/producer has finished
+before reviewing or removing its staging folders.
 
 Run these as separate invocations through the installed wrapper:
 
@@ -100,3 +115,27 @@ invent one retrospectively or claim task attribution from a package name alone.
 Report the missing provenance and obtain a separately scoped removal decision
 when the original task evidence cannot establish it. Do not erase an original
 installation or upgrade to make a new baseline possible.
+
+## Explicit Exact Test-App Removal
+
+When the user has explicitly authorized removal of the exact diagnostic apps,
+but the original helper absence baseline is missing or failed, use a separate
+removal-decision review. This is not historical installation proof. Check the
+original task installation evidence and exact APK hashes; a package name alone
+does not establish authority. Never use this mode to evade a policy rejection.
+
+```text
+adb-package-explicit-review --serial <serial> --package <exact.package> --confirm-package <same.exact.package> --apk-sha256 <expected-hash> --owner-task "<operation>" --evidence "<explicit user removal decision and original installation evidence>"
+adb-inspect --transaction <id>
+adb-ticket --transaction <id> --manifest-sha256 <inspected-hash> --confirm-test-app-data
+adb-apply --ticket <id>
+```
+
+Repeat `--apk-sha256` for every installed split. Review and application query only
+the user-0 installation, reject system apps and APKs outside `/data/app`, and bind
+the device, install/update metadata and APK identities/content. Application
+rechecks this same scoped identity before `pm uninstall --user 0`; it neither
+queries nor removes another profile's installation/data. Changed packages survive.
+The inspect result labels `removal_authority: explicit_user0` and the confirmed
+package; it must not be described as an absent-before-install baseline. The
+baseline-based workflow above retains its all-user absence/exclusivity checks.

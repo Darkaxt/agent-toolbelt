@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sqlite3
+import os
+from pathlib import Path
+import subprocess
+import sys
 
 from .engine import Engine, CleanupError, KINDS
 from . import android
@@ -33,6 +38,8 @@ def parser():
     register.add_argument('--retirement-evidence', help='External JSON ownership and independent recovery evidence')
     register.add_argument('--confirm-retire-repository', help='Explicitly confirm the exact obsolete checkout root')
     register.add_argument('--confirm-git-marker', help='Confirm one generated .git/<namespace>-workflow-tree file')
+    register.add_argument('--dependency-evidence', help='External JSON CMake provenance, patch and consumer evidence')
+    register.add_argument('--confirm-dependency-repository', help='Confirm one exact generated CMake dependency clone')
     for name in ('review', 'ticket'):
         command = commands.add_parser(name)
         command.add_argument('--transaction', required=True)
@@ -60,11 +67,28 @@ def parser():
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
+        engine = Engine(args.state_root)
+        from . import retention
+        trimmed = retention.maintain(engine)
+        identifier = getattr(args, 'transaction', None) or getattr(args, 'ticket', None)
+        if identifier and re.fullmatch('[a-f0-9]{32}|[a-f0-9]{64}', identifier):
+            legacy_path = engine.root / (identifier + '.json')
+            if legacy_path.is_file() and args.command != 'discard':
+                record = retention.authenticated(legacy_path, engine)
+                retention.require_current(record)
+                active = Path(os.environ.get('LOCALAPPDATA', Path.home() / '.local/share')) / 'Tools/transactional-cleanup/active.json'
+                source = Path(json.loads(active.read_text())['legacy_source'])
+                if source.parent.parent != active.parent / 'releases':
+                    raise CleanupError('runtime_unavailable', 'Legacy source is outside the owned release directory')
+                process = subprocess.run([sys.executable, '-B', '-m', 'agent_toolbelt_transactional_cleanup.cli',
+                                          *(sys.argv[1:] if argv is None else argv)],
+                                         env={**os.environ, 'PYTHONPATH': str(source), 'PYTHONDONTWRITEBYTECODE': '1'})
+                return process.returncode
         if args.command.startswith('adb-'):
             result = android.dispatch(args)
+            result['retention'] = trimmed
             print(json.dumps(result, ensure_ascii=True, indent=2))
             return 0 if result['ok'] else 1
-        engine = Engine(args.state_root)
         if args.command == 'status':
             result = engine.status(args.transaction)
         elif args.command == 'state-inventory':
@@ -84,13 +108,17 @@ def main(argv=None):
             else:
                 roots = engine.transaction_roots(args.transaction)
             with engine.locked(roots, operation=args.command, transaction=transaction):
+                if transaction and args.command not in {'inspect', 'discard', 'revoke'}:
+                    row = engine.txn(transaction)
+                    retention.require_current(row)
                 if args.command == 'begin':
                     result = engine.begin(args.workspace, args.scan_root, args.include_known_temp_roots)
                 elif args.command == 'register':
                     result = engine.register(args.transaction, args.path, args.kind, args.evidence,
                                              args.regenerated, args.allow_hardlinks, args.allow_leaf_reparse,
                                              args.allow_disposable_repository, args.retirement_evidence,
-                                             args.confirm_retire_repository, args.confirm_git_marker)
+                                             args.confirm_retire_repository, args.confirm_git_marker,
+                                             args.dependency_evidence, args.confirm_dependency_repository)
                 elif args.command == 'review':
                     result = engine.review(args.transaction)
                 elif args.command == 'ticket':
@@ -103,6 +131,7 @@ def main(argv=None):
                     result = engine.discard(args.transaction, args.reason)
                 elif args.command == 'inspect':
                     result = engine.inspect(args.transaction, args.offset, args.limit, args.decision)
+        result['retention'] = trimmed
     except sqlite3.Error as exc:
         code = getattr(exc, 'sqlite_errorcode', None)
         busy = code is not None and (code & 0xFF) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
