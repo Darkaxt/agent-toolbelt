@@ -1,4 +1,4 @@
-"""Device-bound cleanup of reviewed task files and helper-baselined test apps."""
+"""Device-bound cleanup of reviewed task files and exactly authorized test apps."""
 from __future__ import annotations
 
 from collections import Counter
@@ -28,9 +28,13 @@ def safe_path(path, *, root=False):
     path = str(path)
     parts = path.split('/')
     if (not path.startswith('/storage/emulated/0/') or any(ord(c) < 32 or ord(c) == 127 for c in path)
-            or any(p in {'', '.', '..'} for p in parts[1:])
-            or parts[4].casefold() in PROTECTED or (root and len(parts) != 5)):
-        raise CleanupError('protected_android_path', 'Use one exact task-owned directory under /storage/emulated/0; no user-data roots or traversal')
+            or any(p in {'', '.', '..'} for p in parts[1:])):
+        raise CleanupError('protected_android_path', 'Use an exact task directory under /storage/emulated/0 or its Download directory; no aliases or traversal')
+    task_depth = 6 if parts[4].casefold() == 'download' else 5
+    if ((parts[4].casefold() in PROTECTED and task_depth != 6)
+            or len(parts) < task_depth or parts[task_depth - 1].casefold() in PROTECTED
+            or (root and len(parts) != task_depth)):
+        raise CleanupError('protected_android_path', 'Select one exact task directory; shared/user-data roots and nested root selections are protected')
     return path
 
 
@@ -119,7 +123,7 @@ class AdbDevice:
     def endpoint(self):
         if self.command('get-state').stdout.strip() != b'device':
             raise CleanupError('device_not_ready', 'Selected endpoint is not ready')
-        output = self.shell('getprop\n').stdout.decode('utf-8', errors='strict')
+        output = self.shell('getprop\n').stdout.decode('utf-8', errors='strict').replace('\r\n', '\n')
         props = dict(re.findall(r'^\[([^]]+)\]:\s*\[(.*)\]$', output, re.M))
         identity = {'serial': self.serial, 'android_serial': props.get('ro.serialno') or props.get('ro.boot.serialno'),
                     'fingerprint': props.get('ro.build.fingerprint'), 'model': props.get('ro.product.model')}
@@ -202,13 +206,39 @@ class AdbDevice:
             return None
         if retained != ['0']:
             raise CleanupError('preexisting_or_shared_package', 'Only a test app belonging exclusively to Android user 0 is eligible')
+        return self._installed_package(package)
+
+    def package_user0(self, package):
+        """Current user-0 installation for a separate explicit removal decision.
+
+        This is not an absence baseline and makes no historical or other-user
+        claims. Uninstall remains scoped to user 0, including for shared APKs.
+        """
+        if not PACKAGE.fullmatch(package):
+            raise CleanupError('invalid_package', 'Use one exact Android package identifier')
+        response = self.shell('pm list packages --user 0\n')
+        lines = response.stdout.decode('utf-8', errors='strict').splitlines()
+        if response.stderr.strip() or any(line and not re.fullmatch(r'package:[A-Za-z0-9_.]+', line) for line in lines):
+            raise CleanupError('package_identity_unavailable', 'User-0 package enumeration failed')
+        if 'package:' + package not in lines:
+            return None
+        return self._installed_package(package)
+
+    def _installed_package(self, package):
         p = shlex.quote(package)
-        data = self.shell(f'dumpsys package {p}\n').stdout.decode('utf-8', errors='strict')
-        fields = re.findall(r'^\s*((?:codePath|versionCode|firstInstallTime|lastUpdateTime|userId|pkgFlags)=.*)$', data, re.M)
+        response = self.shell(f'dumpsys package {p}\n')
+        if response.stderr.strip():
+            raise CleanupError('package_identity_unavailable', 'Package identity query emitted diagnostics')
+        data = response.stdout.decode('utf-8', errors='strict')
+        fields = re.findall(r'^\s*((?:codePath|versionCode|firstInstallTime|lastUpdateTime|userId|appId|pkgFlags)=.*)$', data, re.M)
         if any('SYSTEM' in f for f in fields) or not all(any(f.startswith(k + '=') for f in fields)
-                                                        for k in ('codePath', 'versionCode', 'firstInstallTime', 'lastUpdateTime', 'userId')):
+                                                        for k in ('codePath', 'versionCode', 'firstInstallTime', 'lastUpdateTime')) or not any(
+                                                            f.startswith(('userId=', 'appId=')) for f in fields):
             raise CleanupError('package_identity_unavailable', 'System app or incomplete package install identity')
-        paths = self.shell(f'pm path --user 0 {p}\n').stdout.decode('utf-8', errors='strict').splitlines()
+        response = self.shell(f'pm path --user 0 {p}\n')
+        if response.stderr.strip():
+            raise CleanupError('package_identity_unavailable', 'Package path query emitted diagnostics')
+        paths = response.stdout.decode('utf-8', errors='strict').splitlines()
         if not paths or any(not line.startswith('package:/data/app/') for line in paths):
             raise CleanupError('protected_package', 'Only ordinary installed test APKs under /data/app are eligible')
         apks = []
@@ -248,6 +278,8 @@ class AndroidCleanup:
         return self.root / (identifier + '.json')
 
     def save(self, identifier, payload):
+        if payload.get('state') and payload['state'] not in {'applied', 'revoked', 'discarded', 'expired'}:
+            payload['updated_at'] = now()
         path = self.record_path(identifier)
         fs.check_chain(path)
         pending = path.with_suffix('.pending')
@@ -296,7 +328,15 @@ class AndroidCleanup:
         manifest = {'kind': 'files', 'device': device.endpoint(), 'root': root,
                     'owner_task': owner_task, 'evidence': evidence}
         with self.host.locked(self.locks(manifest), operation='adb-review'):
+            if PurePosixPath(root).parent.name.casefold() == 'download':
+                parent = device.snapshot(str(PurePosixPath(root).parent))
+                if parent is None or not parent['directory']:
+                    raise CleanupError('android_ancestor_changed', 'Shared Download parent must be an ordinary directory')
+                manifest['root_ancestors'] = [parent]
             manifest['items'] = device.inventory(root)
+            for parent in manifest.get('root_ancestors', []):
+                if device.snapshot(parent['path']) != parent:
+                    raise CleanupError('android_ancestor_changed', 'Shared Download parent changed during review')
             self.check_device(device, manifest)
             record = self.new(manifest)
         return self.summary(record)
@@ -335,9 +375,33 @@ class AndroidCleanup:
             self.save(identifier, record)
         return self.summary(record)
 
+    def package_explicit_review(self, package, owner_task, evidence, apk_sha256, confirmed_package):
+        if (not PACKAGE.fullmatch(package) or confirmed_package != package
+                or not owner_task.strip() or not evidence.strip() or not apk_sha256
+                or any(not re.fullmatch(r'[0-9a-f]{64}', value) for value in apk_sha256)):
+            raise CleanupError('invalid_package_provenance',
+                               'Exact confirmed package, explicit removal evidence and expected APK hashes required')
+        device = self.transport()
+        manifest = {'kind': 'package', 'device': device.endpoint(), 'package': package,
+                    'owner_task': owner_task, 'evidence': evidence,
+                    'removal_authority': 'explicit_user0', 'confirmed_package': confirmed_package,
+                    'expected_apk_sha256': sorted(apk_sha256)}
+        with self.host.locked(self.locks(manifest), operation='adb-package-explicit-review'):
+            installed = device.package_user0(package)
+            if installed is None:
+                raise CleanupError('test_package_missing', 'No installed user-0 package to review')
+            if sorted(apk['sha256'] for apk in installed['apk_hashes']) != manifest['expected_apk_sha256']:
+                raise CleanupError('test_package_mismatch', 'Installed APK hashes differ from the explicit removal evidence')
+            manifest['installed'] = installed
+            self.check_device(device, manifest)
+            record = self.new(manifest)
+        return self.summary(record)
+
     def summary(self, record):
+        from .retention import deadline, TERMINAL
         manifest = record['manifest']
         return {'ok': True, 'transaction_id': record['transaction_id'], 'state': record['state'],
+                'expires_at': None if record['state'] in TERMINAL else deadline(record).isoformat(),
                 'manifest_sha256': record['manifest_sha256'], 'kind': manifest['kind'],
                 'device': manifest['device'], 'root': manifest.get('root'), 'package': manifest.get('package'),
                 'candidate_count': record.get('candidate_count', len(manifest.get('items', []))),
@@ -353,6 +417,9 @@ class AndroidCleanup:
         manifest = record['manifest']
         result = self.summary(record)
         result.update(owner_task=manifest['owner_task'], evidence=manifest['evidence'],
+                      removal_authority=manifest.get('removal_authority', 'preinstall_baseline' if manifest['kind'] == 'package' else None),
+                      confirmed_package=manifest.get('confirmed_package'),
+                      root_ancestors=manifest.get('root_ancestors', []),
                       expected_apk_sha256=manifest.get('expected_apk_sha256'),
                       items=manifest.get('items', [manifest['installed']] if 'installed' in manifest else [])[offset:offset + limit],
                       next_offset=offset + limit if offset + limit < len(manifest.get('items', [])) else None)
@@ -362,6 +429,8 @@ class AndroidCleanup:
         before = self.load(identifier)
         with self.host.locked(self.locks(before['manifest']), operation='adb-ticket', transaction=identifier):
             record = self.load(identifier)
+            from .retention import require_current
+            require_current(record)
             if record['state'] != 'reviewed' or record['manifest_sha256'] != manifest_sha256:
                 raise CleanupError('invalid_android_review', 'A separately inspected current manifest digest is required')
             if record['manifest']['kind'] == 'package' and not confirm_test_app_data:
@@ -438,6 +507,8 @@ class AndroidCleanup:
         before = self.ticket_record(ticket)
         with self.host.locked(self.locks(before['manifest']), operation='adb-apply', transaction=before['transaction_id']):
             record = self.ticket_record(ticket)
+            from .retention import require_current
+            require_current(record)
             if record['state'] == 'applied':
                 return self.summary(record)
             if record['state'] not in {'ticketed', 'partially_applied'}:
@@ -449,7 +520,9 @@ class AndroidCleanup:
             self.check_device(device, manifest)
             results = dict(record['results'])
             if manifest['kind'] == 'package':
-                current = device.package(manifest['package'])
+                current = (device.package_user0(manifest['package'])
+                           if manifest.get('removal_authority') == 'explicit_user0'
+                           else device.package(manifest['package']))
                 if current is None:
                     results['package'] = 'missing'
                 elif current != manifest['installed']:
@@ -477,6 +550,9 @@ class AndroidCleanup:
                         if results.get(path) in {'deleted', 'missing'}:
                             continue
                         self.check_device(device, manifest)
+                        for parent in manifest.get('root_ancestors', []):
+                            if device.snapshot(parent['path']) != parent:
+                                raise CleanupError('android_ancestor_changed', 'Shared Download parent changed; remaining members preserved')
                         ancestors = [directories[str(parent)] for parent in PurePosixPath(path).parents
                                      if str(parent) in directories]
                         parent_states = [(parent, device.snapshot(parent['path'])) for parent in ancestors]
@@ -516,15 +592,19 @@ class AndroidCleanup:
 def add_parsers(commands):
     review = commands.add_parser('adb-review', help='Snapshot exact task-generated Android files; no deletion')
     baseline = commands.add_parser('adb-package-baseline', help='Record package absence BEFORE task installation')
-    for command in (review, baseline):
+    explicit = commands.add_parser('adb-package-explicit-review',
+                                  help='Review an explicitly authorized exact test-app removal for user 0; not an absence baseline')
+    for command in (review, baseline, explicit):
         command.add_argument('--serial', required=True)
         command.add_argument('--adb-path')
         command.add_argument('--owner-task', required=True)
         command.add_argument('--evidence', required=True)
     review.add_argument('--root', required=True)
-    baseline.add_argument('--package', required=True)
-    baseline.add_argument('--apk-sha256', action='append', required=True,
-                          help='SHA-256 of each exact APK intended for installation; repeat for split APKs')
+    for command in (baseline, explicit):
+        command.add_argument('--package', required=True)
+        command.add_argument('--apk-sha256', action='append', required=True,
+                             help='Expected SHA-256 of each exact APK; repeat for split APKs')
+    explicit.add_argument('--confirm-package', required=True, help='Repeat the exact package covered by the explicit removal decision')
     for name in ('adb-package-review', 'adb-inspect', 'adb-ticket', 'adb-status', 'adb-discard'):
         command = commands.add_parser(name)
         command.add_argument('--transaction', required=True)
@@ -555,6 +635,9 @@ def dispatch(args):
         return engine.package_baseline(args.package, args.owner_task, args.evidence, args.apk_sha256)
     if args.command == 'adb-package-review':
         return engine.package_review(args.transaction)
+    if args.command == 'adb-package-explicit-review':
+        return engine.package_explicit_review(args.package, args.owner_task, args.evidence,
+                                              args.apk_sha256, args.confirm_package)
     if args.command == 'adb-inspect':
         return engine.inspect(args.transaction, args.offset, args.limit)
     if args.command == 'adb-ticket':
