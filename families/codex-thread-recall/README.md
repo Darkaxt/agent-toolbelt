@@ -21,6 +21,19 @@ evidence as a successful recall. A live owner is not reclaimed based on age
 alone. The scheduled collector remains best-effort and skips a busy thread
 instead of waiting.
 
+Database writers for different threads also share an OS byte-range lock beside
+the cache database. Per-thread locks alone do not serialize SQLite's single
+writer; a long collector write must not make another chat fail after SQLite's
+default busy interval. Schema, append, rebuild, metadata and explicit retirement
+writes use the same lock and keep their existing transaction boundaries. A
+write-capable connection owns it before opening SQLite through actual close:
+SQLite's final WAL cleanup can still take a writer lock after COMMIT returns.
+Acquisition order is database ownership followed by per-thread ownership, also
+for explicit retirement, so those paths cannot invert their locks. Kernel
+completion/process exit releases the writer, without a cancellation deadline or
+age-based reclamation. Read-only status remains independent. No collector is
+stopped, no cache is cleared and the schedule is unchanged by this repair.
+
 Schema v9 keeps rollout JSONL files as the raw source of truth. SQLite stores
 compact metadata, semantic facets, bounded excerpts, FTS search text, and byte
 offsets back into the rollout file; it no longer stores full raw transcript

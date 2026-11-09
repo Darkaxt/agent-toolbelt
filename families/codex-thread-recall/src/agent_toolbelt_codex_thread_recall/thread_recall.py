@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Iterable
+from .cache_write_lock import connect_cache_database
 
 
 FILE_EXTENSION_PATTERN = "py|md|json|yaml|yml|toml|txt|sql|sqlite|ps1|bat|exe|js|ts|tsx|jsx|go|rs|java|c|cpp|h|hpp|sh|html|css"
@@ -1351,11 +1352,15 @@ def load_rollout_delta(
 def connect_cache(codex_home: Path) -> sqlite3.Connection:
     db_path = cache_db_path(codex_home)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("pragma foreign_keys = on")
-    conn.execute("pragma journal_mode = wal")
-    conn.execute("pragma synchronous = normal")
+    conn = connect_cache_database(db_path)
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("pragma foreign_keys = on")
+        conn.execute("pragma journal_mode = wal")
+        conn.execute("pragma synchronous = normal")
+    except BaseException:
+        conn.close()
+        raise
     return conn
 
 
@@ -1750,9 +1755,10 @@ def purge_retired_thread_cache(*, thread_id, confirm_thread_id, codex_home=None)
             return failure("thread_still_exists", "Application thread deletion must finish first")
     if not cache_db_path(home).exists():
         return {"ok": True, "operation": "purge-thread-cache", "thread_id": thread_id, "deleted_entries": 0}
-    with ThreadIndexLock(codex_home=home, thread={"id": thread_id, "rollout_path": "retired"}):
-        conn = connect_existing_cache(home)
-        try:
+    conn = connect_cache_database(cache_db_path(home))
+    conn.row_factory = sqlite3.Row
+    try:
+        with ThreadIndexLock(codex_home=home, thread={"id": thread_id, "rollout_path": "retired"}):
             conn.execute("PRAGMA foreign_keys=ON")
             conn.execute("BEGIN IMMEDIATE")
             count = conn.execute("SELECT count(*) FROM entries WHERE thread_id=?", (thread_id,)).fetchone()[0]
@@ -1763,8 +1769,8 @@ def purge_retired_thread_cache(*, thread_id, confirm_thread_id, codex_home=None)
             conn.commit()
             return {"ok": True, "operation": "purge-thread-cache", "thread_id": thread_id, "deleted_entries": count,
                     "application_databases_mutated": False}
-        finally:
-            conn.close()
+    finally:
+        conn.close()
 
 
 def upsert_rollout_path(conn: sqlite3.Connection, rollout_path: str | Path) -> int:
