@@ -78,9 +78,8 @@ def expire_windows(engine, at):
 def authenticated(path, engine):
     fs.check_chain(path)
     if path.stat().st_size > 8 * 1024 * 1024:
-        from .legacy import open_snapshot
-        payload, _ = open_snapshot(path, engine.key, host())
-        return payload
+        from .legacy import open_record
+        return open_record(path, engine.key, host())
     value = json.loads(path.read_text(encoding='utf-8'))
     payload = value['payload']
     signature = hmac.new(engine.key, encoded(payload), 'sha256').hexdigest()
@@ -103,6 +102,24 @@ def save_summary(path, payload, engine):
         pending.unlink(missing_ok=True)
 
 
+def retire_legacy_manifest(engine, transaction):
+    if not isinstance(transaction, str) or not re.fullmatch('[a-f0-9]{32}', transaction):
+        return
+    path = engine.root/(transaction+'.manifest.json')
+    if not path.exists():
+        return
+    info = {'path': str(path), **fs.identity(path)}
+    if info['directory'] or info['reparse'] or info['links'] != 1:
+        raise CleanupError('invalid_state', 'Legacy manifest is not an ordinary private state file')
+    info['content_sha256'] = fs.content_snapshot(info)
+    manifest = authenticated(path, engine)
+    if manifest.get('policy') != '1' or manifest.get('transaction_id') != transaction:
+        raise CleanupError('invalid_state', 'Legacy manifest belongs to another transaction')
+    result, _ = fs.delete_exact(info)
+    if result not in {'deleted', 'already_missing'}:
+        raise CleanupError('legacy_manifest_retained', 'Legacy manifest retirement: '+result)
+
+
 def expire_legacy(engine, at):
     expired, busy, terminal = [], [], []
     try:
@@ -116,6 +133,17 @@ def expire_legacy(engine, at):
                     if payload.get('policy') != '1':
                         continue
                     if payload.get('state') in TERMINAL:
+                        # Also settle the exact leftover from older compaction.
+                        transaction = payload.get('transaction_id')
+                        roots = [fs.canonical(root) for root in payload.get('roots', [])]
+                        if any(not roots or engine._roots_overlap(roots, [fs.canonical(r) for r in claim['roots']]) for claim in claims):
+                            busy.append(path.stem)
+                            continue
+                        retire_legacy_manifest(engine, transaction)
+                        compact = {key: value for key, value in payload.items() if key not in
+                                   {'baseline', 'entries', 'manifest', 'items', 'registrations', 'results'}}
+                        if compact != payload or path.stat().st_size > 8*1024*1024:
+                            save_summary(path, compact, engine)
                         terminal.append((payload.get('completed_at', payload.get('created_at', '')), path))
                         continue
                     if deadline(payload) > at:
@@ -130,10 +158,11 @@ def expire_legacy(engine, at):
                         busy.append(path.stem)
                         continue
                     summary = {key: value for key, value in payload.items() if key not in
-                               {'baseline', 'manifest', 'items', 'registrations', 'results'}}
+                               {'baseline', 'entries', 'manifest', 'items', 'registrations', 'results'}}
                     summary.update(state='expired', completed_at=at.isoformat(), detail_retained=False,
                                    discard_reason='Seven-day cleanup authority expired; targets preserved')
                     save_summary(path, summary, engine)
+                    retire_legacy_manifest(engine, payload.get('transaction_id'))
                     expired.append(path.stem)
                     terminal.append((summary['completed_at'], path))
                 # Authenticated compact terminal receipts only; no pending authority or keys.
