@@ -132,6 +132,19 @@ That helper now stages a fresh release under
 running `status` against a synthetic local Codex home, and only then flips
 `active.json` to the new release.
 
+An existing collector is pinned to its installed interpreter. After a runtime
+upgrade, refresh only that binding without reinstalling its schedule:
+
+```powershell
+pwsh -NoProfile -File families/codex-thread-recall/codex/skills/codex-thread-recall/scripts/install_codex_thread_recall_collector_task.ps1 -RefreshRuntime
+```
+
+This supported mode retains the exact arguments, working directory, action id,
+triggers, settings and principal, verifies them after the update, and preserves
+running instances through their normal exit. It requires the selected hidden
+`pythonw.exe`. To roll back, restore the previous verified runtime selection and
+refresh the binding again. Do not reinstall the task merely to change a runtime.
+
 To refresh it from an installed skill while pointing at a development checkout:
 
 ```powershell
