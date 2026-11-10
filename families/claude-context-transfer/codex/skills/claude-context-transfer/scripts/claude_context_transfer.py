@@ -20,7 +20,7 @@ import sys
 from typing import Any, Iterable
 from uuid import UUID
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 PREFIX = "agent_toolbelt_claude_context_transfer"
 DEFAULT_ARCHIVE_ROOT = Path(r"G:\Archives\Claude\ContextTransfers")
 DEFAULT_REFRAME_STATE = Path(r"D:\Tools\Reframe\profiles\ClaudeGPT\state.json")
@@ -305,6 +305,84 @@ def catalog_file(path: Path, head: int, tail: int, milestones: int, chars: int) 
     entries = [chosen[k] for k in sorted(chosen)]
     return {"path": str(path), "eligible_entries": total, "sampled_entries": len(entries),
             "truncated": len(entries) < total, "entries": entries}
+
+
+def tool_entries(number: int, record: dict[str, Any]) -> list[dict[str, Any]]:
+    """Tool calls (name + input) and tool results of one record, as searchable text."""
+    message = record.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    found = []
+    for block in content if isinstance(content, list) else []:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "tool_use":
+            text = f"{block.get('name')}: {json.dumps(block.get('input'), ensure_ascii=False)}"
+            found.append({"line": number, "kind": "tool_use", "timestamp": record.get("timestamp"), "text": text})
+        elif block.get("type") == "tool_result":
+            body = block.get("content")
+            if isinstance(body, list):
+                body = "\n".join(b.get("text", "") for b in body if isinstance(b, dict))
+            found.append({"line": number, "kind": "tool_result", "timestamp": record.get("timestamp"),
+                          "text": str(body or "")})
+    return found
+
+
+def session_transcripts(home: Path, session_id: str, subagents: bool) -> list[Path]:
+    main, files, _ = owned_members(home, exact_id(session_id, "session"))
+    return [main] + ([p for p in files if p.suffix == ".jsonl" and p != main] if subagents else [])
+
+
+def search(home: Path, session_id: str, pattern: str, kinds: set[str] | None, tools: bool, subagents: bool,
+           limit: int, chars: int, latest: bool) -> dict[str, Any]:
+    """Bounded regex search over a session's own transcript(s); read-only, streaming."""
+    try:
+        regex = re.compile(pattern, re.IGNORECASE)
+    except re.error as exc:
+        raise TransferError("invalid_pattern", f"Invalid regular expression: {exc}") from exc
+    matches: deque[dict[str, Any]] | list[dict[str, Any]] = deque(maxlen=limit) if latest else []
+    total = 0
+    for path in session_transcripts(home, session_id, subagents):
+        for number, record in iter_records(path):
+            candidates = []
+            entry = entry_for(number, record, 10**9)
+            if entry is not None:
+                candidates.append({**entry, "text": entry.pop("excerpt")})
+            if tools:
+                candidates.extend(tool_entries(number, record))
+            for item in candidates:
+                if kinds and item["kind"] not in kinds:
+                    continue
+                hit = regex.search(item["text"])
+                if not hit:
+                    continue
+                total += 1
+                if not latest and len(matches) >= limit:
+                    continue
+                start = max(0, hit.start() - chars // 3)
+                text = item.pop("text")
+                matches.append({**{k: item[k] for k in ("line", "kind", "timestamp")}, "file": path.name,
+                                "excerpt": text[start:start + chars], "offset": start, "length": len(text)})
+    return {"session_id": session_id, "pattern": pattern, "total_matches": total, "returned": len(matches),
+            "truncated": total > len(matches), "matches": list(matches)}
+
+
+def show(home: Path, session_id: str, line: int, chars: int, offset: int, subagent_file: str | None) -> dict[str, Any]:
+    """One transcript record's searchable text (bounded window), to expand a search hit."""
+    paths = session_transcripts(home, session_id, bool(subagent_file))
+    path = next((p for p in paths if p.name == subagent_file), None) if subagent_file else paths[0]
+    if path is None:
+        raise TransferError("file_not_found", "No such transcript for this session.", file=subagent_file)
+    for number, record in iter_records(path):
+        if number == line:
+            entry = entry_for(number, record, 10**9)
+            parts = ([entry["excerpt"]] if entry else []) + [t["text"] for t in tool_entries(number, record)]
+            text = "\n\n".join(parts)
+            return {"line": line, "type": record.get("type"), "timestamp": record.get("timestamp"),
+                    "length": len(text), "offset": offset, "text": text[offset:offset + chars],
+                    "truncated": offset + chars < len(text)}
+        if number > line:
+            break
+    raise TransferError("line_not_found", "No parsable record at that line.", line=line)
 
 
 def catalog(manifest: dict[str, Any], head: int, tail: int, milestones: int, chars: int) -> dict[str, Any]:
@@ -625,6 +703,24 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--output")
     p = sub.add_parser("validate-completion")
     p.add_argument("--transfer-directory", required=True)
+    p = sub.add_parser("search", help="Regex search over this session's own transcript (recall after compaction).")
+    p.add_argument("--pattern", required=True)
+    p.add_argument("--session-id", default=os.environ.get("CLAUDE_CODE_SESSION_ID"))
+    p.add_argument("--claude-home", default=home_default)
+    p.add_argument("--kind", action="append", help="Restrict to user, assistant, compact_summary, automated_event, "
+                                                    "tool_use, tool_result, title, pr_link, system_error.")
+    p.add_argument("--tools", action="store_true", help="Also search tool calls and tool results.")
+    p.add_argument("--subagents", action="store_true", help="Also search this session's subagent transcripts.")
+    p.add_argument("--latest", action="store_true", help="Return the last matches instead of the first.")
+    p.add_argument("--limit", type=int, default=20)
+    p.add_argument("--excerpt-chars", type=int, default=400)
+    p = sub.add_parser("show", help="Expand one transcript line found by search.")
+    p.add_argument("--line", type=int, required=True)
+    p.add_argument("--session-id", default=os.environ.get("CLAUDE_CODE_SESSION_ID"))
+    p.add_argument("--claude-home", default=home_default)
+    p.add_argument("--file", help="Subagent transcript file name from a search hit (default: main transcript).")
+    p.add_argument("--offset", type=int, default=0)
+    p.add_argument("--chars", type=int, default=4000)
     args = parser.parse_args(argv)
     try:
         if args.command == "inspect":
@@ -659,6 +755,15 @@ def main(argv: list[str] | None = None) -> int:
                                   Path(args.reframe_state) if args.reframe_state else None)
             if args.output:
                 write_json(args.output, result)
+        elif args.command == "search":
+            kinds = set(args.kind) if args.kind else None
+            tools = args.tools or bool(kinds and kinds & {"tool_use", "tool_result"})
+            result = search(Path(args.claude_home), args.session_id, args.pattern, kinds, tools, args.subagents,
+                            max(1, args.limit), max(40, args.excerpt_chars), args.latest)
+        elif args.command == "show":
+            main_name = None if not args.file or args.file.endswith(f"{args.session_id}.jsonl") else args.file
+            result = show(Path(args.claude_home), args.session_id, args.line, max(1, args.chars),
+                          max(0, args.offset), main_name)
         else:
             result = validate_completion(Path(args.transfer_directory))
     except TransferError as exc:

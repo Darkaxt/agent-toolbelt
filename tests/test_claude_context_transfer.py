@@ -124,6 +124,28 @@ class ClaudeContextTransferTests(unittest.TestCase):
             cct.validate_acceptance(result, handoff, self.acceptance(handoff, critical_unmapped_objectives=["x"]))
         self.assertTrue(cct.validate_acceptance(result, handoff, self.acceptance(handoff))["ok"])
 
+    def test_search_and_show_recall_own_session(self):
+        with self.main.open("a", encoding="utf-8") as stream:
+            stream.write(line(type="assistant", sessionId=SRC, message={"content": [
+                {"type": "tool_use", "name": "Bash", "input": {"command": "gh pr merge 42"}}]}))
+            stream.write(line(type="user", sessionId=SRC, message={"content": [
+                {"type": "tool_result", "content": [{"type": "text", "text": "MERGED abc123"}]}]}))
+        found = cct.search(self.home, SRC, "streaming|parser", None, False, False, 10, 80, False)
+        self.assertEqual([m["kind"] for m in found["matches"]], ["user", "assistant"])
+        self.assertEqual(cct.search(self.home, SRC, "gh pr merge", None, False, False, 10, 80, False)["total_matches"], 0)
+        tools = cct.search(self.home, SRC, "merge", {"tool_use", "tool_result"}, True, False, 10, 80, False)
+        self.assertEqual([m["kind"] for m in tools["matches"]], ["tool_use", "tool_result"])
+        latest = cct.search(self.home, SRC, "e", None, True, False, 1, 80, True)
+        self.assertTrue(latest["truncated"])
+        self.assertEqual(latest["matches"][0]["kind"], "tool_result")
+        child = cct.search(self.home, SRC, "child result", None, False, True, 10, 80, False)
+        self.assertEqual(child["matches"][0]["file"], "agent-abc.jsonl")
+        shown = cct.show(self.home, SRC, tools["matches"][0]["line"], 100, 0, None)
+        self.assertIn("gh pr merge 42", shown["text"])
+        self.assertEqual(cct.show(self.home, SRC, 1, 100, 0, "agent-abc.jsonl")["type"], "assistant")
+        with self.assertRaises(cct.TransferError):
+            cct.search(self.home, SRC, "(", None, False, False, 10, 80, False)
+
     @unittest.skipUnless(HAS_7Z, "7-Zip required")
     def test_pack_verify_gate_restore_and_completion(self):
         result, manifest = self.inspect()

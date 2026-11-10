@@ -1,9 +1,9 @@
 ---
 name: claude-context-transfer
-description: Take over a long-running Claude Code session into a fresh independent session, or migrate a Codex task into Claude Code, with bounded context evidence, a verified recovery archive and disk-reclaiming retirement of the original. Use for oversized Claude transcripts, Codex-to-Claude moves and restoring an archived session.
+description: Take over a long-running Claude Code session into a fresh independent session, or migrate a Codex task into Claude Code, with bounded context evidence, a verified recovery archive and disk-reclaiming retirement of the original. Use for oversized Claude transcripts, Codex-to-Claude moves, restoring an archived session, and searching this session's own transcript after compaction.
 license: MIT
 metadata:
-  version: "0.1.0"
+  version: "0.2.0"
   compatibility: Windows, Python 3.11+, 7-Zip. Claude Code destination. Retirement uses the installed thread-cleanup skill; Codex sources reuse the installed Codex context-transfer runtime.
 ---
 
@@ -118,3 +118,20 @@ retired.
 `restore --archive <session-tree.7z>` tests the archive, verifies every hash,
 writes only absent original paths, skips identical files and refuses conflicts.
 Then `claude --resume <id>`.
+
+## Recall: search this session after compaction
+
+Before re-researching something this session already knew, search its own transcript
+(read-only, streaming; defaults to `CLAUDE_CODE_SESSION_ID`):
+
+```powershell
+python -I <skill>/scripts/claude_context_transfer.py search --pattern "<regex>" [--latest] [--limit 20] [--excerpt-chars 400]
+python -I <skill>/scripts/claude_context_transfer.py search --pattern "gh pr merge" --tools --kind tool_use   # commands/tool inputs
+python -I <skill>/scripts/claude_context_transfer.py search --pattern "<regex>" --subagents                   # include subagent transcripts
+python -I <skill>/scripts/claude_context_transfer.py show --line <line> [--file <subagent file>] [--offset 0 --chars 4000]
+```
+
+Search covers user/assistant text, compaction summaries, titles, PR links and system errors;
+`--tools` adds tool calls and results. Matching is case-insensitive. Results are bounded
+(`truncated`, `total_matches`); narrow the pattern or use `--latest` instead of raising limits.
+Never read the whole `.jsonl` into context; use `show` to expand one hit.
