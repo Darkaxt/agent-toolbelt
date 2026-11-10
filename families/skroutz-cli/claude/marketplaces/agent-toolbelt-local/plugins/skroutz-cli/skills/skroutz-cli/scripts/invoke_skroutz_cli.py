@@ -8,6 +8,7 @@ def candidate_repo_roots(current: Path) -> list[Path]:
     env_home = os.getenv("AGENT_TOOLBELT_HOME")
     if env_home:
         candidates.append(Path(env_home).expanduser())
+    candidates.append(Path(r"D:\Downloads\Public\agent-toolbelt-skroutz-cli"))
     candidates.append(Path(r"D:\Downloads\Public\agent-toolbelt"))
     candidates.extend(current.parents)
     return candidates

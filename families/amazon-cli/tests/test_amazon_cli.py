@@ -589,8 +589,8 @@ class AmazonCLIBridgeTests(unittest.TestCase):
         self.assertIn("targeted waits", skill_text)
         self.assertIn("never checkout", skill_text.lower())
         self.assertIn("Search result triage", skill_text)
-        self.assertIn("Do not narrow it", skill_text)
-        self.assertIn("locally project", skill_text)
+        self.assertIn("Do not narrow a confirmed zero-result query", skill_text)
+        self.assertIn("project the existing JSON locally", skill_text)
 
     def test_claude_wrapper_bootstraps_family_package(self):
         wrapper_path = (
@@ -611,9 +611,18 @@ class AmazonCLIBridgeTests(unittest.TestCase):
         wrapper_text = wrapper_path.read_text(encoding="utf-8")
 
         self.assertIn("bootstrap_family_package", wrapper_text)
-        self.assertIn('family_name="amazon-cli"', wrapper_text)
-        self.assertIn('package_dir_name="agent_toolbelt_amazon_cli"', wrapper_text)
+        self.assertIn("AGENT_TOOLBELT_HOME", wrapper_text)
         self.assertIn("from agent_toolbelt_amazon_cli import cli", wrapper_text)
+        # Installed copies live outside the repository; the wrapper must still
+        # resolve the workspace (regression: it only walked its own parents).
+        import shutil, subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            copy = Path(tmp) / "invoke_amazon_cli.py"
+            shutil.copyfile(wrapper_path, copy)
+            env = dict(os.environ, AGENT_TOOLBELT_HOME=str(REPO_ROOT))
+            run = subprocess.run([sys.executable, "-I", str(copy), "--help"], env=env,
+                                 capture_output=True, text=True, timeout=60)
+        self.assertEqual(run.returncode, 0, run.stderr)
         self.assertNotIn("cookie", wrapper_text.lower())
         self.assertNotIn("local storage", wrapper_text.lower())
 
