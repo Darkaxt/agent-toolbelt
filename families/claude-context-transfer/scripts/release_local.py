@@ -8,7 +8,6 @@ from pathlib import Path
 import re
 import subprocess
 
-VERSION = '0.1.0'
 NAME = 'claude-context-transfer'
 FILES = ('SKILL.md','scripts/claude_context_transfer.py')
 
@@ -113,6 +112,11 @@ def main():
         if data != committed:
             raise RuntimeError('Source differs from the specified commit; release refused.')
         payload[name] = data
+    # The helper's own VERSION is the single source of the release version.
+    found = re.search(rb'^VERSION = "(\d+\.\d+\.\d+)"$', payload['scripts/claude_context_transfer.py'], re.M)
+    if not found:
+        raise RuntimeError('Helper VERSION not found; release refused.')
+    VERSION = found.group(1).decode()
     manifest = {'name':NAME,'version':VERSION,'source_commit':args.source_commit,
                 'files':{name:digest(data) for name,data in payload.items()}}
     manifest_bytes = (json.dumps(manifest,indent=2)+'\n').encode()
