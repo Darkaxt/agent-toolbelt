@@ -43,6 +43,9 @@ class NotificationContracts(unittest.TestCase):
             self.assertEqual(notifications.owner_label('Human task'), 'Human task')
         with patch.dict(os.environ, {'CLAUDE_SESSION_ID': 'claude-id'}, clear=True):
             self.assertEqual(notifications.owner_label(None), 'Claude session claude-id')
+        # Claude Code exports CLAUDE_CODE_SESSION_ID; the legacy name stays a fallback.
+        with patch.dict(os.environ, {'CLAUDE_CODE_SESSION_ID': 'claude-code-id'}, clear=True):
+            self.assertEqual(notifications.owner_label(None), 'Claude session claude-code-id')
 
     def test_thread_name_is_explicit_sanitized_and_independent_of_task(self):
         self.assertEqual(notifications.thread_label('  Actual\r\n thread  '), 'Actual thread')

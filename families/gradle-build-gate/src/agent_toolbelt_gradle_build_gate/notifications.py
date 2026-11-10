@@ -17,7 +17,8 @@ def clean_text(value, limit):
 def owner_label(explicit):
     if explicit and explicit.strip():
         return clean_text(explicit, 200)
-    for key, prefix in (('CODEX_THREAD_ID', 'Codex task'), ('CLAUDE_SESSION_ID', 'Claude session')):
+    for key, prefix in (('CODEX_THREAD_ID', 'Codex task'), ('CLAUDE_CODE_SESSION_ID', 'Claude session'),
+                        ('CLAUDE_SESSION_ID', 'Claude session')):
         if os.environ.get(key):
             return clean_text(f'{prefix} {os.environ[key]}', 200)
     return f'Task unknown (supervisor PID {os.getpid()})'
