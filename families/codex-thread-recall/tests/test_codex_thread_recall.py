@@ -164,6 +164,30 @@ def add_thread_to_codex_home(
 
 
 class ThreadRecallTests(unittest.TestCase):
+    def test_escaped_lone_surrogates_index_without_rewriting_raw_rollout(self):
+        entries = [
+            make_entry('2026-04-25T08:00:00Z','event_msg',
+                {'type':'user_message','text':'Inspect marker \udf89 and valid emoji \U0001f389.'}),
+            make_entry('2026-04-25T08:00:01Z','response_item',
+                {'type':'function_call','arguments':json.dumps({'command':'echo \ud800'})}),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home, rollout = make_codex_home(temp_dir,rollout_entries=[])
+            original = ('\n'.join(json.dumps(entry,ensure_ascii=True) for entry in entries)+'\n').encode('utf-8')
+            rollout.write_bytes(original)
+            with self.with_env(codex_home):
+                result = thread_recall.collect(thread_source='current')
+                self.assertNotEqual(result['collector']['threads'][0]['result'],'failed',result)
+            connection = sqlite3.connect(codex_home/'cache/codex-thread-recall/index.sqlite')
+            try:
+                rows = connection.execute('select command,excerpt from entries order by entry_index').fetchall()
+            finally:
+                connection.close()
+            self.assertIn('\\udf89',rows[0][1])
+            self.assertIn('\U0001f389',rows[0][1])
+            self.assertEqual(rows[1][0],'echo \\ud800')
+            self.assertEqual(rollout.read_bytes(),original)
+
     def test_skill_requires_foreground_reads_to_wait_for_refresh(self):
         skill_path = (
             REPO_ROOT

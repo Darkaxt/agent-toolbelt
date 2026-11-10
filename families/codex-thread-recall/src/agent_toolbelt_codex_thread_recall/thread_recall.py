@@ -1202,7 +1202,13 @@ def normalize_entry(
         }
 
     command = command_from_payload(payload)
-    flattened = flatten_content(payload)
+    # JSON accepts escaped lone UTF-16 surrogates, but SQLite text requires
+    # valid UTF-8. Escape those code units in derived search text, preserving
+    # their identity and the untouched original rollout/byte offsets.
+    if command is not None:
+        command = command.encode('utf-8', errors='backslashreplace').decode('utf-8')
+    flattened = [part.encode('utf-8', errors='backslashreplace').decode('utf-8')
+        for part in flatten_content(payload)]
     combined_text = " ".join(part for part in flattened if part).strip()
     if command and command not in combined_text:
         combined_text = f"{command}\n{combined_text}".strip()

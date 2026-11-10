@@ -287,6 +287,11 @@ Successful indexed responses also include cache metadata:
 
 Failure is explicit:
 
+Escaped lone UTF-16 surrogates in JSON message/command text are represented as
+visible `\uXXXX` escapes in the derived UTF-8 search index. Valid Unicode stays
+unchanged; raw rollout bytes and source offsets are preserved. This prevents
+one malformed code unit from stopping a collector refresh.
+
 - `thread_unavailable` when `CODEX_THREAD_ID` is missing or not found
 - `rollout_missing` when the rollout JSONL path cannot be read
 - collector thread result `busy` when another live process owns the per-thread cache lock; foreground read commands wait for that owner instead
