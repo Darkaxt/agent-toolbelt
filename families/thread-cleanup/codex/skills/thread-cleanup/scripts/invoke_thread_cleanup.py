@@ -17,6 +17,10 @@ class CleanupError(RuntimeError):
     pass
 
 
+class ActiveClaudeError(CleanupError):
+    pass
+
+
 def digest(path):
     result = hashlib.sha256()
     with Path(path).open("rb") as stream:
@@ -157,15 +161,34 @@ def claude_snapshot(home, thread_id):
             "database_rows": [], "shared_indexes": [str(home / "history.jsonl"), str(main.parent / "sessions-index.json")]}
 
 
+def windows_processes():
+    """Fresh native PID/name census; read command lines only for Claude launchers."""
+    try:
+        import psutil
+    except ImportError as exc:
+        raise CleanupError("Native Windows activity checks require the bundle's pinned psutil requirement") from exc
+    processes = {pid: {"ProcessId": pid} for pid in psutil.pids()}
+    psutil.process_iter.cache_clear()
+    for process in psutil.process_iter(["pid", "name"]):
+        try:
+            name = (process.info.get("name") or "").casefold()
+            if name not in ("claude.exe", "node.exe"):
+                continue
+            processes[process.pid] = {"ProcessId": process.pid, "Name": name,
+                                      "CommandLine": " ".join(process.cmdline())}
+        except psutil.NoSuchProcess:
+            continue
+        except psutil.AccessDenied as exc:
+            raise CleanupError("A Claude/Node process cannot be inspected; preserve selected histories") from exc
+    return list(processes.values())
+
+
 def live_claude_ids(home):
     ids = set()
     if os.name != "nt":
         raise CleanupError("Live Claude registration verification is Windows-only")
     # Process identity matters; no elapsed-age or missing-registration inference.
-    cmd = "Get-CimInstance Win32_Process | Select-Object Name,ProcessId,CommandLine | ConvertTo-Json -Compress"
-    result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", cmd], capture_output=True, text=True, check=True)
-    processes = json.loads(result.stdout)
-    processes = processes if isinstance(processes, list) else [processes]
+    processes = windows_processes()
     by_pid = {r["ProcessId"]: r.get("CommandLine") for r in processes}
     for path in (Path(home) / "sessions").glob("*.json"):
         record = json.loads(path.read_text(encoding="utf-8"))
@@ -363,7 +386,7 @@ def delete_claude(packet, resume=False):
     if tid in set(packet["protected_ids"]) | {os.environ.get("CLAUDE_SESSION_ID")}:
         raise CleanupError("Protected/current Claude session")
     if tid in live_claude_ids(home):
-        raise CleanupError("Claude session has a live registration or command reference")
+        raise ActiveClaudeError("Claude session has a live registration or command reference")
     if not resume and packet["snapshot"] != claude_snapshot(home, tid):
         raise CleanupError("Session artifacts changed after review; create a new plan")
     if resume:

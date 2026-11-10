@@ -136,12 +136,10 @@ class CleanupTests(unittest.TestCase):
             self.assertEqual(original.read_text(), "preserve original")
 
     def test_live_detection_ignores_the_cleanup_shells_own_uuid_arguments(self):
-        import subprocess
         processes = [{"Name": "pwsh.exe", "ProcessId": 1, "CommandLine": f"python C:/.claude/skills/thread-cleanup/script.py --confirm-thread-id {ID}"},
                      {"Name": "claude.exe", "ProcessId": 2, "CommandLine": f"claude --resume {OTHER}"}]
         with tempfile.TemporaryDirectory(dir="D:/Temp") as value:
-            completed = subprocess.CompletedProcess([], 0, stdout=json.dumps(processes))
-            with patch.object(cleanup.subprocess, "run", return_value=completed):
+            with patch.object(cleanup, "windows_processes", return_value=processes):
                 self.assertEqual(cleanup.live_claude_ids(Path(value)), [OTHER])
 
     def test_fork_dependencies_are_not_confused_with_spawn_edges(self):
@@ -156,6 +154,49 @@ class CleanupTests(unittest.TestCase):
             found = cleanup.fork_dependents(home, ID)
             self.assertEqual(found[0]["thread_id"], OTHER)
             self.assertEqual(found[0]["fork_boundary"], 42)
+
+
+class NativeActivityTests(unittest.TestCase):
+    def native(self, processes, pids=()):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        iterator = Mock(return_value=iter(processes))
+        iterator.cache_clear = Mock()
+        return SimpleNamespace(pids=lambda: list(pids), process_iter=iterator,
+                               NoSuchProcess=ProcessLookupError, AccessDenied=PermissionError)
+
+    def process(self, pid, name, command=None, error=None):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        return SimpleNamespace(pid=pid, info={"pid": pid, "name": name},
+                               cmdline=Mock(return_value=command or [], side_effect=error))
+
+    def test_native_census_reads_only_relevant_commands_and_preserves_all_registration_pids(self):
+        import sys
+        shell = self.process(1, "pwsh.exe", ["script", ID])
+        claude = self.process(2, "CLAUDE.EXE", ["claude", "--resume", OTHER])
+        native = self.native([shell, claude], [1, 2, 99])
+        with patch.dict(sys.modules, {"psutil": native}), patch.object(cleanup.subprocess, "run") as shell_run:
+            rows = cleanup.windows_processes()
+        self.assertEqual({r["ProcessId"] for r in rows}, {1, 2, 99})
+        shell.cmdline.assert_not_called()
+        claude.cmdline.assert_called_once()
+        native.process_iter.cache_clear.assert_called_once()
+        shell_run.assert_not_called()
+
+    def test_vanished_process_is_ignored_but_unreadable_launcher_preserves_histories(self):
+        import sys
+        with patch.dict(sys.modules, {"psutil": self.native([self.process(2, "node.exe", error=ProcessLookupError())])}):
+            cleanup.windows_processes()
+        with patch.dict(sys.modules, {"psutil": self.native([self.process(2, "claude.exe", error=PermissionError())])}):
+            with self.assertRaisesRegex(cleanup.CleanupError, "cannot be inspected"):
+                cleanup.windows_processes()
+
+    def test_missing_native_dependency_fails_closed(self):
+        import sys
+        with patch.dict(sys.modules, {"psutil": None}):
+            with self.assertRaisesRegex(cleanup.CleanupError, "psutil"):
+                cleanup.windows_processes()
 
 
 if __name__ == "__main__":

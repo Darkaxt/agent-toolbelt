@@ -3,8 +3,8 @@ name: thread-cleanup
 description: Permanently retire explicitly selected inactive Codex or Claude conversations, including database history and exact session artifacts; separate from recoverable context migration or ordinary artifact cleanup.
 license: MIT
 metadata:
-  version: "0.1.0"
-  compatibility: Windows, Python 3.11+, installed Codex app-server and transactional-cleanup filesystem runtime. Codex and Claude.
+  version: "0.1.1"
+  compatibility: Windows, Python 3.11+, pinned psutil requirements, installed Codex app-server and transactional-cleanup filesystem runtime. Codex and Claude.
 ---
 
 # Permanent Thread Cleanup
@@ -88,6 +88,12 @@ must not be swept up. Identify separate retained copies when relevant; never
 claim every historical trace or physical SQLite allocation has disappeared.
 
 ### Claude
+
+Activity checks use psutil's fresh native PID/name census and inspect command
+lines only for Claude/Node launchers. Install this bundle's pinned requirements
+into the selected Python runtime. Missing dependencies or unreadable Claude/Node
+processes preserve histories. Retirement always checks activity immediately
+before mutation; a stale cached census is never used.
 
 The helper inventories the exact project's `<session-id>.jsonl`, owned subagent
 tree, file-history/session-env/tasks directories, exact debug file and warning

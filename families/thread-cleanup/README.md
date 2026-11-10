@@ -12,7 +12,7 @@ A verified-orphan queue-revision adapter addresses a tested app deletion omissio
 under an immediate SQLite transaction after the selected thread/content is gone.
 
 Read SKILL.md before invoking the helper. Runtime requirements: Windows,
-Python 3.11+, installed Codex executable and installed transactional-cleanup
+Python 3.11+, the bundle's pinned psutil requirement, installed Codex executable and installed transactional-cleanup
 filesystem runtime. Private plan/evidence files stay outside published bundles.
 
 Focused verification: `python -B -m unittest tests.test_thread_cleanup`.
