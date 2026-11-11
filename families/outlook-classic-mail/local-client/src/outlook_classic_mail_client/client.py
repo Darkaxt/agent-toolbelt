@@ -278,21 +278,63 @@ def resolve_outlook_executable() -> Path | None:
     return None
 
 
-def launch_outlook_desktop() -> dict[str, Any]:
-    executable = resolve_outlook_executable()
-    if executable is None:
-        raise FileNotFoundError("Outlook Classic executable could not be resolved.")
-    process = subprocess.Popen(
+CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+
+
+def _start_outlook_desktop_process(executable: Path):
+    """Start the user's Outlook outside this helper's job when permitted.
+
+    Outlook Classic is the user's shared desktop application, not part of one
+    finite helper request. A supervising job (LLM Coordinator) that waits for
+    its whole process tree would otherwise stay open until the user closes
+    Outlook, and would terminate Outlook with the job. A job without
+    JOB_OBJECT_LIMIT_BREAKAWAY_OK keeps the child; that is measured afterwards,
+    not assumed.
+    """
+    return subprocess.Popen(
         [str(executable), '/recycle'],
+        creationflags=CREATE_BREAKAWAY_FROM_JOB,
         cwd=str(executable.parent),
         close_fds=True,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+
+
+def _process_in_any_job(pid: int) -> bool | None:
+    """Report whether a started process is inside any job; None when unreadable."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.IsProcessInJob.argtypes = [wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL)]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return None
+    try:
+        result = wintypes.BOOL()
+        if not kernel32.IsProcessInJob(handle, None, ctypes.byref(result)):
+            return None
+        return bool(result.value)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def launch_outlook_desktop() -> dict[str, Any]:
+    executable = resolve_outlook_executable()
+    if executable is None:
+        raise FileNotFoundError("Outlook Classic executable could not be resolved.")
+    process = _start_outlook_desktop_process(executable)
     launch = {
         "executable": str(executable),
         "pid": process.pid,
+        "in_job": _process_in_any_job(process.pid),
     }
     try:
         wait_for_outlook_desktop(process)
