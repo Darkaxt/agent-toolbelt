@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import types
@@ -338,20 +339,89 @@ class OutlookDiagnosticsTests(unittest.TestCase):
 
         with mock.patch.object(client, "resolve_outlook_executable", return_value=executable):
             with mock.patch.object(client.subprocess, "Popen", return_value=fake_process) as popen, \
+                 mock.patch.object(client, "_process_in_any_job", return_value=False), \
                  mock.patch.object(client, "wait_for_outlook_desktop") as ready:
                 result = client.launch_outlook_desktop()
 
         self.assertEqual(result["pid"], 2468)
         ready.assert_called_once_with(fake_process)
+        self.assertIs(result["in_job"], False)
         self.assertTrue(result["desktop_ready"])
         popen.assert_called_once_with(
             [str(executable), '/recycle'],
+            creationflags=client.CREATE_BREAKAWAY_FROM_JOB,
             cwd=str(executable.parent),
             close_fds=True,
             stdin=client.subprocess.DEVNULL,
             stdout=client.subprocess.DEVNULL,
             stderr=client.subprocess.DEVNULL,
         )
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows job objects")
+    def test_breakaway_launch_leaves_only_a_permitting_job(self):
+        """Real CreateProcess inside a job, using the client's own launch flag.
+
+        A job without BREAKAWAY_OK silently keeps the child (observed on
+        Windows 11 26200), so the Coordinator must permit breakaway for Outlook.
+        """
+        self.assertEqual(_child_job_membership(breakaway_ok=True), "escaped")
+        self.assertEqual(_child_job_membership(breakaway_ok=False), "contained")
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows job objects")
+    def test_job_membership_probe_reads_a_live_process(self):
+        child = subprocess.Popen([sys.executable, "-c", "import sys;sys.stdin.read()"], stdin=subprocess.PIPE)
+        try:
+            self.assertIn(client._process_in_any_job(child.pid), (True, False))
+        finally:
+            child.communicate("")
+        self.assertIsNone(client._process_in_any_job(0))
+
+
+def _child_job_membership(*, breakaway_ok):
+    """Run a probe inside a fresh job; it starts a child with the client's flag."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+
+    class BASIC(ctypes.Structure):
+        _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                    ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                    ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                    ("SchedulingClass", wintypes.DWORD)]
+
+    class EXTENDED(ctypes.Structure):
+        _fields_ = [("Basic", BASIC), ("Io", ctypes.c_uint64 * 6), ("ProcessMemoryLimit", ctypes.c_size_t),
+                    ("JobMemoryLimit", ctypes.c_size_t), ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                    ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+    job = kernel32.CreateJobObjectW(None, None)
+    limits = EXTENDED()
+    limits.Basic.LimitFlags = 0x00002000 | (0x00000800 if breakaway_ok else 0)  # KILL_ON_CLOSE | BREAKAWAY_OK
+    assert kernel32.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits))
+    probe = (
+        "import ctypes,subprocess,sys\n"
+        "from ctypes import wintypes\n"
+        "sys.stdin.readline()\n"
+        "k=ctypes.WinDLL('kernel32');k.OpenProcess.restype=wintypes.HANDLE\n"
+        f"c=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],creationflags={client.CREATE_BREAKAWAY_FROM_JOB},"
+        "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n"
+        "h=k.OpenProcess(0x1000,False,c.pid);r=wintypes.BOOL()\n"
+        "k.IsProcessInJob(h,None,ctypes.byref(r));c.kill()\n"
+        "print('contained' if r.value else 'escaped')\n"
+    )
+    parent = subprocess.Popen([sys.executable, "-c", probe], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        handle = kernel32.OpenProcess(0x1F0FFF, False, parent.pid)
+        assert kernel32.AssignProcessToJobObject(job, handle)
+        kernel32.CloseHandle(handle)
+        output, _ = parent.communicate("go\n", timeout=60)
+    finally:
+        kernel32.CloseHandle(job)
+    return output.strip()
 
 
 if __name__ == "__main__":
