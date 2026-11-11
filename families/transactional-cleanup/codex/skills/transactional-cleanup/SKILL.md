@@ -3,354 +3,65 @@ name: transactional-cleanup
 description: Clean task-generated Windows or Android artifacts through reviewed snapshots and exact-file tickets, including temporary test apps with recorded installation provenance.
 license: MIT
 metadata:
-  version: "0.10.1"
+  version: "0.11.0"
   compatibility: Windows 10/11, Python 3.11+, NTFS/ReFS or content-bound exFAT; Android cleanup requires ADB and device shell tools. Codex and Claude.
 ---
 
 # Transactional Cleanup
 
-Use `scripts/invoke_transactional_cleanup.py` for attributed generated artifacts.
-Read the JSON results and inspect the review before issuing a ticket. An issued
-ticket is a procedural review gate, not a request for another user approval.
+Delete task-generated files with `scripts/invoke_transactional_cleanup.py`. Every
+route snapshots the targets and deletes only reviewed members: Git-tracked files,
+links, protected roots, replaced files and files created after the snapshot always
+survive. A ticket is a procedural gate, not a request for another user approval.
 
-For Android test files or temporary test-app removal, read
-[Android Task Cleanup](references/android.md) and use the separate `adb-*`
-commands. Windows-only file identity rules below do not apply to Android.
-Automatic task-app removal requires a pre-install absence baseline and intended
-APK hashes; never invent missing historical provenance. A separate explicit
-user-0 removal decision can use the exact-package contract in the reference.
-Normal task cleanup authorization
-does not require repeated user approval, but does not cover unrelated device data.
+## Task scratch under Temp: one call
 
-## Prevent Litter Before Creation
-
-Create task-owned scratch beneath an exact task folder in `D:/Temp` or `E:/Temp`:
-disposable clones/worktrees, captures, downloaded verification copies, logs,
-packaging intermediates and evidence staging. Set child-process `TEMP`/`TMP` or
-tool-specific scratch options when supported; do not change global environment
-settings or pretend every tool honors them. Record unavoidable outside-Temp output
-and register its exact generated path for cleanup. Do not scatter scratch beside
-maintained checkouts or in Documents, Downloads, C: user Temp or helper installations.
-
-Maintained source, requested deliverables, installed runtimes and durable ticket
-state are NOT temporary scratch. Keep their intentional paths; do not move an
-existing checkout into Temp merely to obtain deletion authority. Clean attributable
-existing leftovers outside Temp using their proper contract below. The helper
-does not intercept arbitrary filesystem writes; agents must enforce placement.
-
-Cleanup MUST NOT acquire the Gradle build mutex, join its execution queue, or be
-wrapped in the Gradle build launcher. Use this helper's own exact-target locks.
-Gradle-produced files are not automatically shared build resources: review exact
-ownership and skip outputs still used by a build. Shared cache/version retirement
-requires current consumer evidence and safe native lifecycle or owner coordination;
-ambiguous targets are preserved, not a reason to reserve the host build gate for
-an entire mixed cleanup batch. Captures, old APKs and manifest hashing do not need
-the Gradle gate. Never stop another build to obtain cleanup clearance.
-
-## Route Source Changes And Cleanup Separately
-
-Git tracking protects working source from accidental artifact cleanup; it is not
-a blanket refusal to remove anything inside a repository. Classify each target:
-
-- Generated output: review exact provenance and current consumers, then use the
-  normal ticket workflow (or Existing Build Leftovers for pre-existing output).
-  A repository ancestor does not make untracked build output untouchable.
-- Disposable validation clone: use Disposable Validation Repositories only when
-  that exact clone satisfies its contract; tracked members can then be ticketed.
-- Entire obsolete checkout, including outside Temp: use Explicit Repository
-  Retirement below, not the disposable-validation shortcut.
-- Generated CMake dependency clone under `.cxx/.../_deps/<name>-src`: read
-  [Generated Dependency Clones](references/generated-dependencies.md). Exact
-  provenance, pin/patch reproduction and local-work checks permit this narrow
-  cache class outside Temp without creating a full repository backup.
-- Obsolete tracked source or templates: removal is a normal source change, not a
-  cleanup ticket. If removal is within the user's authorized scope, inspect
-  references, build/package consumers and local changes, make the narrow reviewed
-  deletion, verify the affected behavior and commit it through normal Git review.
-  Do not force-remove local edits, untrack source just to bypass this helper, or
-  interpret an artifact-cleanup request as permission to delete source. If source
-  removal is outside scope, preserve it and report that decision separately.
-
-When a review reports `git_tracked`, inspect the exact excluded members; do not
-abandon independent eligible artifacts. Apply their reviewed ticket and separately
-report removed output, preserved source and genuine residual blockers. Do not
-describe the whole cleanup as blocked because a few tracked files are excluded.
-An unused wrapper template is not a downloaded Gradle distribution or cache;
-deleting the template does not reclaim those dependencies.
-
-## Workflow
-
-1. Before disk-intensive work, run `begin --workspace <repo>`. It inventories only
-   that workspace. For targeted work, repeated `--scan-root <path>` replaces the
-   workspace scan. Add known Temp roots only with `--include-known-temp-roots`.
-   Include the workspace explicitly only when its inventory is wanted.
-   Reports state actual coverage; existing transactions retain their original roots.
-   Do not choose an entire Temp root for a known list of build leftovers: repeat
-   `--scan-root` for each exact output folder. Registration does not narrow scans.
-2. Register specific outputs with `register --transaction <id> --path <output>
-   --kind compiler-output --evidence "<command or tool that creates this output>"`.
-   An uncovered registration extends scan coverage. When only selected sibling
-   leaves are intended, register those exact leaves; do not register their common
-   parent merely to reduce calls. Overlapping roots are scanned once, but overlap
-   deduplication does not narrow an intentionally broader registered root.
-   Register before creation when possible. A normal registration cannot authorize a
-   repository root, tracked file, helper installation, or protected system path.
-   Use the separate disposable-validation-repository contract below only when all
-   of its safeguards apply.
-3. Once the selected outputs' last consumers have exited and required retained
-   evidence is verified, run `review --transaction <id>` once. Inspect the signed
-   manifest with `inspect --transaction <id> --offset <n> --limit 1000`, using its
-   returned `next_offset` for further pages. Optional `--decision` filters must
-   not conceal exclusions or leave required candidates uninspected.
-4. In a separate invocation run `ticket --transaction <id>
-   --manifest-sha256 <reviewed hash>`. No paths can be added after review.
-5. Use `apply --ticket <opaque id> --dry-run` if useful, then
-   `apply --ticket <opaque id>`. Read result counts and reclaimed bytes.
-6. Use `status --transaction <id>` for residuals, or bare `status` to observe the
-   active/latest operation. It is lock-free and reports phase/count/byte progress.
-   Retry the same ticket after
-   locks release. Do not report completion while `partially_applied` remains.
-   `revoke --ticket <id>` explicitly abandons unresolved cleanup without deleting it.
-   If no ticket was issued, use `discard --transaction <id> --reason "<why the
-   snapshot is no longer needed>"`. This abandons the inventory, not the target
-   files; future cleanup requires a fresh snapshot. Close snapshots after task
-   completion, failure or a change of strategy; do not leave abandoned inventories.
-
-All commands accept `--state-root <directory>` before the command for test isolation.
-Keep normal installed commands on their default helper state.
-
-## Avoid Call Amplification
-
-Batch outputs ready at the same cleanup checkpoint into one bounded transaction;
-do not create a transaction per file or inspection page. This does not postpone
-cleanup of spent D: output until the whole thread ends or combine unrelated owners.
-
-For a large Windows manifest, use `inspect`'s supported maximum of **1,000 members
-per call** (not its 100-member default). Android `adb-inspect` has a separate
-maximum of **100**; follow that backend's reference instead. Read each required
-page once and retain the
-transaction, manifest hash and inspection coverage. Capture large JSON in the
-calling process or an attributable task file and inspect every member there;
-summarize the results instead of dumping all rows into the conversation. A tool
-display cap is not a reason to spawn dozens of small-page helper processes.
-Keep inspection output outside the frozen deletion targets; files created after
-review are not covered by that ticket.
-Do not repeat begin/review/inspect for an unchanged snapshot or merely to report
-status. Ticket issuance remains a separate invocation after inspection.
-
-Serialize commands for the same transaction or overlapping roots, **including
-inspect calls**; parallel pages can return `target_busy`. When the original tool
-session is still running, observe it through its supported wait interface rather
-than launching duplicate helper commands. Use status for a concrete progress or
-recovery question, not a tight polling loop. Dry-run is optional when it resolves
-an actual uncertainty, not a mandatory extra apply for every batch.
-
-Use the helper's reported byte totals. `candidate_count` includes directories,
-but `candidate_bytes` and deletion byte totals exclude directory sizes. If an
-independent census is needed, sum `size` only for non-directory members and report
-logical bytes, not physically reclaimed space. A caller's accounting error does
-not justify re-reading the entire unchanged manifest or weakening its checks.
-
-If an operation returns `target_busy`, its root overlaps a live operation; use
-lock-free `status` to observe it and retry after that operation completes. Disjoint
-explicit roots may run concurrently. `state_busy` is reserved for a pre-upgrade
-runtime that still owns the legacy global lock. Do not infer a hang solely from
-elapsed time. Broad inventories still require filesystem traversal, but
-state is streamed in bounded batches. Once a
-review has completed, inspect its existing manifest instead of running it again.
-
-SQLite failures are distinct from target ownership: `state_database_busy` reports
-`sqlite_error_code` and `sqlite_error_name`, including `SQLITE_BUSY_SNAPSHOT`.
-That code can mean a stale read snapshot, not an ongoing filesystem lock. Inspect
-saved status and diagnose the database failure before retrying a still-valid
-ticket. Do not blindly retry, kill an assumed owner, auto-revoke, or bypass the
-helper. Apply may have removed exact members before its last result checkpoint;
-committed `deleted_bytes` may undercount those removals. Revoked tickets remain
-unusable: any residual cleanup needs a fresh reviewed snapshot and ticket.
-
-## Existing Build Leftovers
-
-When a build started without a transaction, first inspect the exact folder and
-verify its generated provenance and whether an installed application depends on it.
-Begin with `--workspace <repo> --scan-root <exact-output-folder>` so unrelated
-workspace and Temp trees are not traversed. Then register that bounded output with
-`--regenerated --kind explicit-generated-output --evidence "<verified provenance>"`.
-This is the specification's explicitly registered pre-existing generated-output
-path. Ordinary pre-existing modified files remain protected. Never use
-`--regenerated` on a whole temp/profile/repository root.
-Non-Git output is supported. Empty regular `.git` files and empty `.git`
-directories inside attributable generated output may be reviewed and ticketed.
-Zero bytes alone is not deletion authority: provenance, pre-existing-file
-authority, ancestor Git tracking, stable identity and exact-file checks apply.
-Nonempty or linked markers and real repositories remain protected. `.gitignore`
-is governed by attribution and Git tracking, not its filename. Failure to inspect
-a real repository remains fail-closed.
-
-## Generated Git Workflow Markers
-
-Prefer future workflow pointers under an exact task-owned D:/Temp directory,
-not inside .git. Existing automation-generated tree pointers can use a narrowly
-scoped exception: a regular single-link file directly named
-`.git/<namespace>-workflow-tree`, containing only an existing Git tree object ID.
-Inspect producer provenance and consumers first. This does not authorize removing
-the tree object or any other Git metadata.
-
-Begin with that exact file as `--scan-root`, then register:
-`--kind generated-git-marker --regenerated --confirm-git-marker <exact-file>
---evidence "<producer and why this marker is expendable>"`.
-Use the normal separate review, inspect, ticket and apply invocations.
-The helper binds the repository and .git directory identities, hashes the reviewed
-content and preserves edited/replaced markers and new concurrent files. Broad
-.git registrations, native metadata, linked files and linked worktrees are not
-supported by this exception. Never use it to work around a tool-policy denial;
-a previously denied deletion still needs resolution outside this helper.
-
-## Disposable Validation Repositories
-
-For an exact Git clone or linked worktree created for completed temporary task
-work, begin with that directory as an explicit scan root and register the root:
+For a folder your task created below `D:/Temp`, `E:/Temp` or a user Temp root,
+once its last consumer has exited:
 
 ```text
-begin --workspace <real-workspace> --scan-root <recognized-temp>\validation-clone
-register --transaction <id> --path <recognized-temp>\validation-clone --kind disposable-repository --evidence "<command and purpose that created this disposable clone>" --regenerated --allow-disposable-repository
+remove --path <folder> [--path <folder2> ...] --evidence "<what created it and why it is spent>"
 ```
 
-Use this authority only when the clone is independently reproducible and the
-evidence establishes why it is disposable. The helper requires the path to be the
-exact scan root, a strict descendant of a recognized Temp root, a normal NTFS/ReFS
-directory, and an exact Git top-level. It rejects
-the active workspace, symlinked repositories, broad Temp roots,
-repositories outside Temp, and roots replaced after authorization. Review includes
-tracked files and `.git` metadata as exact members. New concurrent files still
-survive and produce `partially_applied`; retry or start a new review rather than
-deleting them outside the helper.
+Use `--kind disposable-repository` for a clean disposable clone or linked worktree
+there, and `--dry-run` only to resolve a real doubt (`finish` later resumes that
+ticket). The result reports per-path counts, `deleted_bytes` and `excluded`.
+`remove` refuses targets outside Temp with `use_prepare`.
 
-Linked worktrees use the same command, without another permission question or
-an ad hoc Git removal. The helper verifies clean tracked/untracked work, no active
-consumer or Git lock, the bidirectional `.git` binding and a retained common ref
-containing HEAD. It adds only that worktree's derived private administrative
-directory to the review. Inspect both roots. Shared objects, refs, configuration
-and other worktrees are outside the deletion set. Every regular member is content
-hashed; concurrent edits and new files survive. Private registration is removed
-only after the worktree root is gone. A late arrival that prevents root removal
-retains/restores its original Git binding; only the helper-created marker's signed
-identity may be resumed on the original ticket. An unrelated replacement is never
-adopted. Partial cleanup is not permission to sweep new data or use force/prune.
-An interrupted partial ticket retains the exact recovery proof until its ordinary
-expiry; resume it promptly. If authority expires, inspect retained private Git
-metadata and use a fresh review; expiry does not remove target files.
+## Anything else: two calls
 
-## Snapshot And Retry Contract
+```text
+prepare --path <output> [--path ...] --evidence "<verified provenance>" [--kind compiler-output] [--workspace <repo>]
+finish --transaction <id> --manifest-sha256 <hash from prepare>
+```
 
-Ordinary generated output on exFAT is supported without a cleanup exception. The
-helper confirms the filesystem through its open handle and uses volume serial,
-64-bit file index and creation time where FileIdInfo is unsupported. Reviewed
-regular files additionally require SHA-256, size and write-time proof, rechecked
-through the exact handle used for deletion. Modified/replaced or new files survive;
-edits need a fresh review, not repeated apply of the old ticket. Hashing is streamed
-and limited to eligible exFAT files. Unreadable content is excluded independently;
-sharing failures at apply remain retryable. No ID fallback on NTFS/ReFS or unknown
-filesystems. Special repository-retirement, disposable-clone and generated Git
-workflow-marker modes remain NTFS/ReFS-only. Discarded historical transactions
-require a fresh begin/register/review/inspect/ticket sequence after upgrading.
+Read `paths` and `excluded` from `prepare` before calling `finish`; its `next`
+field holds the exact finish command. If nothing is eligible, `next` is a
+`discard`. Kinds: `temporary` (default), `compiler-output`, `package-cache`,
+`browser-artifact`, `media-intermediate`, `test-output`, `generated-report`,
+`explicit-generated-output`, `disposable-repository`.
 
-- Apply accepts only an opaque helper-issued ticket, never a path, wildcard or shell expression.
-- New concurrent files survive. Their nonempty directories remain and are reported.
-- On NTFS/ReFS, a modified generated file with the same Windows identity remains eligible; exFAT requires unchanged reviewed content and metadata.
-- A replacement at the same path is skipped as `replaced_after_scan`.
-- Locked files are retryable; other eligible files are processed independently.
-- Junctions, symlinks, hard links, tracked files and critical roots are protected.
-  Tracked-file exceptions require an exact authorized disposable validation
-  repository or the separately evidenced obsolete-checkout retirement contract.
-- Exact hard-link names or leaf symlink/junction objects may be enabled only on an
-  explicit registration with `--allow-hardlinks` or `--allow-leaf-reparse`. These
-  options never authorize another link name or traversal/deletion of a link target.
-- Directories are removed only when empty. No recursive directory deletion occurs.
-- USN/ETW tracking is unavailable in v2; never claim complete host coverage.
-- Cleanup authority expires after seven inactive days; the next invocation compacts
-  its metadata and requires a fresh reviewed ticket. Expiry never deletes target
-  files or cancels an operation holding a live root claim. No execution cancellation
-  timeout, process killing, backups or quarantine.
-- Terminal transactions retain a compact summary; detailed inventories are removed.
-- This helper remains subject to command policy. If its invocation is rejected,
-  report the rejection; do not switch shells or methods to bypass it.
+## Core rules
 
-## Explicit Repository Retirement
+- Place scratch under an exact task folder in `D:/Temp` or `E:/Temp` from the start.
+  Maintained source, deliverables, installed runtimes and helper state are not scratch.
+- Never delete source to "clean up". `git_tracked` exclusions are preserved source;
+  report them and proceed with the eligible members. Removing tracked source is a
+  normal reviewed Git change, not a cleanup ticket.
+- Cleanup never takes the Gradle build gate and never stops another build. Skip
+  outputs a running build still uses.
+- `target_busy` means an overlapping operation holds the root: check lock-free
+  `status`, then retry. `partially_applied` (locked files) is retried with the same
+  `finish` command; do not report completion while it remains.
+- A policy-denied deletion is reported, never bypassed with another shell or tool.
+- Abandon an unused snapshot with `discard --transaction <id> --reason "<why>"`;
+  revoke an issued, unfinished ticket with `revoke --ticket <id>`.
 
-Whole maintained or legacy checkouts are not ordinary generated trash. When the
-user explicitly authorizes retirement, use an exact scan root, a separate workspace,
-and an external evidence document matching [the retirement contract](references/retirement.md).
-Register with `--kind retired-repository --regenerated --retirement-evidence <json>
---confirm-retire-repository <exact-checkout-root> --evidence "<retirement purpose>"`.
+## Special cases
 
-The helper verifies a clean standalone checkout, absence of additional worktrees
-and submodules, all local/ref/reflog history in an independent existing bare
-recovery repository, object integrity, stable identities and visible process
-references. Record ownership, scheduler/service and dependency checks; command
-lines do not prove universal inactivity. Preserve dirty work or recover missing
-history before retrying. Never manufacture attestations or create an unnecessary
-backup automatically. Existing remote-tracking refs alone do not prove recovery.
-
-Review, inspect and ticket normally. Retired regular files additionally receive
-content hashes: new, replaced or edited members survive; retry tolerates already
-removed Git metadata. No recursive delete or Gradle gate is used. An unsupported
-helper mode is not a tool rejection. A rejected direct shell command does not
-establish that the helper was attempted or rejected, but must not be evaded.
-
-## Temporary Credentials And Restrictive ACLs
-
-Task-owned staged SSH keys are sensitive disposable artifacts, not ordinary
-cache. Preserve the original credential. Stage copies inside an exact task-owned
-D:/Temp or E:/Temp directory when supported, restrict access to the intended user,
-and arrange cleanup for normal completion, failure and cancellation. Do not print
-key contents or include credentials in logs, tickets, archives or source control.
-
-Before tightening a staged copy\'s ACL, ensure its owner retains the rights needed
-for the intended cleanup mechanism; owner-only read access can prevent deletion.
-Keep other principals excluded. The producer must report cleanup failures with
-only the exact path and sanitized error, never silently swallow unlink errors or
-claim cleanup succeeded. Abrupt process termination may bypass finally blocks;
-record residual copies for reviewed cleanup after consumers have exited.
-
-Distinguish an actual tool-policy rejection, a helper exclusion, Windows access
-denied, and a sharing violation using the original result. A read-only ACL alone
-does not prove which caused a rejected invocation. Do not automatically repair
-ACLs, take ownership, reset inheritance, or grant broad access. Any authorized
-ACL repair must target only the independently attributed disposable copy after
-identity/consumer checks, preserve credential confidentiality, and precede a new
-review when relevant state changed. Never alter the original key or parent ACLs.
-A policy-denied deletion must not be retried through this helper or another shell
-as a workaround; report it separately from the producer\'s lifecycle defect.
-
-## Keep Helper State Small
-
-Every actual helper command automatically expires seven-day inactive inventories
-and tickets before dispatch, including legacy Windows and Android state. Mutating
-calls refresh activity; status/inspection does not renew authority. Expired tickets
-cannot be resumed. New deletion requires begin/register/review/inspect/ticket again.
-Keep at most 100 compact terminal summaries per backend, without target-file copies.
-An in-progress operation is protected by its actual held lock, not merely its PID.
-Its expiry can be processed on a subsequent call after the operation releases it.
-This explicit lifetime supersedes the former no-expiry retention behavior.
-
-Run `state-inventory` to see retained files, unfinished transactions and live
-root claims without scanning the targets. Distinguish large active manifests from
-abandoned unissued inventories; age, low CPU or a recorded PID is not ownership
-proof. Explicit `discard` checks the target locks, rejects issued tickets, removes
-SQLite detail and reclaims database pages while retaining a compact reasoned
-summary. It also authenticates and compacts unissued v1 open snapshots using
-bounded reads. Legacy compaction rejects overlapping live operations and leaves
-already running disjoint operations alone.
-Unexpired issued/partial tickets require completion or explicit `revoke`, never
-discard. Automatic expiry invalidates their authority and compacts metadata only.
-
-Do not delete the state directory/key/database or manually purge pending tickets, or
-move durable state into routinely purged Temp. Do not call VACUUM a cure for live
-inventory rows. Report remaining valid state separately from reclaimed metadata.
-
-## Installation
-
-Run the repository family installer `scripts/install.py` to deploy both skills
-and the shared local runtime. The installed wrapper reads
-`LOCALAPPDATA/Tools/transactional-cleanup/active.json`. Use
-`AGENT_TOOLBELT_HOME` only for explicit development against a checkout.
+Read [Detailed Procedures](references/procedures.md) for step-by-step commands,
+existing build leftovers, Git workflow markers, disposable-repository safeguards,
+the snapshot/retry contract, credentials and ACLs, helper state and
+installation. Whole-checkout retirement: [retirement](references/retirement.md).
+CMake `_deps` clones: [generated dependencies](references/generated-dependencies.md).
+Android test files and apps: [Android](references/android.md), with the `adb-*` commands.
