@@ -1,5 +1,13 @@
 # Transactional Cleanup
 
+Version 0.11.0 streamlines everyday use. `remove` deletes task scratch below a
+recognized Temp root in one call; `prepare` (begin + register + review, with a
+per-path summary and every exclusion) and `finish` (ticket + apply, resuming a
+dry-run or partial ticket) replace the six-step chain elsewhere. Every engine
+safeguard still applies; special kinds keep the step commands. `inspect` now
+defaults to 1,000 members, results carry `next` hints, and the skill is reduced
+to the common routes with details in `references/procedures.md`.
+
 Version 0.10.1 streams authentication of large legacy issued/partial tickets
 without treating them as unissued snapshots. Expiry removes their bulk entries
 and exact authenticated manifest, and repairs older terminal receipts that still

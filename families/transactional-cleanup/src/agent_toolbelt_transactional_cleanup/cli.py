@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 from .engine import Engine, CleanupError, KINDS
-from . import android
+from . import android, streamlined
 
 
 def parser():
@@ -18,6 +18,20 @@ def parser():
     result.add_argument('--state-root', help='Explicit helper state directory')
     commands = result.add_subparsers(dest='command', required=True)
     android.add_parsers(commands)
+    prepare = commands.add_parser('prepare', help='Snapshot and review exact paths in one call (begin+register+review)')
+    prepare.add_argument('--path', action='append', required=True, help='Exact generated folder or file; repeat for more')
+    prepare.add_argument('--evidence', required=True, help='Concrete generated-output provenance')
+    prepare.add_argument('--kind', choices=streamlined.SIMPLE_KINDS, default='temporary')
+    prepare.add_argument('--workspace', help='Optional active workspace to protect')
+    finish = commands.add_parser('finish', help='Ticket and delete the exact reviewed manifest from prepare')
+    finish.add_argument('--transaction', required=True)
+    finish.add_argument('--manifest-sha256', required=True)
+    finish.add_argument('--dry-run', action='store_true')
+    remove = commands.add_parser('remove', help='One call: prepare and delete task scratch below a Temp root')
+    remove.add_argument('--path', action='append', required=True, help='Exact folder or file below D:/Temp, E:/Temp or TEMP')
+    remove.add_argument('--evidence', required=True, help='What created it and why it is no longer needed')
+    remove.add_argument('--kind', choices=streamlined.SIMPLE_KINDS, default='temporary')
+    remove.add_argument('--dry-run', action='store_true')
     begin = commands.add_parser('begin')
     begin.add_argument('--workspace', required=True)
     begin.add_argument('--scan-root', action='append', help='Scan only these roots when supplied; otherwise scan only the workspace')
@@ -48,7 +62,7 @@ def parser():
     inspect = commands.add_parser('inspect')
     inspect.add_argument('--transaction', required=True)
     inspect.add_argument('--offset', type=int, default=0)
-    inspect.add_argument('--limit', type=int, default=100)
+    inspect.add_argument('--limit', type=int, default=1000)
     inspect.add_argument('--decision', choices=('candidate', 'excluded'))
     status = commands.add_parser('status')
     status.add_argument('--transaction', help='Omit to inspect the active or most recent transaction')
@@ -95,6 +109,12 @@ def main(argv=None):
             result = engine.state_inventory()
             result['android'] = android.AndroidCleanup(host_engine=engine).state_inventory()
             result['state_bytes'] += result['android']['state_bytes']
+        elif args.command == 'prepare':
+            result = streamlined.prepare(engine, args.path, args.evidence, args.kind, args.workspace)
+        elif args.command == 'finish':
+            result = streamlined.finish(engine, args.transaction, args.manifest_sha256, args.dry_run)
+        elif args.command == 'remove':
+            result = streamlined.remove(engine, args.path, args.evidence, args.kind, args.dry_run)
         elif args.command == 'discard' and engine.legacy_path(args.transaction).is_file():
             result = engine.discard_legacy(args.transaction, args.reason)
         else:
@@ -121,8 +141,11 @@ def main(argv=None):
                                              args.dependency_evidence, args.confirm_dependency_repository)
                 elif args.command == 'review':
                     result = engine.review(args.transaction)
+                    result['next'] = (f"inspect --transaction {args.transaction}, then ticket --transaction "
+                                      f"{args.transaction} --manifest-sha256 {result['manifest_sha256']}")
                 elif args.command == 'ticket':
                     result = engine.ticket(args.transaction, args.manifest_sha256)
+                    result['next'] = f"apply --ticket {result['ticket_id']}"
                 elif args.command == 'apply':
                     result = engine.apply(args.ticket, args.dry_run)
                 elif args.command == 'revoke':
