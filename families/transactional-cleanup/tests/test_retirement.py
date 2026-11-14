@@ -178,5 +178,23 @@ class RetirementTests(unittest.TestCase):
         self.assertEqual(source.read_text(), 'preserve concurrent source edit')
 
 
+class ProcessConsumerTests(unittest.TestCase):
+    def test_own_chain_and_forked_shell_copies_are_not_consumers(self):
+        from agent_toolbelt_transactional_cleanup.retirement import consumers
+        shell = 'bash -c "helper remove --path D:/Temp/clone | python -c summary"'
+        rows = [
+            {'ProcessId': 1, 'ParentProcessId': 0, 'CreationDate': 't', 'CommandLine': 'agent'},
+            {'ProcessId': 2, 'ParentProcessId': 1, 'CreationDate': 't', 'CommandLine': shell},
+            {'ProcessId': 3, 'ParentProcessId': 2, 'CreationDate': 't', 'CommandLine': shell},  # pipeline fork
+            {'ProcessId': 4, 'ParentProcessId': 2, 'CreationDate': 't',
+             'CommandLine': 'python helper remove --path D:/Temp/clone'},  # this helper
+            {'ProcessId': 5, 'ParentProcessId': 2, 'CreationDate': 't',
+             'CommandLine': 'code D:/Temp/clone'},  # sibling with a different command: a consumer
+            {'ProcessId': 6, 'ParentProcessId': 9, 'CreationDate': 't', 'CommandLine': shell},  # unrelated copy
+            {'ProcessId': 7, 'ParentProcessId': 1, 'CreationDate': 't', 'CommandLine': 'git -C D:/Temp/clone-2 status'},
+        ]
+        self.assertEqual([row['pid'] for row in consumers(rows, Path('D:/Temp/clone'), 4)], [5, 6])
+
+
 if __name__ == '__main__':
     unittest.main()
