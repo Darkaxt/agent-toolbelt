@@ -41,6 +41,20 @@ class StreamlinedCleanupTests(unittest.TestCase):
             code = cli.main(['--state-root', str(self.state), *arguments])
         return code, json.loads(stream.getvalue())
 
+    def test_prepare_skips_the_baseline_and_such_snapshots_accept_only_regenerated_roots(self):
+        folder = self.scratch()
+        prepared = streamlined.prepare(self.engine, [folder], 'test scratch')
+        self.assertEqual(prepared['discovery_coverage']['baseline'], 'skipped_regenerated_only')
+        self.assertEqual(prepared['candidate_count'], 4)
+        other = self.scratch('other')
+        transaction = self.engine.begin(self.state, [other], baseline=False)['transaction_id']
+        with self.assertRaises(CleanupError) as raised:
+            self.engine.register(transaction, other, 'temporary', 'not regenerated')
+        self.assertEqual(raised.exception.kind, 'regenerated_required')
+        self.engine.register(transaction, other, 'temporary', 'regenerated scratch', regenerated=True)
+        with self.assertRaises(CleanupError):
+            self.engine.begin(self.state, None, baseline=False)
+
     def test_prepare_summarizes_and_finish_deletes_the_reviewed_manifest(self):
         folder = self.scratch()
         prepared = streamlined.prepare(self.engine, [folder], 'test scratch')

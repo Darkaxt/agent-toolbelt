@@ -149,12 +149,12 @@ class RetirementTests(unittest.TestCase):
         from agent_toolbelt_transactional_cleanup import filesystem as fs
         original = fs.delete_exact
         created = False
-        def create_during_apply(item, dry_run=False):
+        def create_during_apply(item, dry_run=False, **kwargs):
             nonlocal created
             if not created:
                 new_file.write_text('keep concurrent file')
                 created = True
-            return original(item, dry_run=dry_run)
+            return original(item, dry_run=dry_run, **kwargs)
         with patch.object(fs, 'delete_exact', side_effect=create_during_apply):
             result = self.engine.apply(ticket)
         self.assertEqual(result['ticket_state'], 'partially_applied')
@@ -168,10 +168,10 @@ class RetirementTests(unittest.TestCase):
         from agent_toolbelt_transactional_cleanup import filesystem as fs
         original = fs.delete_exact
         source = self.repo / 'source.txt'
-        def edit_during_apply(item, dry_run=False):
+        def edit_during_apply(item, dry_run=False, **kwargs):
             if Path(item['path']) == source:
                 source.write_text('preserve concurrent source edit')
-            return original(item, dry_run=dry_run)
+            return original(item, dry_run=dry_run, **kwargs)
         with patch.object(fs, 'delete_exact', side_effect=edit_during_apply):
             result = self.engine.apply(ticket)
         self.assertEqual(result['ticket_state'], 'partially_applied')

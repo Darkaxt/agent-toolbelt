@@ -194,12 +194,12 @@ class GeneratedDependencyTests(unittest.TestCase):
         original = filesystem.delete_exact
         created = self.repo / 'concurrent.txt'
         injected = False
-        def inject(item, dry_run=False):
+        def inject(item, dry_run=False, **kwargs):
             nonlocal injected
             if not injected:
                 created.write_text('new concurrent data')
                 injected = True
-            return original(item, dry_run=dry_run)
+            return original(item, dry_run=dry_run, **kwargs)
         with patch.object(filesystem, 'delete_exact', side_effect=inject):
             result = self.engine.apply(ticket)
         self.assertEqual(result['ticket_state'], 'partially_applied')

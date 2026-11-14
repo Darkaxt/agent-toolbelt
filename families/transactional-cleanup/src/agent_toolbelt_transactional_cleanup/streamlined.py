@@ -68,7 +68,9 @@ def prepare(engine, paths, evidence, kind='temporary', workspace=None):
     paths = _paths(paths)
     workspace = _workspace(engine, workspace)
     with engine.locked(paths, operation='prepare'):
-        transaction = engine.begin(workspace, paths)['transaction_id']
+        # Every root is registered --regenerated below, so a pre-existing
+        # inventory could never change a decision: skip that whole pass.
+        transaction = engine.begin(workspace, paths, baseline=False)['transaction_id']
     roots = engine.transaction_roots(transaction)
     with engine.locked(roots, operation='prepare', transaction=transaction):
         for path in paths:

@@ -1,5 +1,18 @@
 # Transactional Cleanup
 
+Version 0.12.0 makes large trees of tiny files fast without weakening any
+check. A scan verifies each directory's ancestors once instead of re-walking
+them for every file, takes plain-file status from the directory listing so the
+repository probe runs only for directories, and memoizes repository and
+protected-root lookups. Apply holds the shared ancestor handles between
+consecutive members (each still denies rename and delete, and its reparse state
+is read again for every member) instead of reopening the whole chain per file.
+`prepare` and `remove` skip the pre-existing inventory pass, which could never
+change a decision for their --regenerated roots; such snapshots refuse any
+other registration (`regenerated_required`). On 20,000 tiny files, prepare
+went from 100 s to 12 s and the whole prepare+finish from 172 s to about 65 s;
+the remaining apply time is mostly Windows deleting each file.
+
 Version 0.11.0 streamlines everyday use. `remove` deletes task scratch below a
 recognized Temp root in one call; `prepare` (begin + register + review, with a
 per-path summary and every exclusion) and `finish` (ticket + apply, resuming a

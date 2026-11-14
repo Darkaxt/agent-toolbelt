@@ -125,7 +125,7 @@ other = root / 'other'; other.mkdir()
 independent = engine.begin(work, [other])['transaction_id']
 delete_exact = fs.delete_exact
 calls = 0
-def delete_with_writer(item, dry_run=False):
+def delete_with_writer(item, dry_run=False, **kwargs):
     global calls
     calls += 1
     if calls == 3:
@@ -135,7 +135,7 @@ def delete_with_writer(item, dry_run=False):
             writer.commit()
         finally:
             writer.close()
-    return delete_exact(item, dry_run=dry_run)
+    return delete_exact(item, dry_run=dry_run, **kwargs)
 with patch('agent_toolbelt_transactional_cleanup.engine.BATCH_SIZE', 2), patch.object(fs, 'delete_exact', side_effect=delete_with_writer):
     result = cli.main(['--state-root', str(root / 'state'), 'apply', '--ticket', ticket])
 assert not output.exists()
