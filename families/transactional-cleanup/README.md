@@ -1,5 +1,12 @@
 # Transactional Cleanup
 
+Version 0.12.1 stops counting the caller's own shell as a live consumer when
+retiring a worktree or checkout. Git Bash runs pipeline stages in forked copies
+of the shell that carry its full command line, so `remove --path ROOT | ...`
+was refused with "A live process references this worktree". A direct child of
+an ancestor with that ancestor's exact command line is now part of the
+helper's own chain; any other process naming the root still blocks.
+
 Version 0.12.0 makes large trees of tiny files fast without weakening any
 check. A scan verifies each directory's ancestors once instead of re-walking
 them for every file, takes plain-file status from the directory listing so the

@@ -41,16 +41,33 @@ def active_processes(root):
     try:
         rows = json.loads(result.stdout)
         rows = rows if isinstance(rows, list) else [rows]
-        parents = {row['ProcessId']: row['ParentProcessId'] for row in rows}
+        if not all(isinstance(row, dict) and 'ProcessId' in row and 'ParentProcessId' in row
+                   and 'CreationDate' in row for row in rows):
+            raise ValueError('process row shape')
     except (ValueError, TypeError, KeyError) as exc:
         raise RetirementError('retirement_process_inspection_failed', 'Invalid process snapshot') from exc
-    supervisors, current = set(), os.getpid()
+    return consumers(rows, root, os.getpid())
+
+
+def consumers(rows, root, current):
+    """Processes whose command line names root, other than this helper's own chain.
+
+    The chain is this process, its ancestors, and forked copies of an ancestor:
+    a direct child with that ancestor's exact command line. MSYS/Git Bash runs
+    pipeline stages in such copies, so a shell invoking `helper --path ROOT | jq`
+    would otherwise count as a live consumer of ROOT.
+    """
+    by_pid = {row['ProcessId']: row for row in rows}
+    supervisors = set()
     while current and current not in supervisors:
         supervisors.add(current)
-        current = parents.get(current)
+        current = (by_pid.get(current) or {}).get('ParentProcessId')
+    forks = {row['ProcessId'] for row in rows
+             if row['ParentProcessId'] in supervisors and row.get('CommandLine')
+             and row['CommandLine'] == (by_pid.get(row['ParentProcessId']) or {}).get('CommandLine')}
     pattern = re.compile(re.escape(str(root).replace('\\', '/')) + r'''(?=$|[/\s"':,;])''', re.I)
     return [{'pid': row['ProcessId'], 'started_at': row['CreationDate']}
-            for row in rows if row['ProcessId'] not in supervisors
+            for row in rows if row['ProcessId'] not in supervisors | forks
             and pattern.search((row.get('CommandLine') or '').replace('\\', '/'))]
 
 
