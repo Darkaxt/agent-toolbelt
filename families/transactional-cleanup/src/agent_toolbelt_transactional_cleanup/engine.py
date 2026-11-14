@@ -30,6 +30,7 @@ KINDS = ('temporary', 'compiler-output', 'package-cache', 'browser-artifact',
 GENERATED = {'__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache'}
 RETRY = {'locked', 'failed', 'not_empty'}
 BATCH_SIZE = 256
+BASELINE_SKIPPED = 'skipped_regenerated_only'
 CLAIM_VERSION = 1
 
 
@@ -76,6 +77,8 @@ class Engine:
             raise CleanupError('invalid_state', 'Invalid helper state key')
         self.db_path = self.root / 'state.sqlite3'
         self.repo_cache = {}
+        self.repo_roots = {}
+        self._protected = None
         self._initialize()
 
     def connect(self):
@@ -363,32 +366,51 @@ class Engine:
         except (OSError, ValueError):
             return False
 
-    def protection(self, path, *, allow_git_marker=False):
+    PROTECTION_VARIABLES = ('LOCALAPPDATA', 'SystemRoot', 'windir', 'TEMP', 'ProgramFiles',
+                            'ProgramFiles(x86)', 'ProgramData', 'APPDATA', 'USERPROFILE', 'HOME')
+
+    def _protected_paths(self):
+        """Environment-derived protected roots, recomputed only when the environment changes."""
+        environment = tuple(os.environ.get(name) for name in self.PROTECTION_VARIABLES)
+        if self._protected is None or self._protected[0] != environment:
+            home = Path.home()
+            protected = [self.root, Path(__file__).absolute().parent]
+            local = Path(os.environ.get('LOCALAPPDATA', home / '.local/share'))
+            protected.append(fs.canonical(local / 'Tools/transactional-cleanup'))
+            for var in ('SystemRoot', 'windir'):
+                if os.environ.get(var):
+                    protected.append(fs.canonical(os.environ[var]))
+            for folder in ('.codex', '.agents', '.claude'):
+                protected.append(home / folder)
+            temp_roots = [Path('D:/Temp'), Path('E:/Temp')]
+            if os.environ.get('TEMP'):
+                temp_roots.append(fs.canonical(os.environ['TEMP']))
+            if os.environ.get('LOCALAPPDATA'):
+                temp_roots.append(fs.canonical(os.environ['LOCALAPPDATA']) / 'Temp')
+            critical = {fs.canonical(os.environ[var]) for var in
+                        ('ProgramFiles', 'ProgramFiles(x86)', 'ProgramData', 'LOCALAPPDATA', 'APPDATA')
+                        if os.environ.get(var)}
+            folded = [os.path.normcase(str(value)).rstrip('\\/') for value in protected]
+            self._protected = (environment, ({home, home.parent}, folded, set(temp_roots), critical))
+        return self._protected[1]
+
+    def protection(self, path, *, allow_git_marker=False, check_ancestors=True, directory=None):
+        """check_ancestors=False: the caller verifies every ancestor itself (scan
+        descends only through non-reparse directories; delete_exact holds them).
+        directory=False skips the repository-root probe for a known file."""
         path = fs.canonical(path)
-        if path == Path(path.anchor) or path == Path.home() or path == Path.home().parent:
+        homes, protected, temp_roots, critical = self._protected_paths()
+        if path == Path(path.anchor) or path in homes:
             return 'critical_root'
-        protected = [self.root, Path(__file__).absolute().parent]
-        local = Path(os.environ.get('LOCALAPPDATA', Path.home() / '.local/share'))
-        protected.append(fs.canonical(local / 'Tools/transactional-cleanup'))
-        for var in ('SystemRoot', 'windir'):
-            if os.environ.get(var):
-                protected.append(fs.canonical(os.environ[var]))
-        for folder in ('.codex', '.agents', '.claude'):
-            protected.append(Path.home() / folder)
-        if any(fs.within(path, value) for value in protected):
+        key = os.path.normcase(str(path)).rstrip('\\/')
+        if any(key == value or key.startswith(value + '\\') for value in protected):
             return 'protected_root'
-        if any(fs.within(value, path) for value in protected):
+        if any(value.startswith(key + '\\') for value in protected):
             return 'protected_ancestor'
-        temp_roots = [Path('D:/Temp'), Path('E:/Temp')]
-        if os.environ.get('TEMP'):
-            temp_roots.append(fs.canonical(os.environ['TEMP']))
-        if os.environ.get('LOCALAPPDATA'):
-            temp_roots.append(fs.canonical(os.environ['LOCALAPPDATA']) / 'Temp')
         if path in temp_roots:
             return 'scan_root'
-        for var in ('ProgramFiles', 'ProgramFiles(x86)', 'ProgramData', 'LOCALAPPDATA', 'APPDATA'):
-            if os.environ.get(var) and path == fs.canonical(os.environ[var]):
-                return 'critical_root'
+        if path in critical:
+            return 'critical_root'
         parts = {part.casefold() for part in path.parts}
         # Windows boot, EFI and recovery are volume-root trees, not arbitrary
         # package modules with those names. SystemRoot is protected above.
@@ -401,27 +423,39 @@ class Engine:
                              and self._empty_git_marker(path))
         if '.git' in parts and not empty_leaf_marker and not allow_git_marker:
             return 'filesystem_or_repository_metadata'
-        if (path / '.git').exists() and not self._empty_git_marker(path / '.git'):
+        if (directory is not False and (path / '.git').exists()
+                and not self._empty_git_marker(path / '.git')):
             return 'repository_root'
-        try:
-            fs.check_chain(path, allow_leaf_reparse=True)
-        except ValueError:
-            return 'reparse_point'
+        if check_ancestors:
+            try:
+                fs.check_chain(path, allow_leaf_reparse=True)
+            except ValueError:
+                return 'reparse_point'
         return None
 
-    def git_reason(self, path):
-        parent = path if path.is_dir() else path.parent
-        # Empty regular markers carry no repository identity. Linked or nonempty
-        # markers remain fail-closed; an actual ancestor repository still applies.
-        repo = None
-        for value in (parent, *parent.parents):
-            marker = value / '.git'
-            if not marker.exists():
-                continue
-            if self._empty_git_marker(marker):
-                continue
-            repo = value
-            break
+    def _repository_for(self, directory):
+        """Nearest enclosing repository, memoized per directory for one scan or apply."""
+        key = path_key(directory)
+        if key not in self.repo_roots:
+            marker = directory / '.git'
+            # Empty regular markers carry no repository identity. Linked or nonempty
+            # markers remain fail-closed; an actual ancestor repository still applies.
+            if marker.exists() and not self._empty_git_marker(marker):
+                self.repo_roots[key] = directory
+            elif directory.parent == directory:
+                self.repo_roots[key] = None
+            else:
+                self.repo_roots[key] = self._repository_for(directory.parent)
+        return self.repo_roots[key]
+
+    def _clear_repo_caches(self):
+        self.repo_cache.clear()
+        self.repo_roots.clear()
+
+    def git_reason(self, path, directory=None):
+        if directory is None:
+            directory = path.is_dir()
+        repo = self._repository_for(path if directory else path.parent)
         if repo is None:
             return None
         if repo not in self.repo_cache:
@@ -436,7 +470,7 @@ class Engine:
         relative = path.relative_to(repo).as_posix().casefold()
         if tracked is None:
             return 'git_unavailable'
-        if relative in tracked or (path.is_dir() and any(value.startswith(relative + '/') for value in tracked)):
+        if relative in tracked or (directory and any(value.startswith(relative + '/') for value in tracked)):
             return 'git_tracked'
         return None
 
@@ -450,17 +484,27 @@ class Engine:
         for root_value in roots:
             root = fs.canonical(root_value)
             unique_roots.setdefault(path_key(root), root)
+        def children(directory, verified):
+            # One directory listing tells plain files apart, so the repository
+            # probe skips them (links keep it). A child of a
+            # directory observed as non-reparse needs no per-file ancestor walk.
+            with os.scandir(directory) as entries:
+                return [(Path(entry.path), not entry.is_file(follow_symlinks=False), verified)
+                        for entry in entries]
+
         for root_key, root in unique_roots.items():
-            pending = [root]
+            pending = [(root, None, False)]
             while pending:
-                path = pending.pop()
+                path, directory, verified = pending.pop()
                 if not os.path.lexists(path):
                     continue
                 member_key = path_key(path)
                 if member_key != root_key and member_key in unique_roots:
                     continue
                 key = str(path)
-                reason = self.protection(path, allow_git_marker=key in git_marker_paths)
+                reason = self.protection(path, allow_git_marker=key in git_marker_paths,
+                                         check_ancestors=not verified,
+                                         directory=directory)
                 disposable_member = any(fs.within(path, root) for root in disposable_roots)
                 if disposable_member and reason in {'repository_root', 'filesystem_or_repository_metadata'}:
                     reason = None
@@ -468,20 +512,30 @@ class Engine:
                     item = {'path': key, 'excluded': reason}
                     if reason in {'repository_root', 'scan_root', 'protected_ancestor'}:
                         try:
-                            pending.extend(path.iterdir())
+                            # Descended without an identity check: verify this
+                            # directory's chain once on behalf of its children.
+                            if verified:
+                                plain = not fs.reparse(path)
+                            else:
+                                try:
+                                    fs.check_chain(path)
+                                    plain = True
+                                except ValueError:
+                                    plain = False
+                            pending.extend(children(path, plain))
                         except OSError as exc:
                             item['scan_error'] = type(exc).__name__
                     yield item
                     continue
                 try:
-                    info = fs.identity(path, allow_leaf_reparse=True)
+                    info = fs.identity(path, allow_leaf_reparse=True, check_ancestors=not verified)
                 except (OSError, ValueError) as exc:
                     yield {'path': key, 'excluded': type(exc).__name__}
                     continue
                 item = {'path': key, **info}
                 if info['directory'] and not info['reparse']:
                     try:
-                        pending.extend(path.iterdir())
+                        pending.extend(children(path, True))
                     except (OSError, ValueError) as exc:
                         # Record one failed observation, rather than yielding a
                         # successful row and a second row with the same identity.
@@ -563,10 +617,16 @@ class Engine:
             connection.executemany('INSERT OR REPLACE INTO baseline VALUES (?,?,?,?)', batch)
         return processed, processed_bytes
 
-    def begin(self, workspace, scan_roots=None, include_known_temp_roots=False):
+    def begin(self, workspace, scan_roots=None, include_known_temp_roots=False, baseline=True):
+        """baseline=False skips the pre-existing inventory. Only callers that
+        register every scan root with --regenerated may use it: regenerated
+        authority is exactly what bypasses the pre-existing check, and register
+        refuses any other registration on such a snapshot."""
         workspace = fs.canonical(workspace)
         if not workspace.is_dir():
             raise CleanupError('workspace_missing', 'Workspace must be an existing directory')
+        if not baseline and (not scan_roots or include_known_temp_roots):
+            raise CleanupError('baseline_required', 'Skipping the baseline requires explicit scan roots only')
         roots = self.begin_roots(workspace, scan_roots, include_known_temp_roots)
         if scan_roots:
             scan_mode = 'explicit'
@@ -578,7 +638,8 @@ class Engine:
         free_space = {root: shutil.disk_usage(root).free for root in roots if Path(root).exists()}
         coverage = {'workspace': any(fs.within(workspace, Path(root)) for root in roots),
                     'known_or_explicit_roots': roots, 'explicit_registration': True,
-                    'usn': 'unavailable_v2', 'etw': 'unavailable_v2', 'complete_host_coverage': False}
+                    'usn': 'unavailable_v2', 'etw': 'unavailable_v2', 'complete_host_coverage': False,
+                    'baseline': 'inventoried' if baseline else BASELINE_SKIPPED}
         connection = self.connect()
         try:
             connection.execute('''INSERT INTO transactions
@@ -591,7 +652,8 @@ class Engine:
             connection.executemany('INSERT INTO roots VALUES (?,?,?,?)',
                                    [(transaction, index, root, path_key(root)) for index, root in enumerate(roots)])
             connection.commit()
-            processed, processed_bytes = self._insert_baseline(connection, transaction, roots)
+            processed, processed_bytes = (self._insert_baseline(connection, transaction, roots)
+                                          if baseline else (0, 0))
             self._clear_progress(connection, transaction)
             connection.commit()
         except BaseException:
@@ -650,6 +712,10 @@ class Engine:
             row = self._row(connection, transaction)
             if row['state'] != 'open':
                 raise CleanupError('review_frozen', 'Registration is closed after review')
+            if (not regenerated and json.loads(row['discovery_json'] or '{}').get('baseline')
+                    == BASELINE_SKIPPED):
+                raise CleanupError('regenerated_required',
+                                   'This snapshot has no pre-existing inventory; only --regenerated registrations are accepted')
             roots = json.loads(row['roots_json'])
             repository_identity = None
             retirement_proof = None
@@ -827,7 +893,7 @@ class Engine:
                             and path_key(path) == registration['path_key'] else None)
             git_status = ('generated_git_marker_authorized' if marker_proof else
                           'disposable_repository_authorized' if allow_disposable else
-                          (self.git_reason(path) if not info.get('excluded') else None))
+                          (self.git_reason(path, info['directory']) if not info.get('excluded') else None))
             reason = info.get('excluded') or (None if allow_disposable or marker_proof else git_status)
             if path == workspace or (str(path) in roots and not registration):
                 reason = reason or 'scan_root'
@@ -993,7 +1059,7 @@ class Engine:
             connection.commit()
             ordinal = candidate_count = candidate_bytes = excluded_count = processed_bytes = 0
             diagnostics, batch = [], []
-            self.repo_cache.clear()
+            self._clear_repo_caches()
             for info in self.scan(roots, disposable_roots, git_marker_paths):
                 batch.append(info)
                 if len(batch) < BATCH_SIZE:
@@ -1194,9 +1260,10 @@ class Engine:
                 if ticket['state'] == 'partially_applied':
                     for proof in linked_roots.values():
                         self._restore_worktree_marker(connection, ticket, proof, recovery)
-            self.repo_cache.clear()
+            self._clear_repo_caches()
             diagnostics, result_counts, batch = [], Counter(), []
             processed, processed_bytes = 0, ticket['deleted_bytes']
+            ancestors = fs.AncestorChain()
             rows = self._apply_rows(connection, ticket['transaction_id'])
             for row in rows:
                 prior = row['result']
@@ -1233,14 +1300,17 @@ class Engine:
                         marker_valid = bool(item.get('content_sha256'))
                     except (ValueError, OSError):
                         pass
-                reason = self.protection(path, allow_git_marker=marker_valid)
+                # delete_exact verifies every ancestor through held handles, so
+                # the path-based ancestor walk would only repeat that check.
+                reason = self.protection(path, allow_git_marker=marker_valid, check_ancestors=False,
+                                         directory=bool(item['directory']))
                 if allow_disposable and reason in {'repository_root', 'filesystem_or_repository_metadata'}:
                     reason = None
                 if not reason and not allow_disposable and not marker_valid:
-                    reason = self.git_reason(path)
+                    reason = self.git_reason(path, bool(item['directory']))
                 blocked = worktrees.before_member(item, linked) if linked else None
                 result, count = (('protected', 0) if reason else (blocked, 0) if blocked else
-                                 fs.delete_exact(item, dry_run=dry_run))
+                                 fs.delete_exact(item, dry_run=dry_run, ancestors=ancestors))
                 result_counts[result] += 1; processed += 1
                 if len(diagnostics) < 100:
                     diagnostics.append({'path': str(path), 'result': result})
@@ -1250,7 +1320,9 @@ class Engine:
                         self._flush_results(connection, ticket, batch, processed, processed_bytes)
                     if linked and path == Path(linked['root']):
                         self._flush_results(connection, ticket, batch, processed, processed_bytes)
+                        ancestors.close()
                         self._restore_worktree_marker(connection, ticket, linked, recovery)
+            ancestors.close()
             if not dry_run:
                 self._flush_results(connection, ticket, batch, processed, processed_bytes)
                 self._verify_ticket_membership(connection, ticket, transaction_row)
@@ -1277,6 +1349,8 @@ class Engine:
                 self.finish(connection, payload, current_ticket, result)
             return result
         except BaseException:
+            if 'ancestors' in locals():
+                ancestors.close()
             if 'ticket' in locals() and not dry_run:
                 try:
                     if worktree_apply_started:

@@ -72,12 +72,12 @@ class CleanupTests(unittest.TestCase):
 
     def test_directory_enumeration_failure_has_one_excluded_observation(self):
         output = self.output()
-        original = Path.iterdir
+        original = os.scandir
         def enumerate_directory(path):
-            if path == output:
+            if Path(path) == output:
                 raise PermissionError('fixture directory enumeration denied')
             return original(path)
-        with patch.object(Path, 'iterdir', enumerate_directory):
+        with patch.object(os, 'scandir', enumerate_directory):
             review = self.engine.review(self.transaction)
         inspected = self.engine.inspect(self.transaction, limit=1000)
         matches = [member for member in inspected['page_items'] if member['path'] == str(output)]
@@ -111,7 +111,7 @@ class CleanupTests(unittest.TestCase):
         other_transaction = self.engine.begin(self.work, [other])['transaction_id']
         delete_exact = fs.delete_exact
         calls = 0
-        def delete_with_independent_commit(item, dry_run=False):
+        def delete_with_independent_commit(item, dry_run=False, **kwargs):
             nonlocal calls
             calls += 1
             if calls == 3:
@@ -122,7 +122,7 @@ class CleanupTests(unittest.TestCase):
                     writer.commit()
                 finally:
                     writer.close()
-            return delete_exact(item, dry_run=dry_run)
+            return delete_exact(item, dry_run=dry_run, **kwargs)
         with patch('agent_toolbelt_transactional_cleanup.engine.BATCH_SIZE', 2), \
              patch.object(fs, 'delete_exact', side_effect=delete_with_independent_commit):
             try:
@@ -194,7 +194,7 @@ class CleanupTests(unittest.TestCase):
         ticket = self.ticket()
         delete_exact = fs.delete_exact
         changed = False
-        def check_and_remove_member(item, dry_run=False):
+        def check_and_remove_member(item, dry_run=False, **kwargs):
             nonlocal changed
             if not changed:
                 writer = self.engine.connect()
@@ -206,7 +206,7 @@ class CleanupTests(unittest.TestCase):
                 finally:
                     writer.close()
                 changed = True
-            return delete_exact(item, dry_run=dry_run)
+            return delete_exact(item, dry_run=dry_run, **kwargs)
         with patch.object(fs, 'delete_exact', side_effect=check_and_remove_member):
             with self.assertRaises(CleanupError) as raised:
                 self.engine.apply(ticket, dry_run=True)
@@ -679,6 +679,39 @@ class CleanupTests(unittest.TestCase):
             self.assertTrue((moved / 'a.bin').exists())
         finally:
             out.rmdir()
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows handle sharing')
+    def test_held_ancestor_cannot_be_swapped_during_apply(self):
+        out = self.output()
+        ticket = self.ticket()
+        delete_exact = fs.delete_exact
+        attempts = []
+
+        def swap_after_first_delete(item, dry_run=False, **kwargs):
+            result = delete_exact(item, dry_run=dry_run, **kwargs)
+            if not attempts and not item['directory']:
+                try:
+                    out.rename(self.root / 'moved')
+                    attempts.append('renamed')
+                except PermissionError:
+                    attempts.append('refused')
+            return result
+
+        with patch.object(fs, 'delete_exact', side_effect=swap_after_first_delete):
+            result = self.engine.apply(ticket)
+        self.assertEqual(attempts, ['refused'])
+        self.assertEqual(result['ticket_state'], 'applied')
+        self.assertFalse(out.exists())
+
+    def test_nested_tree_releases_held_ancestors_before_removing_them(self):
+        out = self.output()
+        for name in ('x/y/z', 'x/w', 'v'):
+            (out / name).mkdir(parents=True)
+            (out / name / 'f.bin').write_bytes(b'nested')
+        result = self.engine.apply(self.ticket())
+        self.assertEqual(result['ticket_state'], 'applied')
+        self.assertEqual(result['result_counts'], {'deleted': 11})
+        self.assertFalse(out.exists())
 
     def test_hardlink_added_after_review_is_protected(self):
         out = self.output()

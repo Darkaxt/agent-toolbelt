@@ -76,8 +76,7 @@ if os.name == 'nt':
     kernel.ReadFile.restype = wintypes.BOOL
 
 
-@contextmanager
-def handle(path: Path, *, delete: bool = False, ancestor: bool = False):
+def open_handle(path: Path, *, delete: bool = False, ancestor: bool = False):
     if os.name != 'nt':
         raise RuntimeError('Windows handle deletion is required')
     # READ_DATA/LIST_DIRECTORY participates in sharing checks; attribute-only handles do not.
@@ -86,10 +85,63 @@ def handle(path: Path, *, delete: bool = False, ancestor: bool = False):
     opened = kernel.CreateFileW(str(path), access, share, None, 3, 0x02200000, None)
     if opened == ctypes.c_void_p(-1).value:
         raise ctypes.WinError(ctypes.get_last_error())
+    return opened
+
+
+@contextmanager
+def handle(path: Path, *, delete: bool = False, ancestor: bool = False):
+    opened = open_handle(path, delete=delete, ancestor=ancestor)
     try:
         yield opened
     finally:
         kernel.CloseHandle(opened)
+
+
+class AncestorChain:
+    """Ancestor handles shared by consecutive deletions.
+
+    Each held handle denies delete sharing, so a held directory cannot be
+    renamed, removed or replaced while it is held. Only the differing suffix
+    of the chain is reopened for the next member, and the attributes of every
+    reused ancestor are read again, so each member still sees its ancestors'
+    current reparse state.
+    """
+
+    def __init__(self):
+        self._held = []  # (normcase key, handle, identity info), root first
+
+    def verified(self, path: Path):
+        parents = list(reversed(path.parents))
+        keep = 0
+        while (keep < len(self._held) and keep < len(parents)
+               and self._held[keep][0] == os.path.normcase(str(parents[keep]))):
+            keep += 1
+        self._release(keep)
+        result = []
+        for index, parent in enumerate(parents):
+            if index < keep:
+                _, opened, info = self._held[index]
+                current = FileInfo()
+                if not kernel.GetFileInformationByHandle(opened, ctypes.byref(current)):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                info = {**info, 'reparse': bool(current.attributes & 0x400)}
+            else:
+                opened = open_handle(parent, ancestor=True)
+                try:
+                    info = from_handle(opened)
+                except BaseException:
+                    kernel.CloseHandle(opened)
+                    raise
+                self._held.append((os.path.normcase(str(parent)), opened, info))
+            result.append((parent, info))
+        return result
+
+    def _release(self, keep=0):
+        while len(self._held) > keep:
+            kernel.CloseHandle(self._held.pop()[1])
+
+    def close(self):
+        self._release()
 
 
 def from_handle(opened) -> dict:
@@ -122,8 +174,13 @@ def from_handle(opened) -> dict:
     }
 
 
-def identity(path: Path, *, allow_leaf_reparse: bool = False) -> dict:
-    check_chain(path, allow_leaf_reparse=allow_leaf_reparse)
+def identity(path: Path, *, allow_leaf_reparse: bool = False, check_ancestors: bool = True) -> dict:
+    """check_ancestors=False only when the caller reached path by descending
+    from a verified non-reparse root through observed non-reparse directories."""
+    if check_ancestors:
+        check_chain(path, allow_leaf_reparse=allow_leaf_reparse)
+    elif not allow_leaf_reparse and reparse(path):
+        raise ValueError(f'Reparse point protected: {path}')
     if os.name == 'nt':
         with handle(path) as opened:
             info = from_handle(opened)
@@ -185,8 +242,13 @@ def content_snapshot(entry):
         return hash_handle(opened)
 
 
-def delete_exact(entry: dict, *, dry_run: bool = False) -> tuple[str, int]:
-    """Keep ancestors immovable and dispose the checked object through its open handle."""
+def delete_exact(entry: dict, *, dry_run: bool = False,
+                 ancestors: AncestorChain | None = None) -> tuple[str, int]:
+    """Keep ancestors immovable and dispose the checked object through its open handle.
+
+    A caller deleting many members passes one AncestorChain so that shared
+    ancestors stay held between members instead of being reopened each time.
+    """
     path = canonical(entry['path'])
     if entry.get('filesystem') not in {'NTFS', 'ReFS', 'exFAT'}:
         return 'protected', 0
@@ -198,9 +260,10 @@ def delete_exact(entry: dict, *, dry_run: bool = False) -> tuple[str, int]:
         return 'protected', 0
     try:
         with ExitStack() as stack:
-            for parent in reversed(path.parents):
-                opened = stack.enter_context(handle(parent, ancestor=True))
-                parent_info = from_handle(opened)
+            if ancestors is None:
+                ancestors = AncestorChain()
+                stack.callback(ancestors.close)
+            for parent, parent_info in ancestors.verified(path):
                 if parent_info['reparse']:
                     return 'protected', 0
                 if str(parent) == entry.get('retired_repository_root') and (
