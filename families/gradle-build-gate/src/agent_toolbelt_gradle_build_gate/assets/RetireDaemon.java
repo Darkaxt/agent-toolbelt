@@ -1,4 +1,6 @@
 import java.io.File;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -7,6 +9,7 @@ import org.gradle.cache.FileLockReleasedSignal;
 import org.gradle.cache.internal.DefaultFileLockManager;
 import org.gradle.cache.internal.ProcessMetaDataProvider;
 import org.gradle.cache.internal.locklistener.FileLockContentionHandler;
+import org.gradle.internal.remote.internal.ConnectCompletion;
 import org.gradle.internal.remote.internal.RemoteConnection;
 import org.gradle.internal.remote.internal.inet.TcpOutgoingConnector;
 import org.gradle.internal.serialize.Serializers;
@@ -34,6 +37,27 @@ class RetireDaemon {
         };
         return new PersistentDaemonRegistry(file, new DefaultFileLockManager(metadata, contention),
             (path, mode) -> { throw new IllegalStateException("Registry creation forbidden"); });
+    }
+
+    // Gradle 9.8.1 added the daemon token to connect (the client authenticates in
+    // the connection preamble); earlier distributions take only the address.
+    static ConnectCompletion connect(DaemonInfo target) throws Throwable {
+        TcpOutgoingConnector connector = new TcpOutgoingConnector();
+        Method addressOnly = null;
+        for (Method method : connector.getClass().getMethods()) {
+            if (!method.getName().equals("connect")) continue;
+            Class<?>[] parameters = method.getParameterTypes();
+            try {
+                if (parameters.length == 2 && parameters[1] == byte[].class) {
+                    return (ConnectCompletion) method.invoke(connector, target.getAddress(), target.getToken());
+                }
+            } catch (InvocationTargetException error) { throw error.getCause(); }
+            if (parameters.length == 1) addressOnly = method;
+        }
+        if (addressOnly == null) throw new NoSuchMethodException("TcpOutgoingConnector.connect");
+        try {
+            return (ConnectCompletion) addressOnly.invoke(connector, target.getAddress());
+        } catch (InvocationTargetException error) { throw error.getCause(); }
     }
 
     public static void main(String[] args) {
@@ -67,7 +91,7 @@ class RetireDaemon {
             // Capture exit completion before requesting shutdown; no PID-only polling.
             var exited = process.onExit();
             stage = "connection";
-            RemoteConnection<Message> connection = new TcpOutgoingConnector().connect(target.getAddress())
+            RemoteConnection<Message> connection = connect(target)
                 .create(Serializers.stateful(DaemonMessageSerializer.create(BuildActionSerializer.create())));
             try {
                 stage = "shutdown_request";
