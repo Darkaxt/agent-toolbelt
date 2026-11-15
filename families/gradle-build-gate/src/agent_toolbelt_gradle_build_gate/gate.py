@@ -182,6 +182,12 @@ def classify_process(process, log="", log_modified=0, connected=False, connectio
     name = process.get("name", "").lower()
     command = process.get("command")
     if not command:
+        # Neither command line nor executable is readable: the shell runs
+        # elevated or as another user (e.g. UniGetUI's elevated cmd.exe). A
+        # Gradle build it starts still appears as java.exe, which stays
+        # fail-closed, so the shell itself does not block the gate.
+        if name == "cmd.exe" and not process.get("executable"):
+            return "unrelated"
         return "ambiguous" if name in ("java.exe", "javaw.exe", "gradle.exe", "cmd.exe") else "unrelated"
     lowered = command.lower()
     if "org.gradle.launcher.daemon.bootstrap.gradledaemon" in lowered:
@@ -446,6 +452,18 @@ def inspect_activity(homes=()):
             "scope": "participating_launchers_in_current_windows_session; external launches not prevented"}
 
 
+def rearm_needed(observer, inspection):
+    """True when a blocking process appeared after the observer subscribed.
+
+    Processes the watcher re-inspects on a timer (``polled``) need no
+    re-subscription. Observers without subscribed pids never re-arm."""
+    pids = getattr(observer, "pids", None)
+    if pids is None:
+        return False
+    observed = set(pids) | set(getattr(observer, "polled", ()))
+    return any(process["pid"] not in observed for process in inspection["processes"])
+
+
 class LifecycleObserver:
     def __init__(self, homes):
         self.homes = homes
@@ -460,7 +478,13 @@ class LifecycleObserver:
             self.process.wait()
             self.process.stdout.close(); self.process.stderr.close()
             raise OSError("Lifecycle watcher could not subscribe: " + error)
-        self.pids = set(json.loads(ready.split(":", 1)[1]))
+        subscribed = json.loads(ready.split(":", 1)[1])
+        if isinstance(subscribed, list):  # watcher output before polled processes were reported
+            subscribed = {"watched": subscribed, "polled": []}
+        self.pids = set(subscribed["watched"])
+        # Processes whose exit cannot be subscribed to; the watcher re-inspects
+        # them on a timer, so they need no re-subscription.
+        self.polled = set(subscribed["polled"])
         return self
 
     def wait(self):
@@ -584,8 +608,7 @@ def finish_daemon_lifecycle(homes, waiting):
             inspection = inspect_activity(homes)
             if not inspection['safe_to_start']:
                 waiting()
-                pids = getattr(observer, 'pids', None)
-                if pids is not None and any(p['pid'] not in pids for p in inspection['processes']):
+                if rearm_needed(observer, inspection):
                     continue
                 print(json.dumps({'state': 'waiting_for_post_build_completion',
                                   'activity': inspection}), file=sys.stderr, flush=True)
@@ -645,8 +668,7 @@ def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemo
             with LifecycleObserver(homes) as observer:
                 inspection = inspect_activity(homes)
                 while not inspection["safe_to_start"]:
-                    pids = getattr(observer, "pids", None)
-                    if pids is not None and any(p["pid"] not in pids for p in inspection["processes"]):
+                    if rearm_needed(observer, inspection):
                         # A process appeared during subscription. Re-arm its exit
                         # handle, then inspect again before trusting the snapshot.
                         break
@@ -685,8 +707,7 @@ def run_build(project, arguments, *, extra_homes=(), log_path=None, retire_daemo
                                 inspection = inspect_activity(homes)
                                 if inspection["safe_to_start"]:
                                     break
-                                pids = getattr(cancellation_observer, "pids", None)
-                                if pids is not None and any(p["pid"] not in pids for p in inspection["processes"]):
+                                if rearm_needed(cancellation_observer, inspection):
                                     continue
                                 print(json.dumps({"state": "waiting_for_cancellation_completion",
                                                   "activity": inspection}), file=sys.stderr, flush=True)
