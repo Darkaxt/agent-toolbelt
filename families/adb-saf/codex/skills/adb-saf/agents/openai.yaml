@@ -1,0 +1,6 @@
+interface:
+  display_name: "ADB SAF"
+  short_description: "Read and change Android documents-provider (SAF) storage over ADB."
+  default_prompt: "Use $adb-saf to list documents providers, browse and hash app storage exposed through SAF, pull documents, and apply reviewed put/mkdir/rename/delete plans with backups and verification."
+policy:
+  allow_implicit_invocation: true

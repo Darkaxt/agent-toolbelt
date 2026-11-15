@@ -9,6 +9,7 @@ Start by choosing the one family you actually need:
 | Diagnostics-First UI | app-owned debugging actions, rendered state and measured UI readiness instead of screenshot polling | `families/ui-diagnostics-first` | - |
 | Windows Elevation Gate | FIFO administrator prompts with top-most explanation, Accept/Cancel and user feedback | `families/windows-elevation-gate` | `agent-toolbelt-windows-elevation-gate` |
 | ADB Archive Transfer | endpoint-bound Android file transfer with uncompressed tiny-file bundles, direct large-file transfer, and manifest verification | `families/adb-archive-transfer` | `agent-toolbelt-adb-archive-transfer` |
+| ADB SAF | Android documents-provider (Storage Access Framework) reads over ADB, plus reviewed plan/apply changes with backups and hash verification | `families/adb-saf` | `agent-toolbelt-adb-saf` |
 | Gradle Build Gate | shared Windows Gradle build serialization and evidence-backed low-memory supervision | `families/gradle-build-gate` | `agent-toolbelt-gradle-build-gate` |
 | Antigravity Review | independent exact-model review plus bounded public-page and prepared-video evidence analysis | `families/antigravity` | `agent-toolbelt-antigravity` |
 | Amazon CLI | Amazon product search, specs, reviews, offers, and managed session workflows through a bundled Amazon CLI client | `families/amazon-cli` | `agent-toolbelt-amazon-cli` |
@@ -44,6 +45,7 @@ npx skills add Darkaxt/agent-toolbelt --all
 Public skill names:
 
 - `adb-archive-transfer`
+- `adb-saf`
 - `ui-diagnostics-first`
 - `windows-elevation-gate`
 - `gradle-build-gate`
