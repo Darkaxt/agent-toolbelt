@@ -1,0 +1,24 @@
+{
+  "name": "agent-toolbelt-local",
+  "metadata": {
+    "description": "Local marketplace for the agent-toolbelt ADB SAF Claude plugin."
+  },
+  "owner": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "plugins": [
+    {
+      "name": "adb-saf",
+      "description": "Android documents-provider (SAF) access over ADB with reviewed, verified changes.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Darkaxt",
+        "email": "opensource@users.noreply.github.com"
+      },
+      "source": "./plugins/adb-saf",
+      "category": "productivity",
+      "strict": false
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "source_sha256": "b521e15bc9e260d90539ed9f9fde41ec6f6697e8a180b06f7771a22b84de713b",
+  "dex_sha256": "c0962696d5fe41a8a1e2f4c5f21abfc26540badfd6326cb568d5951ccd1912a0",
+  "platform": "android-35",
+  "min_api": 29,
+  "build_tools": "37.0.0"
+}

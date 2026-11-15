@@ -1,0 +1,17 @@
+{
+  "name": "adb-saf",
+  "version": "0.1.0",
+  "description": "Android documents-provider (SAF) access over ADB with reviewed, verified changes.",
+  "author": {
+    "name": "Darkaxt",
+    "email": "opensource@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "adb",
+    "android",
+    "saf",
+    "documents-provider",
+    "content-provider"
+  ]
+}
