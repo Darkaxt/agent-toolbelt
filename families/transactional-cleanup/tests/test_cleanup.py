@@ -593,6 +593,30 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual(external.read_bytes(), b'native')
 
     @unittest.skipUnless(os.name == 'nt', 'Windows junctions')
+    def test_readonly_dangling_junction_and_directory_are_removed(self):
+        import _winapi
+        import ctypes
+        out = self.work / 'build'
+        self.engine.register(self.transaction, out, 'compiler-output', 'linked build output',
+                             allow_leaf_reparse=True)
+        out.mkdir()
+        target = self.root / 'gone'
+        target.mkdir()
+        link = out / 'dangling'
+        _winapi.CreateJunction(str(target), str(link))
+        target.rmdir()
+        readonly_directory = out / 'readonly'
+        readonly_directory.mkdir()
+        set_attributes = ctypes.windll.kernel32.SetFileAttributesW
+        for path in (link, readonly_directory):
+            self.assertTrue(set_attributes(str(path), 0x1))
+        self.assertTrue(os.lstat(link).st_file_attributes & 0x1)
+        result = self.engine.apply(self.ticket())
+        self.assertEqual(result['ticket_state'], 'applied', result)
+        self.assertFalse(os.path.lexists(link))
+        self.assertFalse(out.exists())
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows junctions')
     def test_explicit_leaf_reparse_authority_removes_link_not_target(self):
         import _winapi
         out = self.work / 'build'

@@ -1,6 +1,6 @@
 # Transactional Cleanup
 
-Version 0.13.0 stops counting the caller's own shell as a live consumer when
+Version 0.13.1 stops counting the caller's own shell as a live consumer when
 retiring a worktree or checkout. Git Bash runs pipeline stages in forked copies
 of the shell that carry its full command line, so `remove --path ROOT | ...`
 was refused with "A live process references this worktree". A direct child of
