@@ -3,7 +3,7 @@ name: transactional-cleanup
 description: Clean task-generated Windows or Android artifacts through reviewed snapshots and exact-file tickets, including temporary test apps with recorded installation provenance.
 license: MIT
 metadata:
-  version: "0.12.1"
+  version: "0.13.0"
   compatibility: Windows 10/11, Python 3.11+, NTFS/ReFS or content-bound exFAT; Android cleanup requires ADB and device shell tools. Codex and Claude.
 ---
 
@@ -60,7 +60,8 @@ field holds the exact finish command. If nothing is eligible, `next` is a
 ## Special cases
 
 Read [Detailed Procedures](references/procedures.md) for step-by-step commands,
-existing build leftovers, Git workflow markers, disposable-repository safeguards,
+existing build leftovers, Git workflow markers, test-fixture `.git` markers
+(`--allow-historyless-git`), contained hard links, disposable-repository safeguards,
 the snapshot/retry contract, credentials and ACLs, helper state and
 installation. Whole-checkout retirement: [retirement](references/retirement.md).
 CMake `_deps` clones: [generated dependencies](references/generated-dependencies.md).

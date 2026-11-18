@@ -14,6 +14,7 @@ import secrets
 import shutil
 import socket
 import sqlite3
+import stat
 import subprocess
 
 from . import filesystem as fs
@@ -78,6 +79,8 @@ class Engine:
         self.db_path = self.root / 'state.sqlite3'
         self.repo_cache = {}
         self.repo_roots = {}
+        self.historyless_cache = {}
+        self.historyless_roots = []
         self._protected = None
         self._initialize()
 
@@ -126,7 +129,8 @@ class Engine:
                     allow_hardlinks INTEGER NOT NULL DEFAULT 0,
                     allow_leaf_reparse INTEGER NOT NULL DEFAULT 0,
                     allow_disposable_repository INTEGER NOT NULL DEFAULT 0,
-                    repository_identity TEXT
+                    repository_identity TEXT,
+                    allow_historyless_git INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE INDEX IF NOT EXISTS registrations_lookup ON registrations(transaction_id, path_key);
                 CREATE TABLE IF NOT EXISTS baseline (
@@ -158,6 +162,9 @@ class Engine:
             if 'allow_disposable_repository' not in registration_columns:
                 connection.execute('''ALTER TABLE registrations
                     ADD COLUMN allow_disposable_repository INTEGER NOT NULL DEFAULT 0''')
+            if 'allow_historyless_git' not in registration_columns:
+                connection.execute('''ALTER TABLE registrations
+                    ADD COLUMN allow_historyless_git INTEGER NOT NULL DEFAULT 0''')
             if 'repository_identity' not in registration_columns:
                 connection.execute('ALTER TABLE registrations ADD COLUMN repository_identity TEXT')
             if 'retirement_json' not in registration_columns:
@@ -424,7 +431,9 @@ class Engine:
         if '.git' in parts and not empty_leaf_marker and not allow_git_marker:
             return 'filesystem_or_repository_metadata'
         if (directory is not False and (path / '.git').exists()
-                and not self._empty_git_marker(path / '.git')):
+                and not self._empty_git_marker(path / '.git') and not self._leaf_link(path)):
+            # A .git seen through a leaf link belongs to the link target, which
+            # cleanup never traverses; the link object itself is not a repository.
             return 'repository_root'
         if check_ancestors:
             try:
@@ -433,6 +442,110 @@ class Engine:
                 return 'reparse_point'
         return None
 
+    @staticmethod
+    def _leaf_link(path):
+        try:
+            return fs.reparse(path)
+        except OSError:
+            return False
+
+    HISTORYLESS_ENTRY_LIMIT = 10000
+
+    @staticmethod
+    def _git_marker_of(path):
+        """The outermost .git component of path, or path/.git for a work tree."""
+        for index, part in enumerate(path.parts):
+            if part.casefold() == '.git':
+                return Path(*path.parts[:index + 1])
+        marker = path / '.git'
+        return marker if os.path.lexists(marker) else None
+
+    def _historyless_scope(self, path):
+        """The work tree a historyless authority covers: the registration itself,
+        or the directory holding the .git marker that contains it."""
+        for index, part in enumerate(path.parts):
+            if part.casefold() == '.git':
+                return Path(*path.parts[:index])
+        return path
+
+    def _objectless_tree(self, directory, top_level_links_forbidden=True):
+        """Bounded walk that never follows links: False if any object file (or a
+        link) exists under an objects directory, or a top-level commondir/gitdir
+        delegates this Git directory to another repository."""
+        seen, pending = 0, [(directory, False)]
+        while pending:
+            current, in_objects = pending.pop()
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    seen += 1
+                    if seen > self.HISTORYLESS_ENTRY_LIMIT:
+                        return False
+                    name = entry.name.casefold()
+                    if (top_level_links_forbidden and current == directory
+                            and name in {'commondir', 'gitdir'}):
+                        return False
+                    inside = in_objects or name == 'objects'
+                    info = entry.stat(follow_symlinks=False)
+                    if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
+                        if inside:
+                            return False
+                        continue
+                    if stat.S_ISDIR(info.st_mode):
+                        pending.append((Path(entry.path), inside))
+                    elif inside:
+                        return False
+        return True
+
+    def _historyless(self, marker, scope):
+        """A .git marker inside scope that carries no object history: a plain
+        directory with no object files, or a gitdir pointer whose target is
+        missing or is itself historyless inside the same scope. Memoized per
+        scan/apply run; review and apply each re-check the live tree."""
+        key = (path_key(marker), path_key(scope))
+        if key not in self.historyless_cache:
+            self.historyless_cache[key] = False
+            try:
+                self.historyless_cache[key] = self._historyless_uncached(marker, scope)
+            except (OSError, ValueError, UnicodeDecodeError):
+                pass
+        return self.historyless_cache[key]
+
+    def _historyless_uncached(self, marker, scope):
+        if marker.name.casefold() != '.git' or not fs.within(marker, scope) or marker == scope:
+            return False
+        fs.check_chain(marker)
+        if marker.is_dir():
+            return self._objectless_tree(marker)
+        if not marker.is_file() or marker.stat().st_size > 4096:
+            return False
+        lines = [line for line in marker.read_text(encoding='utf-8').splitlines() if line.strip()]
+        if len(lines) != 1 or not lines[0].startswith('gitdir:'):
+            return False
+        target = Path(lines[0][len('gitdir:'):].strip())
+        target = fs.canonical(target if target.is_absolute() else marker.parent / target)
+        if not os.path.lexists(target):
+            return True
+        if not fs.within(target, scope):
+            return False
+        inner = self._git_marker_of(target)
+        if inner is not None and inner != marker and fs.within(inner, scope) and inner.is_dir():
+            return self._historyless(inner, scope)
+        fs.check_chain(target)
+        return target.is_dir() and self._objectless_tree(target, top_level_links_forbidden=False)
+
+    def _historyless_root_for(self, path, roots=None):
+        roots = self.historyless_roots if roots is None else roots
+        return next((root for root in roots if fs.within(path, root)), None)
+
+    def _historyless_override(self, path, roots=None):
+        """The covering historyless authority when path's Git protection comes
+        only from a historyless fixture marker inside that authority."""
+        root = self._historyless_root_for(path, roots)
+        marker = self._git_marker_of(path) if root is not None else None
+        if marker is None or not fs.within(marker, root):
+            return None
+        return root if self._historyless(marker, root) else None
+
     def _repository_for(self, directory):
         """Nearest enclosing repository, memoized per directory for one scan or apply."""
         key = path_key(directory)
@@ -440,7 +553,10 @@ class Engine:
             marker = directory / '.git'
             # Empty regular markers carry no repository identity. Linked or nonempty
             # markers remain fail-closed; an actual ancestor repository still applies.
-            if marker.exists() and not self._empty_git_marker(marker):
+            # A historyless fixture marker under explicit authority is not a repository.
+            if (marker.exists() and not self._empty_git_marker(marker)
+                    and not (self._historyless_root_for(marker) is not None
+                             and self._historyless(marker, self._historyless_root_for(marker)))):
                 self.repo_roots[key] = directory
             elif directory.parent == directory:
                 self.repo_roots[key] = None
@@ -451,6 +567,7 @@ class Engine:
     def _clear_repo_caches(self):
         self.repo_cache.clear()
         self.repo_roots.clear()
+        self.historyless_cache.clear()
 
     def git_reason(self, path, directory=None):
         if directory is None:
@@ -508,6 +625,12 @@ class Engine:
                 disposable_member = any(fs.within(path, root) for root in disposable_roots)
                 if disposable_member and reason in {'repository_root', 'filesystem_or_repository_metadata'}:
                     reason = None
+                historyless_root = self._historyless_root_for(path)
+                historyless_marker = False
+                if (historyless_root is not None
+                        and reason in {'repository_root', 'filesystem_or_repository_metadata'}
+                        and self._historyless_override(path) is not None):
+                    reason, historyless_marker = None, True
                 if reason:
                     item = {'path': key, 'excluded': reason}
                     if reason in {'repository_root', 'scan_root', 'protected_ancestor'}:
@@ -533,6 +656,9 @@ class Engine:
                     yield {'path': key, 'excluded': type(exc).__name__}
                     continue
                 item = {'path': key, **info}
+                if historyless_root is not None:
+                    item['historyless_git_root'] = str(historyless_root)
+                    item['historyless_git_marker_member'] = historyless_marker
                 if info['directory'] and not info['reparse']:
                     try:
                         pending.extend(children(path, True))
@@ -702,9 +828,24 @@ class Engine:
                  allow_hardlinks=False, allow_leaf_reparse=False,
                  allow_disposable_repository=False, retirement_evidence=None,
                  confirm_retire_repository=None, confirm_git_marker=None,
-                 dependency_evidence=None, confirm_dependency_repository=None):
+                 dependency_evidence=None, confirm_dependency_repository=None,
+                 allow_historyless_git=False):
         path = fs.canonical(path)
         reason = self.protection(path)
+        if allow_historyless_git:
+            scope = self._historyless_scope(path)
+            if (not regenerated or kind in {'disposable-repository', 'retired-repository',
+                                            'generated-git-marker', 'generated-dependency-repository'}
+                    or allow_disposable_repository or retirement_evidence or confirm_retire_repository
+                    or confirm_git_marker or dependency_evidence or confirm_dependency_repository
+                    or not any(scope != root and fs.within(scope, root) for root in self._temp_roots())):
+                raise CleanupError('historyless_git_contract',
+                                   'Historyless Git authority requires --regenerated and a strict descendant of a Temp root')
+            if reason in {'repository_root', 'filesystem_or_repository_metadata'}:
+                self.historyless_cache.clear()
+                if self._historyless_override(path, [scope]) is None:
+                    raise CleanupError('protected_path', reason)
+                reason = None
         if kind not in KINDS or not evidence.strip():
             raise CleanupError('provenance_required', 'Supply a generated artifact kind and concrete provenance')
         connection = self.connect()
@@ -806,11 +947,12 @@ class Engine:
                 self._insert_baseline(connection, transaction, [str(path)])
             connection.execute('''INSERT INTO registrations
                 (transaction_id,path,path_key,kind,evidence,regenerated,allow_hardlinks,allow_leaf_reparse,
-                 allow_disposable_repository,repository_identity)
-                VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                 allow_disposable_repository,repository_identity,allow_historyless_git)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
                                (transaction, str(path), path_key(path), kind, evidence, int(regenerated),
                                 int(allow_hardlinks), int(allow_leaf_reparse),
-                                int(allow_disposable_repository), repository_identity))
+                                int(allow_disposable_repository), repository_identity,
+                                int(allow_historyless_git)))
             if retirement_proof:
                 connection.execute('UPDATE registrations SET retirement_json=? WHERE id=last_insert_rowid()',
                                    (encoded(retirement_proof).decode(),))
@@ -901,12 +1043,20 @@ class Engine:
             allow_hardlinks = bool(registration and registration['allow_hardlinks'])
             if not reason and info['reparse'] and not allow_reparse:
                 reason = 'reparse_point'
+            hardlink_root = None
             if not reason and not info['directory'] and info['links'] != 1 and not allow_hardlinks:
-                reason = 'hardlink'
+                # Every name inside the registration: deleting them all frees the
+                # data and no name elsewhere is affected. Rechecked at deletion.
+                if (registration and info.get('filesystem') in {'NTFS', 'ReFS'}
+                        and fs.links_contained(path, registration['path'])):
+                    hardlink_root = registration['path']
+                else:
+                    reason = 'hardlink'
             if not reason and info.get('filesystem') not in {'NTFS', 'ReFS', 'exFAT'}:
                 reason = 'stable_identity_unavailable'
             if not reason and info.get('filesystem') == 'exFAT' and (
-                    allow_disposable or marker_proof or allow_hardlinks or allow_reparse):
+                    allow_disposable or marker_proof or allow_hardlinks or allow_reparse
+                    or info.get('historyless_git_root')):
                 reason = 'exfat_regular_cleanup_only'
             preexisting = path_key(path) in existing
             if not reason and preexisting and not (registration and registration['regenerated']):
@@ -914,7 +1064,7 @@ class Engine:
             generated = registration or bool({part.casefold() for part in path.parts} & GENERATED)
             if not reason and not generated:
                 reason = 'generated_provenance_missing'
-            item = {**info, 'allow_hardlinks': allow_hardlinks,
+            item = {**info, 'allow_hardlinks': allow_hardlinks, 'hardlink_root': hardlink_root,
                     'allow_leaf_reparse': allow_reparse,
                     'allow_disposable_repository': allow_disposable,
                     'disposable_repository_root': disposable['path'] if allow_disposable else None,
@@ -1028,6 +1178,9 @@ class Engine:
             disposable_roots = []
             git_marker_paths = []
             verified_worktrees = set()
+            self.historyless_roots = sorted(
+                {self._historyless_scope(Path(registration['path'])) for registration in registrations.values()
+                 if registration.get('allow_historyless_git')}, key=lambda root: len(str(root)))
             for registration in registrations.values():
                 if registration.get('worktree_json'):
                     proof = json.loads(registration['worktree_json'])
@@ -1207,6 +1360,7 @@ class Engine:
             disposable_roots = {}
             retired_roots = {}
             linked_roots = {}
+            historyless_roots = set()
             recovery = json.loads(ticket['worktree_recovery_json'] or '{}')
             for root, entry in recovery.items():
                 value = [ticket_id, ticket['manifest_sha256'], root, entry['identity'], entry['sha256']]
@@ -1216,6 +1370,8 @@ class Engine:
             for record in connection.execute("""SELECT item_json FROM manifest
                     WHERE transaction_id=? AND decision='candidate'""", (ticket['transaction_id'],)):
                 item = json.loads(record['item_json'])
+                if item.get('historyless_git_root'):
+                    historyless_roots.add(fs.canonical(item['historyless_git_root']))
                 root = item.get('disposable_repository_root')
                 identity = item.get('disposable_repository_identity')
                 proof = item.get('retirement_proof')
@@ -1260,6 +1416,7 @@ class Engine:
                 if ticket['state'] == 'partially_applied':
                     for proof in linked_roots.values():
                         self._restore_worktree_marker(connection, ticket, proof, recovery)
+            self.historyless_roots = sorted(historyless_roots, key=lambda root: len(str(root)))
             self._clear_repo_caches()
             diagnostics, result_counts, batch = [], Counter(), []
             processed, processed_bytes = 0, ticket['deleted_bytes']
@@ -1305,6 +1462,10 @@ class Engine:
                 reason = self.protection(path, allow_git_marker=marker_valid, check_ancestors=False,
                                          directory=bool(item['directory']))
                 if allow_disposable and reason in {'repository_root', 'filesystem_or_repository_metadata'}:
+                    reason = None
+                if (reason in {'repository_root', 'filesystem_or_repository_metadata'}
+                        and item.get('historyless_git_marker_member')
+                        and self._historyless_override(path) == fs.canonical(item['historyless_git_root'])):
                     reason = None
                 if not reason and not allow_disposable and not marker_valid:
                     reason = self.git_reason(path, bool(item['directory']))

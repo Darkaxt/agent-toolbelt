@@ -1,6 +1,6 @@
 # Transactional Cleanup
 
-Version 0.12.1 stops counting the caller's own shell as a live consumer when
+Version 0.13.0 stops counting the caller's own shell as a live consumer when
 retiring a worktree or checkout. Git Bash runs pipeline stages in forked copies
 of the shell that carry its full command line, so `remove --path ROOT | ...`
 was refused with "A live process references this worktree". A direct child of
@@ -198,7 +198,17 @@ abandoned `.git` directory is not treated as a repository and does not block an
 explicitly registered non-repository generated output. Hard links and leaf reparse objects
 remain protected unless their explicit registration adds `--allow-hardlinks` or
 `--allow-leaf-reparse`. These flags authorize only exact ticketed names: other hard
-links and symlink/junction targets remain intact.
+links and symlink/junction targets remain intact. A hard-linked file whose every
+name lies inside its covering registration is eligible without the flag; deletion
+re-enumerates the names through the open handle. A leaf link to a repository is a
+link object, never a repository root, and its target is not traversed.
+
+Finished test-fixture trees under a Temp root may add `--allow-historyless-git`
+(with `--regenerated`): `.git` markers with no object history (no file under any
+`objects` directory, no top-level `commondir`/`gitdir`, bounded walk) or `gitdir:`
+pointers to a missing or historyless target inside the registration are removed
+with their work trees. Real repositories and markers that gain objects before
+apply remain protected.
 
 An exact standalone Git clone created only for validation may be authorized with
 `--kind disposable-repository --regenerated --allow-disposable-repository`. The
