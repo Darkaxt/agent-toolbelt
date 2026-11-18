@@ -47,6 +47,8 @@ def parser():
                           help='Allow deletion of exact ticketed hard-link names; other links remain intact')
     register.add_argument('--allow-leaf-reparse', action='store_true',
                           help='Allow deletion of exact ticketed leaf symlinks/junctions without traversing targets')
+    register.add_argument('--allow-historyless-git', action='store_true',
+                          help='Allow test-fixture .git markers with no object history beneath a Temp root')
     register.add_argument('--allow-disposable-repository', action='store_true',
                           help='Allow an exact reviewed standalone repository beneath a Temp root')
     register.add_argument('--retirement-evidence', help='External JSON ownership and independent recovery evidence')
@@ -138,7 +140,8 @@ def main(argv=None):
                                              args.regenerated, args.allow_hardlinks, args.allow_leaf_reparse,
                                              args.allow_disposable_repository, args.retirement_evidence,
                                              args.confirm_retire_repository, args.confirm_git_marker,
-                                             args.dependency_evidence, args.confirm_dependency_repository)
+                                             args.dependency_evidence, args.confirm_dependency_repository,
+                                             allow_historyless_git=args.allow_historyless_git)
                 elif args.command == 'review':
                     result = engine.review(args.transaction)
                     result['next'] = (f"inspect --transaction {args.transaction}, then ticket --transaction "

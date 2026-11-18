@@ -248,6 +248,32 @@ require a fresh begin/register/review/inspect/ticket sequence after upgrading.
 - Exact hard-link names or leaf symlink/junction objects may be enabled only on an
   explicit registration with `--allow-hardlinks` or `--allow-leaf-reparse`. These
   options never authorize another link name or traversal/deletion of a link target.
+- A hard-linked file whose every link name lies inside its covering registration
+  (for example rustc incremental `.o` files) is eligible without `--allow-hardlinks`;
+  apply re-enumerates the names through the open handle and protects the file if any
+  name is now outside. A name outside the registration keeps the file protected.
+- A leaf link whose target is a repository is a link, not a repository root: with
+  `--allow-leaf-reparse` only the link object is removed and its target is never listed.
+
+## Test-Fixture Git Markers
+
+Test suites (pytest `tmp_path`, Git tooling tests) create throwaway `.git` markers
+with `HEAD`/`config` but no object history; Git cannot open them, so they would stay
+`repository_root`/`git_unavailable` forever. For a finished fixture tree beneath a
+recognized Temp root, register it with:
+
+```text
+register --transaction <id> --path <fixture-root> --kind explicit-generated-output --regenerated --allow-historyless-git --evidence "<test run that created it and why it is spent>"
+```
+
+A marker is historyless only when it is a plain `.git` directory with no file or
+link under any `objects` directory and no top-level `commondir`/`gitdir`, within a
+bounded 10,000-entry walk that never follows links; or a one-line `gitdir:` file
+whose target is missing or is itself historyless inside the same registration.
+Real clones, markers that gain objects after review (rechecked at apply), markers
+outside the registration and registrations that are not strict Temp descendants
+stay protected. Leaf links inside fixtures still need their own exact
+`--allow-leaf-reparse` registration. Not supported on exFAT.
 - Directories are removed only when empty. No recursive directory deletion occurs.
 - USN/ETW tracking is unavailable in v2; never claim complete host coverage.
 - Cleanup authority expires after seven inactive days; the next invocation compacts

@@ -242,6 +242,49 @@ def content_snapshot(entry):
         return hash_handle(opened)
 
 
+def link_names(path: Path) -> list[Path]:
+    """Every hard-link name of a file (FindFirstFileNameW), as absolute paths on its volume."""
+    if os.name != 'nt':
+        raise OSError('Hard-link name enumeration requires Windows')
+    find_first = kernel.FindFirstFileNameW
+    find_first.restype = wintypes.HANDLE
+    find_first.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), wintypes.LPWSTR]
+    find_next = kernel.FindNextFileNameW
+    find_next.restype = wintypes.BOOL
+    find_next.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD), wintypes.LPWSTR]
+    kernel.FindClose.argtypes = [wintypes.HANDLE]
+    buffer = ctypes.create_unicode_buffer(32768)
+    length = wintypes.DWORD(len(buffer))
+    found = find_first(str(path), 0, ctypes.byref(length), buffer)
+    if found == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    anchor = Path(path.anchor)
+    names = []
+    try:
+        while True:
+            names.append(canonical(anchor / buffer.value.lstrip('\\')))
+            length = wintypes.DWORD(len(buffer))
+            if not find_next(found, ctypes.byref(length), buffer):
+                error = ctypes.get_last_error()
+                if error == 38:  # ERROR_HANDLE_EOF
+                    return names
+                raise ctypes.WinError(error)
+    finally:
+        kernel.FindClose(found)
+
+
+def links_contained(path: Path, root: str | Path | None) -> bool:
+    """True only when every hard-link name of path lies inside root."""
+    if not root:
+        return False
+    try:
+        names = link_names(path)
+    except (OSError, ValueError):
+        return False
+    root = canonical(root)
+    return bool(names) and all(within(name, root) for name in names)
+
+
 def delete_exact(entry: dict, *, dry_run: bool = False,
                  ancestors: AncestorChain | None = None) -> tuple[str, int]:
     """Keep ancestors immovable and dispose the checked object through its open handle.
@@ -254,6 +297,7 @@ def delete_exact(entry: dict, *, dry_run: bool = False,
         return 'protected', 0
     exfat = entry.get('filesystem') == 'exFAT'
     if exfat and (entry.get('allow_leaf_reparse') or entry.get('allow_hardlinks')
+                  or entry.get('hardlink_root') or entry.get('historyless_git_root')
                   or entry.get('allow_disposable_repository') or entry.get('git_marker_proof')
                   or entry.get('retired_repository_root')
                   or (not entry['directory'] and not entry.get('content_sha256'))):
@@ -283,7 +327,8 @@ def delete_exact(entry: dict, *, dry_run: bool = False,
                 return 'protected', 0
             if current['reparse'] and not entry.get('allow_leaf_reparse'):
                 return 'protected', 0
-            if not current['directory'] and current['links'] != 1 and not entry.get('allow_hardlinks'):
+            if (not current['directory'] and current['links'] != 1 and not entry.get('allow_hardlinks')
+                    and not links_contained(path, entry.get('hardlink_root'))):
                 return 'protected', 0
             if current['identity'] != entry['identity'] or current['directory'] != entry['directory']:
                 return 'replaced_after_scan', 0
