@@ -343,20 +343,27 @@ def delete_exact(entry: dict, *, dry_run: bool = False,
                 return 'not_empty', 0
             if dry_run:
                 return 'eligible', 0
-            if not current['directory']:
-                basic = FileBasicInfo()
-                if not kernel.GetFileInformationByHandleEx(
+            # ReadOnly refuses deletion of files, directories and leaf link
+            # objects alike (ERROR_ACCESS_DENIED, which would read as locked).
+            # Clear it through the held handle, and restore it if deletion fails.
+            basic = FileBasicInfo()
+            if not kernel.GetFileInformationByHandleEx(
+                    opened, 0, ctypes.byref(basic), ctypes.sizeof(basic)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            readonly = bool(basic.attributes & 0x1)
+            if readonly:
+                basic.attributes &= ~0x1
+                if not kernel.SetFileInformationByHandle(
                         opened, 0, ctypes.byref(basic), ctypes.sizeof(basic)):
                     raise ctypes.WinError(ctypes.get_last_error())
-                if basic.attributes & 0x1:
-                    basic.attributes &= ~0x1
-                    if not kernel.SetFileInformationByHandle(
-                            opened, 0, ctypes.byref(basic), ctypes.sizeof(basic)):
-                        raise ctypes.WinError(ctypes.get_last_error())
             # FILE_DISPOSITION_INFO uses a one-byte BOOLEAN. It refuses nonempty directories.
             disposition = ctypes.c_ubyte(1)
             if not kernel.SetFileInformationByHandle(opened, 4, ctypes.byref(disposition), 1):
-                raise ctypes.WinError(ctypes.get_last_error())
+                error = ctypes.get_last_error()
+                if readonly:
+                    basic.attributes |= 0x1
+                    kernel.SetFileInformationByHandle(opened, 0, ctypes.byref(basic), ctypes.sizeof(basic))
+                raise ctypes.WinError(error)
             return 'deleted', 0 if current['directory'] else current['size']
     except FileNotFoundError:
         return 'already_missing', 0
