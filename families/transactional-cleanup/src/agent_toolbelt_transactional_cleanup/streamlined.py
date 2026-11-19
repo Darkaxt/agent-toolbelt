@@ -10,6 +10,8 @@ commands; only the separate invocations are removed.
 from __future__ import annotations
 
 import collections
+import os
+import stat
 from pathlib import Path
 
 from . import filesystem as fs
@@ -62,9 +64,32 @@ def _summary(engine, transaction, paths):
             'excluded_reasons': dict(reasons), 'excluded_truncated': sum(reasons.values()) > len(excluded)}
 
 
-def prepare(engine, paths, evidence, kind='temporary', workspace=None):
+FIXTURE_LINK_LIMIT = 100000
+
+
+def _fixture_links(root):
+    """Leaf links (symlinks/junctions) beneath a fixture root, found by a bounded
+    walk that never descends through a link."""
+    links, pending, seen = [], [Path(root)], 0
+    while pending:
+        with os.scandir(pending.pop()) as entries:
+            for entry in entries:
+                seen += 1
+                if seen > FIXTURE_LINK_LIMIT:
+                    raise CleanupError('use_step_commands', 'Fixture tree too large for one-step link registration')
+                info = entry.stat(follow_symlinks=False)
+                if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
+                    links.append(Path(entry.path))
+                elif stat.S_ISDIR(info.st_mode):
+                    pending.append(Path(entry.path))
+    return links
+
+
+def prepare(engine, paths, evidence, kind='temporary', workspace=None, test_fixtures=False):
     if kind not in SIMPLE_KINDS:
         raise CleanupError('use_step_commands', f'Kind {kind} needs the step-by-step workflow and its evidence options')
+    if test_fixtures and kind == 'disposable-repository':
+        raise CleanupError('use_step_commands', '--test-fixtures cannot be combined with disposable-repository')
     paths = _paths(paths)
     workspace = _workspace(engine, workspace)
     with engine.locked(paths, operation='prepare'):
@@ -75,7 +100,13 @@ def prepare(engine, paths, evidence, kind='temporary', workspace=None):
     with engine.locked(roots, operation='prepare', transaction=transaction):
         for path in paths:
             engine.register(transaction, path, kind, evidence, regenerated=True,
-                            allow_disposable_repository=kind == 'disposable-repository')
+                            allow_disposable_repository=kind == 'disposable-repository',
+                            allow_historyless_git=test_fixtures)
+            # Fixture trees hold throwaway links: each exact link object is
+            # registered as a leaf; its target is never traversed or deleted.
+            for link in (_fixture_links(path) if test_fixtures and Path(path).is_dir() else ()):
+                engine.register(transaction, link, kind, evidence, regenerated=True, allow_leaf_reparse=True,
+                                allow_historyless_git='.git' in {part.casefold() for part in link.parts})
         reviewed = engine.review(transaction)
         summary = _summary(engine, transaction, paths)
     reviewed.update(operation='prepare', **summary)
@@ -103,13 +134,13 @@ def finish(engine, transaction, manifest_sha256, dry_run=False):
     return result
 
 
-def remove(engine, paths, evidence, kind='temporary', dry_run=False):
+def remove(engine, paths, evidence, kind='temporary', dry_run=False, test_fixtures=False):
     temp_roots = engine._temp_roots()
     for path in _paths(paths):
         if not any(Path(path) != root and fs.within(Path(path), root) for root in temp_roots):
             raise CleanupError('use_prepare',
                                f'One-step remove is limited to folders below a Temp root; use prepare/finish for {path}')
-    prepared = prepare(engine, paths, evidence, kind)
+    prepared = prepare(engine, paths, evidence, kind, test_fixtures=test_fixtures)
     if not prepared['candidate_count']:
         engine.discard(prepared['transaction_id'], 'remove found nothing eligible to delete')
         prepared.update(operation='remove', next=None)

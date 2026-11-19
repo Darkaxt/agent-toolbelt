@@ -3,7 +3,7 @@ name: transactional-cleanup
 description: Clean task-generated Windows or Android artifacts through reviewed snapshots and exact-file tickets, including temporary test apps with recorded installation provenance.
 license: MIT
 metadata:
-  version: "0.13.1"
+  version: "0.13.2"
   compatibility: Windows 10/11, Python 3.11+, NTFS/ReFS or content-bound exFAT; Android cleanup requires ADB and device shell tools. Codex and Claude.
 ---
 
@@ -26,7 +26,10 @@ remove --path <folder> [--path <folder2> ...] --evidence "<what created it and w
 Use `--kind disposable-repository` for a clean disposable clone or linked worktree
 there, and `--dry-run` only to resolve a real doubt (`finish` later resumes that
 ticket). The result reports per-path counts, `deleted_bytes` and `excluded`.
-`remove` refuses targets outside Temp with `use_prepare`.
+`remove` refuses targets outside Temp with `use_prepare`. For a finished test-fixture
+tree (pytest `tmp_path` and similar), add `--test-fixtures`: fake `.git` markers with
+no object history and leaf links inside are removed (link targets are never touched);
+fixture repositories with real commits still need `--kind disposable-repository` each.
 
 ## Anything else: two calls
 
