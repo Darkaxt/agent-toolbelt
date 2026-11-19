@@ -84,6 +84,24 @@ class StreamlinedCleanupTests(unittest.TestCase):
         self.assertEqual(result['deleted_bytes'], 18)
         self.assertFalse(first.exists()); self.assertFalse(second.exists())
 
+    def test_remove_test_fixtures_clears_historyless_markers_and_leaf_links(self):
+        import _winapi
+        fixtures = self.root / 'pytest'
+        git = fixtures / 'case0' / 'repo' / '.git'
+        (git / 'info').mkdir(parents=True)
+        (git / 'HEAD').write_text('ref: refs/heads/main\n', encoding='utf-8')
+        target = self.root / 'kept-target'
+        target.mkdir()
+        (target / 'keep.txt').write_text('keep\n', encoding='utf-8')
+        _winapi.CreateJunction(str(target), str(fixtures / 'case0' / 'link'))
+        plain = streamlined.remove(self.engine, [fixtures], 'pytest fixtures')
+        self.assertIn('repository_root', plain['excluded_reasons'], plain)
+        self.assertTrue(git.exists())
+        result = streamlined.remove(self.engine, [fixtures], 'pytest fixtures', test_fixtures=True)
+        self.assertEqual(result['state'], 'applied', result)
+        self.assertFalse(fixtures.exists())
+        self.assertEqual((target / 'keep.txt').read_text(encoding='utf-8'), 'keep\n')
+
     def test_remove_dry_run_keeps_files_and_finish_resumes_the_same_ticket(self):
         folder = self.scratch()
         dry = streamlined.remove(self.engine, [folder], 'test scratch', dry_run=True)

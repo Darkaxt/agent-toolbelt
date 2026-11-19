@@ -23,6 +23,8 @@ def parser():
     prepare.add_argument('--evidence', required=True, help='Concrete generated-output provenance')
     prepare.add_argument('--kind', choices=streamlined.SIMPLE_KINDS, default='temporary')
     prepare.add_argument('--workspace', help='Optional active workspace to protect')
+    prepare.add_argument('--test-fixtures', action='store_true',
+                         help='Finished test-fixture tree below Temp: allow historyless .git markers and leaf links')
     finish = commands.add_parser('finish', help='Ticket and delete the exact reviewed manifest from prepare')
     finish.add_argument('--transaction', required=True)
     finish.add_argument('--manifest-sha256', required=True)
@@ -32,6 +34,8 @@ def parser():
     remove.add_argument('--evidence', required=True, help='What created it and why it is no longer needed')
     remove.add_argument('--kind', choices=streamlined.SIMPLE_KINDS, default='temporary')
     remove.add_argument('--dry-run', action='store_true')
+    remove.add_argument('--test-fixtures', action='store_true',
+                        help='Finished test-fixture tree: allow historyless .git markers and leaf links')
     begin = commands.add_parser('begin')
     begin.add_argument('--workspace', required=True)
     begin.add_argument('--scan-root', action='append', help='Scan only these roots when supplied; otherwise scan only the workspace')
@@ -112,11 +116,13 @@ def main(argv=None):
             result['android'] = android.AndroidCleanup(host_engine=engine).state_inventory()
             result['state_bytes'] += result['android']['state_bytes']
         elif args.command == 'prepare':
-            result = streamlined.prepare(engine, args.path, args.evidence, args.kind, args.workspace)
+            result = streamlined.prepare(engine, args.path, args.evidence, args.kind, args.workspace,
+                                         test_fixtures=args.test_fixtures)
         elif args.command == 'finish':
             result = streamlined.finish(engine, args.transaction, args.manifest_sha256, args.dry_run)
         elif args.command == 'remove':
-            result = streamlined.remove(engine, args.path, args.evidence, args.kind, args.dry_run)
+            result = streamlined.remove(engine, args.path, args.evidence, args.kind, args.dry_run,
+                                        test_fixtures=args.test_fixtures)
         elif args.command == 'discard' and engine.legacy_path(args.transaction).is_file():
             result = engine.discard_legacy(args.transaction, args.reason)
         else:
