@@ -501,6 +501,53 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual(result['ticket_state'], 'applied', result)
         self.assertFalse(repository.exists())
 
+    def interrupted_clone(self, name='plugins'):
+        """A clone killed after fetching its pack: .git holds only objects/pack."""
+        clone = self.root / name
+        pack = clone / '.git' / 'objects' / 'pack'
+        pack.mkdir(parents=True)
+        (pack / 'pack-1.pack').write_bytes(b'PACK' + b'\0' * 64)
+        (pack / 'pack-1.idx').write_bytes(b'\377tOc' + b'\0' * 32)
+        return clone
+
+    def test_disposable_repository_removes_refless_interrupted_clone(self):
+        clone = self.interrupted_clone()
+        transaction = self.engine.begin(self.work, [clone])['transaction_id']
+        self.engine.register(transaction, clone, 'disposable-repository',
+                             'interrupted marketplace clone', regenerated=True,
+                             allow_disposable_repository=True)
+        review = self.engine.review(transaction)
+        self.assertEqual(review['excluded_count'], 0, review)
+        ticket = self.engine.ticket(transaction, review['manifest_sha256'])['ticket_id']
+        result = self.engine.apply(ticket)
+        self.assertEqual(result['ticket_state'], 'applied', result)
+        self.assertFalse(clone.exists())
+
+    def test_interrupted_clone_with_any_reference_stays_protected(self):
+        for label, path in [('head', 'HEAD'), ('packed', 'packed-refs'), ('ref', 'refs/heads/main'),
+                            ('index', 'index')]:
+            with self.subTest(label=label):
+                clone = self.interrupted_clone('plugins-' + label)
+                (clone / '.git' / path).parent.mkdir(parents=True, exist_ok=True)
+                (clone / '.git' / path).write_text('0' * 40 + '\n', encoding='utf-8')
+                transaction = self.engine.begin(self.work, [clone])['transaction_id']
+                with self.assertRaises(CleanupError):
+                    self.engine.register(transaction, clone, 'disposable-repository',
+                                         'interrupted marketplace clone', regenerated=True,
+                                         allow_disposable_repository=True)
+        clone = self.interrupted_clone('plugins-added-ref')
+        transaction = self.engine.begin(self.work, [clone])['transaction_id']
+        self.engine.register(transaction, clone, 'disposable-repository',
+                             'interrupted marketplace clone', regenerated=True,
+                             allow_disposable_repository=True)
+        review = self.engine.review(transaction)
+        ticket = self.engine.ticket(transaction, review['manifest_sha256'])['ticket_id']
+        (clone / '.git' / 'refs' / 'heads').mkdir(parents=True)
+        (clone / '.git' / 'refs' / 'heads' / 'main').write_text('0' * 40 + '\n', encoding='utf-8')
+        with self.assertRaises(CleanupError):
+            self.engine.apply(ticket)
+        self.assertTrue((clone / '.git' / 'objects' / 'pack' / 'pack-1.pack').exists())
+
     def test_disposable_repository_keeps_concurrent_new_file(self):
         repository = self.disposable_repository()
         transaction = self.engine.begin(self.work, [repository])['transaction_id']

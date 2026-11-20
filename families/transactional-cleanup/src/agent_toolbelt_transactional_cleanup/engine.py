@@ -707,15 +707,54 @@ class Engine:
                     ['git', '-C', str(path), 'rev-parse', '--show-toplevel', '--is-inside-work-tree'],
                     capture_output=True, check=True, text=True)
                 lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-                if len(lines) < 2 or fs.canonical(lines[0]) != path or lines[1].casefold() != 'true':
+                if ((len(lines) < 2 or fs.canonical(lines[0]) != path or lines[1].casefold() != 'true')
+                        and not self._refless_clone(marker)):
                     raise CleanupError('disposable_repository_invalid',
                                        'Git did not identify the exact registered path as a working-tree root')
             except CleanupError:
                 raise
-            except (OSError, subprocess.CalledProcessError, ValueError) as exc:
+            except subprocess.CalledProcessError as exc:
+                if not self._refless_clone(marker):
+                    raise CleanupError('disposable_repository_invalid',
+                                       'Git could not verify the disposable repository root') from exc
+            except (OSError, ValueError) as exc:
                 raise CleanupError('disposable_repository_invalid',
                                    'Git could not verify the disposable repository root') from exc
         return info['identity']
+
+    # Top-level Git directory entries that name history, staged work or another
+    # repository. Any of them means the directory is not a refless clone.
+    REFLESS_FORBIDDEN = frozenset({'head', 'orig_head', 'fetch_head', 'merge_head', 'packed-refs',
+                                   'index', 'logs', 'worktrees', 'modules', 'commondir', 'gitdir'})
+
+    def _refless_clone(self, marker):
+        """An interrupted clone's .git directory: Git does not recognize it (no
+        HEAD) and no reference names any object it holds (no HEAD, packed-refs or
+        file under refs), so nothing in it is reachable history. Bounded walk that
+        never follows links; any link, staged index or worktree link fails closed."""
+        try:
+            seen, pending = 0, [(marker, False)]
+            while pending:
+                current, in_refs = pending.pop()
+                with os.scandir(current) as entries:
+                    for entry in entries:
+                        seen += 1
+                        if seen > self.HISTORYLESS_ENTRY_LIMIT:
+                            return False
+                        name = entry.name.casefold()
+                        if current == marker and name in self.REFLESS_FORBIDDEN:
+                            return False
+                        info = entry.stat(follow_symlinks=False)
+                        if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
+                            return False
+                        inside = in_refs or (current == marker and name == 'refs')
+                        if stat.S_ISDIR(info.st_mode):
+                            pending.append((Path(entry.path), inside))
+                        elif inside:
+                            return False
+            return True
+        except OSError:
+            return False
 
     def _set_progress(self, connection, transaction, operation, phase, processed=0, total=None, processed_bytes=0):
         connection.execute('''UPDATE transactions SET active_operation=?, progress_phase=?,

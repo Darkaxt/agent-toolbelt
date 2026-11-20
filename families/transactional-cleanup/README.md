@@ -1,5 +1,11 @@
 # Transactional Cleanup
 
+Version 0.13.3 lets `--kind disposable-repository` remove an interrupted clone,
+for example a `codex plugin add` marketplace clone killed after its pack fetch.
+Git does not recognize such a `.git` (no HEAD), so the helper previously
+excluded it as a repository forever. It is accepted only when no reference can
+reach its objects; adding HEAD, a ref or an index before apply blocks deletion.
+
 Version 0.13.2 stops counting the caller's own shell as a live consumer when
 retiring a worktree or checkout. Git Bash runs pipeline stages in forked copies
 of the shell that carry its full command line, so `remove --path ROOT | ...`
@@ -213,7 +219,10 @@ apply remain protected.
 An exact standalone Git clone created only for validation may be authorized with
 `--kind disposable-repository --regenerated --allow-disposable-repository`. The
 repository must be an exact explicit scan root, a strict descendant of a recognized
-Temp root, and contain a real internal `.git` directory. Linked worktrees, the
+Temp root, and contain a real internal `.git` directory. Git must identify it as that working-tree root,
+or its `.git` must be an interrupted clone that no reference reaches: objects only,
+with no HEAD, packed-refs, file under `refs`, index, reflogs or worktree/module
+links, and no links anywhere (bounded walk, rechecked at apply). Linked worktrees, the
 workspace repository, broad Temp roots, repositories outside Temp, and repositories
 whose root identity changes after review remain protected. Review includes the
 tracked files and `.git` metadata as exact ticket members. New files created after
