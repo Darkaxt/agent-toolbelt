@@ -65,7 +65,7 @@ Public skill names:
 - `transactional-cleanup`
 - `c-drive-maintenance`
 - `d-temp-maintenance`
-- `everything-search`
+- `everything-search` (retired; use Coordinator `pathweft-monitor` MCP)
 - `antigravity-cli`
 - `linkedin-cv`
 - `mail-domain-quarantine`

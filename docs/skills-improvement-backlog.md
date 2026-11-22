@@ -113,9 +113,9 @@ or skills.sh alternative review.
 
 ### `everything-search`
 
-- Decision: improved in this repo.
-- Completed work: documented filename/path scope and added diagnostics for backend selection, `es.exe` availability, and scoped fallback behavior.
-- Follow-up: keep it out of content grep, symbol search, RAG indexing, and cross-platform promises.
+- Decision: retired by the user on 22 November 2026; replaced by Pathweft index search through Coordinator `pathweft-monitor` MCP.
+- Historical work: filename/path scope and backend/fallback diagnostics remain in Git history.
+- No further legacy expansion or automatic reinstall. Use the maintained Pathweft route.
 
 ## Validation checklist
 

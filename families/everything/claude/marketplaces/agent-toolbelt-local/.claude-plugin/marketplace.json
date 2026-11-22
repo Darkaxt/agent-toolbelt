@@ -1,7 +1,7 @@
 {
   "name": "agent-toolbelt-local",
   "metadata": {
-    "description": "Local marketplace for the agent-toolbelt Everything Claude plugin."
+    "description": "Historical retired Everything plugin; use Coordinator pathweft-monitor MCP."
   },
   "owner": {
     "name": "Darkaxt",
@@ -10,8 +10,8 @@
   "plugins": [
     {
       "name": "everything-search",
-      "description": "Uses Everything CLI for global filename and path lookup with safe fallbacks.",
-      "version": "0.1.0",
+      "description": "Retired; use Pathweft index search through Coordinator pathweft-monitor MCP.",
+      "version": "0.3.0",
       "author": {
         "name": "Darkaxt",
         "email": "opensource@users.noreply.github.com"

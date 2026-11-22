@@ -1,5 +1,11 @@
 # Everything Family
 
+**Retired on 22 November 2026.** Do not install or enable this family for new
+work. Global file discovery now uses Pathweft's index through the installed
+Coordinator `pathweft-monitor` skill (`search_files`, `get_file_details`,
+`list_folder`, `get_folder_size`). The packages and scripts below are historical
+source, not the supported routing or an automatic fallback.
+
 Everything-first filename/path discovery with conservative fallbacks for cases where `es.exe` is missing or the request is not a global search fit. This is not a content grep, symbol search, or RAG indexer.
 
 Use this family if you want:

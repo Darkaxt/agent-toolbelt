@@ -20,7 +20,7 @@ and safety gates count as first-class features for local-first skills.
 | --- | --- | --- |
 | `amazon-cli` | Strong direct competitors exist | Keep. Integrate product-API/no-captcha ideas only if they fit the local retail workflow. |
 | `codex-thread-recall` | Strong direct competitors exist | Keep. Public recall tools are stronger for broad cross-session search; ours is stronger for current-thread episode/timeline/worklog semantics. |
-| `everything-search` | No meaningful direct alternative found | Keep. Public hits are generic file/content search, not Windows Everything `es.exe`. |
+| `everything-search` | Retired by user 2026-11-22 | Replaced by Pathweft index search through Coordinator `pathweft-monitor` MCP. |
 | `antigravity-cli` | Partial alternatives exist | Keep as an isolated exact-model packet/public-evidence analyzer; use official Google skills for Gemini API/app development and `yt-dlp-ffmpeg` for public-video evidence preparation. |
 | `linkedin-cv` | Partial alternatives exist | Keep, but position around local read-only capture/comparison. Public skills are better for generic profile advice. |
 | `mail-domain-quarantine` | No meaningful direct alternative found | Keep. No public hit matched RDAP/blocklist-driven Outlook quarantine. |
@@ -110,6 +110,10 @@ Notable false positives: Codex setup/plugin helpers, code context tools, goal
 planners, and generic memory/project-memory prompts.
 
 ## 3. `everything-search`
+
+Current disposition: retired by user on 22 November 2026 in favor of Pathweft
+index MCP (`pathweft-monitor`). The comparison below is historical and does not
+authorize installing, enabling or expanding the legacy skill.
 
 Queries: `everything`, `file search`, `desktop search`, `windows search`,
 `es.exe`

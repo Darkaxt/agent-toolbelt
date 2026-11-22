@@ -49,7 +49,7 @@ npx skills update
 | `skroutz-cli` | Windows/local CLI oriented | `agent-toolbelt-skroutz-cli`; optional managed Skroutz session for cart workflows | Cart list is read-only; add/remove require explicit confirmation; no checkout or buy workflows. |
 | `aliexpress-cli` | Windows/local CLI oriented | `agent-toolbelt-aliexpress-cli`; optional managed AliExpress session for logged-in read visibility | Read-only discovery only; no cart, checkout, buy, payment, address, order, wishlist, or review submission workflows. |
 | `codex-thread-recall` | Codex only | `CODEX_THREAD_ID`, local Codex `state_5.sqlite`, readable rollout JSONL files | Current-thread first; workspace expansion is explicit. |
-| `everything-search` | Windows only | Everything and `es.exe` for best results | Falls back safely when Everything is unavailable. |
+| `everything-search` | Retired 2026-11-22 | Replaced by Coordinator `pathweft-monitor` MCP | Do not install or enable the legacy skill. |
 | `linkedin-cv` | Local LinkedIn profile evidence capture and CV/profile comparison | Local package install and one explicit accessible LinkedIn profile capture | Read-only by default; no search traversal, scraping, content generation, or engagement automation. |
 | `mail-domain-quarantine` | Windows Outlook Classic | Outlook Classic, mailbox access, RDAP/DNS reputation dependencies | Dry-run by default; mailbox moves require explicit confirmation. |
 | `yt-dlp-ffmpeg` | Transcript-first public video analysis preparation and local media operations | `yt-dlp`, `ffmpeg`, and `ffprobe` | Model-free evidence preparation; do not bypass access controls or private media restrictions. |

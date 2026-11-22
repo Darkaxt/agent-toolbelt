@@ -1,0 +1,6 @@
+interface:
+  display_name: "Everything Search (retired)"
+  short_description: "Deprecated; use Pathweft MCP through pathweft-monitor."
+  default_prompt: "Read pathweft-monitor and use its managed indexed search instead of this retired skill."
+policy:
+  allow_implicit_invocation: false

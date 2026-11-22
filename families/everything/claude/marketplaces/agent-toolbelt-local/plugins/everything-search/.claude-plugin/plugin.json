@@ -1,7 +1,7 @@
 {
   "name": "everything-search",
-  "version": "0.1.0",
-  "description": "Uses Everything CLI for global filename and path lookup with safe fallbacks.",
+  "version": "0.3.0",
+  "description": "Retired; use Pathweft index search through Coordinator pathweft-monitor MCP.",
   "author": {
     "name": "Darkaxt",
     "email": "opensource@users.noreply.github.com"
