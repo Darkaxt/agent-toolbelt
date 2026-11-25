@@ -1,5 +1,14 @@
 # Transactional Cleanup
 
+Version 0.13.5 stops helper state growth from partially applied tickets. When
+a ticket ends partially applied, rows it never needs again (deleted members and
+exclusions) are removed and the ticket stores an HMAC-signed checkpoint of the
+retained rows. The first compaction proves the full reviewed digest; retries
+verify retained rows against the checkpoint, so tampering is still rejected.
+Result counts keep the removed members. Partial tickets retained from older
+versions are compacted by routine maintenance. After compaction, `inspect`
+lists only the retained rows.
+
 Version 0.13.4 treats `$RECYCLE.BIN`, `System Volume Information` and `$Extend`
 as protected filesystem metadata only directly under a volume root. Ordinary
 folders with those names deeper in attributed output (for example archive

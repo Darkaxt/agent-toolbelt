@@ -30,6 +30,12 @@ KINDS = ('temporary', 'compiler-output', 'package-cache', 'browser-artifact',
          'generated-dependency-repository')
 GENERATED = {'__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache'}
 RETRY = {'locked', 'failed', 'not_empty'}
+# Rows a partially applied ticket never needs again. Members carrying signed
+# worktree/retirement proofs, or belonging to a linked worktree, are kept.
+RESOLVED_ROWS = '''transaction_id=? AND (result='deleted' OR decision='excluded')
+    AND json_extract(item_json,'$.worktree_proof') IS NULL
+    AND json_extract(item_json,'$.retirement_proof') IS NULL
+    AND json_extract(item_json,'$.worktree_root') IS NULL'''
 BATCH_SIZE = 256
 BASELINE_SKIPPED = 'skipped_regenerated_only'
 CLAIM_VERSION = 1
@@ -176,6 +182,8 @@ class Engine:
             ticket_columns = {row[1] for row in connection.execute('PRAGMA table_info(tickets)')}
             if 'worktree_recovery_json' not in ticket_columns:
                 connection.execute('ALTER TABLE tickets ADD COLUMN worktree_recovery_json TEXT')
+            if 'compaction_json' not in ticket_columns:
+                connection.execute('ALTER TABLE tickets ADD COLUMN compaction_json TEXT')
             transaction_columns = {row[1] for row in connection.execute('PRAGMA table_info(transactions)')}
             if 'discard_reason' not in transaction_columns:
                 connection.execute('ALTER TABLE transactions ADD COLUMN discard_reason TEXT')
@@ -1361,13 +1369,83 @@ class Engine:
         return ticket
 
     def _verify_ticket_membership(self, connection, ticket, transaction_row):
-        if self._manifest_digest(connection, transaction_row) != ticket['manifest_sha256']:
-            raise CleanupError('review_mismatch', 'Reviewed manifest changed')
+        compaction = self._compaction(ticket)
+        if compaction is None:
+            if self._manifest_digest(connection, transaction_row) != ticket['manifest_sha256']:
+                raise CleanupError('review_mismatch', 'Reviewed manifest changed')
+            resolved = 0
+        else:
+            remaining_sha256, remaining = self._remaining_digest(connection, ticket['transaction_id'])
+            if (remaining_sha256 != compaction['remaining_sha256']
+                    or remaining != compaction['remaining']):
+                raise CleanupError('review_mismatch', 'Compacted manifest changed')
+            resolved = compaction['resolved_candidates']
         count = connection.execute(
             "SELECT COUNT(*) FROM manifest WHERE transaction_id=? AND decision='candidate'",
             (ticket['transaction_id'],)).fetchone()[0]
-        if count != ticket['candidate_count']:
+        if count + resolved != ticket['candidate_count']:
             raise CleanupError('ticket_mismatch', 'Ticket membership differs from review')
+
+    def _remaining_digest(self, connection, transaction):
+        """Integrity-check every retained row and hash its (ordinal, row hash) pair."""
+        checksum, count = hashlib.sha256(), 0
+        for item in connection.execute('''SELECT ordinal,item_json,row_sha256,row_mac FROM manifest
+                                          WHERE transaction_id=? ORDER BY ordinal''', (transaction,)):
+            actual = hashlib.sha256(item['item_json'].encode()).hexdigest()
+            mac = hmac.new(self.key, encoded([transaction, item['ordinal'], actual]), 'sha256').hexdigest()
+            if actual != item['row_sha256'] or not hmac.compare_digest(mac, item['row_mac']):
+                raise CleanupError('review_mismatch', 'Reviewed manifest row failed integrity validation')
+            checksum.update(f"{item['ordinal']}:{actual}\n".encode())
+            count += 1
+        return checksum.hexdigest(), count
+
+    def _compaction_mac(self, ticket, record):
+        fields = [ticket['ticket_id'], ticket['manifest_sha256'], record['remaining_sha256'],
+                  record['remaining'], record['resolved_candidates'], record['resolved_counts']]
+        return hmac.new(self.key, encoded(fields), 'sha256').hexdigest()
+
+    def _compaction(self, ticket):
+        if not ticket.get('compaction_json'):
+            return None
+        record = json.loads(ticket['compaction_json'])
+        if not hmac.compare_digest(self._compaction_mac(ticket, record), record.get('mac', '')):
+            raise CleanupError('invalid_state', 'Ticket compaction checkpoint failed integrity validation')
+        return record
+
+    def compact_resolved(self, connection, ticket_id):
+        """Drop rows a partially applied ticket no longer needs, under a signed checkpoint.
+
+        The first compaction proves the full reviewed digest; retries then verify the
+        retained rows against the checkpoint. Returns the number of rows removed."""
+        connection.commit()
+        connection.execute('BEGIN IMMEDIATE')
+        try:
+            ticket = self._ticket(connection, ticket_id)
+            if ticket['state'] != 'partially_applied':
+                connection.rollback()
+                return 0
+            transaction = ticket['transaction_id']
+            self._verify_ticket_membership(connection, ticket, self._row(connection, transaction))
+            prior = self._compaction(ticket) or {'resolved_counts': {}}
+            counts = dict(prior['resolved_counts'])
+            for row in connection.execute(f'''SELECT result,COUNT(*) count FROM manifest WHERE {RESOLVED_ROWS}
+                    AND decision='candidate' GROUP BY result''', (transaction,)):
+                counts[row['result']] = counts.get(row['result'], 0) + row['count']
+            removed = connection.execute(f'DELETE FROM manifest WHERE {RESOLVED_ROWS}', (transaction,)).rowcount
+            remaining_sha256, remaining = self._remaining_digest(connection, transaction)
+            candidates = connection.execute(
+                "SELECT COUNT(*) FROM manifest WHERE transaction_id=? AND decision='candidate'",
+                (transaction,)).fetchone()[0]
+            record = {'remaining_sha256': remaining_sha256, 'remaining': remaining,
+                      'resolved_candidates': ticket['candidate_count'] - candidates, 'resolved_counts': counts}
+            record['mac'] = self._compaction_mac(ticket, record)
+            connection.execute('UPDATE tickets SET compaction_json=? WHERE ticket_id=?',
+                               (encoded(record).decode(), ticket_id))
+            connection.commit()
+            return removed
+        except BaseException:
+            connection.rollback()
+            raise
 
     def _flush_results(self, connection, ticket, batch, processed, processed_bytes):
         if not batch:
@@ -1536,6 +1614,8 @@ class Engine:
                 connection.execute('UPDATE transactions SET state=? WHERE transaction_id=?',
                                    (ticket_state, ticket['transaction_id']))
                 self._clear_progress(connection, ticket['transaction_id']); connection.commit()
+                if ticket_state == 'partially_applied':
+                    self.compact_resolved(connection, ticket_id)
             else:
                 self._verify_ticket_membership(connection, ticket, transaction_row)
                 ticket_state = ticket['state']
@@ -1581,9 +1661,15 @@ class Engine:
 
     @staticmethod
     def _result_counts(connection, transaction):
-        return {row['result']: row['count'] for row in connection.execute('''SELECT result,COUNT(*) count
+        counts = {row['result']: row['count'] for row in connection.execute('''SELECT result,COUNT(*) count
             FROM manifest WHERE transaction_id=? AND decision='candidate' AND result IS NOT NULL GROUP BY result''',
                                                                            (transaction,))}
+        ticket = connection.execute('SELECT compaction_json FROM tickets WHERE transaction_id=?',
+                                    (transaction,)).fetchone()
+        if ticket and ticket['compaction_json']:  # report-only; membership checks verify its MAC
+            for result, count in json.loads(ticket['compaction_json'])['resolved_counts'].items():
+                counts[result] = counts.get(result, 0) + count
+        return counts
 
     def finish(self, connection, payload, ticket, result):
         transaction = payload['transaction_id']

@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
@@ -364,6 +364,68 @@ class CleanupTests(unittest.TestCase):
         second = self.engine.apply(ticket)
         self.assertEqual(second['deleted_bytes'], 9)
         self.assertTrue((out / 'new.bin').exists())
+        (out / 'new.bin').unlink()
+        self.assertEqual(self.engine.apply(ticket)['ticket_state'], 'applied')
+
+    def _partial(self):
+        out = self.output()
+        ticket = self.ticket()
+        (out / 'new.bin').write_bytes(b'new')
+        self.assertEqual(self.engine.apply(ticket)['ticket_state'], 'partially_applied')
+        return out, ticket
+
+    def test_partial_apply_drops_resolved_rows_and_retry_still_verifies(self):
+        out, ticket = self._partial()
+        with closing(self.engine.connect()) as connection:
+            rows = connection.execute('SELECT result,decision FROM manifest WHERE transaction_id=?',
+                                      (self.transaction,)).fetchall()
+            checkpoint = connection.execute('SELECT compaction_json FROM tickets WHERE ticket_id=?',
+                                            (ticket,)).fetchone()[0]
+        self.assertTrue(rows)
+        self.assertFalse([row for row in rows if row['result'] == 'deleted' or row['decision'] == 'excluded'])
+        self.assertTrue(checkpoint)
+        self.assertEqual(self.engine.apply(ticket, dry_run=True)['ticket_state'], 'partially_applied')
+        again = self.engine.apply(ticket)
+        self.assertEqual(again['ticket_state'], 'partially_applied')
+        self.assertEqual(again['result_counts']['deleted'], 2)
+        (out / 'new.bin').unlink()
+        final = self.engine.apply(ticket)
+        self.assertEqual(final['ticket_state'], 'applied')
+        self.assertEqual(final['result_counts'].get('deleted'), 3)
+        self.assertFalse(out.exists())
+
+    def test_tampered_compacted_manifest_is_rejected(self):
+        out, ticket = self._partial()
+        with closing(self.engine.connect()) as connection:
+            connection.execute("UPDATE manifest SET result='deleted' WHERE transaction_id=?", (self.transaction,))
+            connection.execute("DELETE FROM manifest WHERE transaction_id=?", (self.transaction,))
+            connection.commit()
+        with self.assertRaises(CleanupError):
+            self.engine.apply(ticket)
+        self.assertTrue((out / 'new.bin').exists())
+
+    def test_forged_compaction_checkpoint_is_rejected(self):
+        out, ticket = self._partial()
+        with closing(self.engine.connect()) as connection:
+            raw = json.loads(connection.execute('SELECT compaction_json FROM tickets WHERE ticket_id=?',
+                                                (ticket,)).fetchone()[0])
+            raw['resolved_candidates'] += 1
+            connection.execute('UPDATE tickets SET compaction_json=? WHERE ticket_id=?', (json.dumps(raw), ticket))
+            connection.commit()
+        with self.assertRaises(CleanupError):
+            self.engine.apply(ticket)
+
+    def test_retention_compacts_pre_checkpoint_partial_tickets(self):
+        from agent_toolbelt_transactional_cleanup import retention
+        out = self.output()
+        ticket = self.ticket()
+        (out / 'new.bin').write_bytes(b'new')
+        with patch.object(Engine, 'compact_resolved', return_value=0):  # emulate pre-0.13.5 state
+            self.assertEqual(self.engine.apply(ticket)['ticket_state'], 'partially_applied')
+        result = retention.compact_partials(self.engine)
+        self.assertGreater(result['removed_rows'], 0)
+        self.assertEqual(result['skipped'], [])
+        self.assertEqual(retention.compact_partials(self.engine)['removed_rows'], 0)
         (out / 'new.bin').unlink()
         self.assertEqual(self.engine.apply(ticket)['ticket_state'], 'applied')
 
