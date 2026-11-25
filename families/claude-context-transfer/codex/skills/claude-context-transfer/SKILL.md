@@ -3,7 +3,7 @@ name: claude-context-transfer
 description: Take over a long-running Claude Code session into a fresh independent session, or migrate a Codex task into Claude Code, with bounded context evidence, a verified recovery archive and disk-reclaiming retirement of the original. Use for oversized Claude transcripts, Codex-to-Claude moves, restoring an archived session, and searching this session's own transcript after compaction.
 license: MIT
 metadata:
-  version: "0.2.0"
+  version: "0.2.1"
   compatibility: Windows, Python 3.11+, 7-Zip. Claude Code destination. Retirement uses the installed thread-cleanup skill; Codex sources reuse the installed Codex context-transfer runtime.
 ---
 
@@ -31,8 +31,10 @@ Never select sources by title, age or folder - exact full UUIDs only.
 Claude sources: `G:\Archives\Claude\ContextTransfers\<year>\<date>-<slug>\`
 with `Records\` (inspection, catalog, handoff, acceptance, plans, results) and
 `Archives\<source-id>\<UTC>\session-tree.7z`. Codex sources keep the Codex root
-`E:\Codex\ContextTransfers` and its index. An explicit user-chosen non-C root
-wins. Archives hold raw transcripts and may contain secrets: keep them local.
+`E:\Codex\ContextTransfers` and its index. Thread-maintenance records (thread-cleanup plans,
+activity evidence, ledgers) go to
+`G:\Archives\Claude\ContextTransfers\Maintenance\<date>-<purpose>\`, never D:.
+An explicit user-chosen non-C root wins. Archives hold raw transcripts and may contain secrets: keep them local.
 
 ## Claude -> Claude
 

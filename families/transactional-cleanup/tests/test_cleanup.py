@@ -1084,6 +1084,26 @@ with Engine(Path(sys.argv[1])).locked([Path(sys.argv[2])], operation='review', t
             path = Path(os.environ['SystemRoot']) / 'System32' / 'Recovery'
             self.assertEqual(self.engine.protection(path), 'protected_root')
 
+    def test_nested_volume_metadata_names_use_normal_ticket_checks(self):
+        out = self.output()
+        source = b'{"verified": true}\n'
+        for name in ('$RECYCLE.BIN', 'System Volume Information', '$Extend'):
+            folder = out / 'Archive-Evidence' / name
+            folder.mkdir(parents=True)
+            (folder / 'state.json').write_bytes(source)
+        review = self.engine.review(self.transaction)
+        self.assertEqual(review['candidate_bytes'], 9 + 3 * len(source))
+        ticket = self.engine.ticket(self.transaction, review['manifest_sha256'])['ticket_id']
+        self.assertEqual(self.engine.apply(ticket)['ticket_state'], 'applied')
+        self.assertFalse(out.exists())
+
+    def test_volume_root_metadata_remains_protected(self):
+        for relative in ('$RECYCLE.BIN', '$recycle.bin/S-1-5-21', 'System Volume Information',
+                         '$Extend/$UsnJrnl'):
+            with self.subTest(relative=relative):
+                path = Path(self.root.anchor) / relative
+                self.assertEqual(self.engine.protection(path), 'filesystem_or_repository_metadata')
+
     def test_attributed_package_boot_directory_uses_normal_ticket_checks(self):
         out = self.output()
         boot = out / 'go-modules' / 'example.org' / 'module@v1' / 'boot'
