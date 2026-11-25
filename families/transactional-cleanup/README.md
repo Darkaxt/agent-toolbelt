@@ -1,5 +1,10 @@
 # Transactional Cleanup
 
+Version 0.13.4 treats `$RECYCLE.BIN`, `System Volume Information` and `$Extend`
+as protected filesystem metadata only directly under a volume root. Ordinary
+folders with those names deeper in attributed output (for example archive
+evidence named after a copied volume's folders) use normal ticket checks.
+
 Version 0.13.3 lets `--kind disposable-repository` remove an interrupted clone,
 for example a `codex plugin add` marketplace clone killed after its pack fetch.
 Git does not recognize such a `.git` (no HEAD), so the helper previously

@@ -419,11 +419,13 @@ class Engine:
         if path in critical:
             return 'critical_root'
         parts = {part.casefold() for part in path.parts}
-        # Windows boot, EFI and recovery are volume-root trees, not arbitrary
-        # package modules with those names. SystemRoot is protected above.
+        # Windows boot, EFI, recovery and filesystem metadata are volume-root
+        # trees, not arbitrary folders with those names deeper in a tree (for
+        # example archive evidence named after a copied volume's folders).
+        # SystemRoot is protected above.
         volume_child = path.parts[1].casefold() if len(path.parts) > 1 else ''
-        if (parts & {'$recycle.bin', 'system volume information', '$extend'}
-                or volume_child in {'boot', 'efi', 'recovery'}):
+        if volume_child in {'$recycle.bin', 'system volume information', '$extend',
+                            'boot', 'efi', 'recovery'}:
             return 'filesystem_or_repository_metadata'
         empty_leaf_marker = (path.name.casefold() == '.git'
                              and '.git' not in {part.casefold() for part in path.parent.parts}

@@ -20,7 +20,7 @@ import sys
 from typing import Any, Iterable
 from uuid import UUID
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 PREFIX = "agent_toolbelt_claude_context_transfer"
 DEFAULT_ARCHIVE_ROOT = Path(r"G:\Archives\Claude\ContextTransfers")
 DEFAULT_REFRAME_STATE = Path(r"D:\Tools\Reframe\profiles\ClaudeGPT\state.json")
