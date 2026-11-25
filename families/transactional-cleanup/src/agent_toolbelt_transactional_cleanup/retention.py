@@ -212,8 +212,27 @@ def expire_android(engine, at):
     return {'expired': expired, 'live_preserved': busy}
 
 
+def compact_partials(engine):
+    """Compact partially applied tickets retained without a checkpoint (pre-0.13.5 state)."""
+    removed, skipped = 0, []
+    with closing(engine.connect()) as connection:
+        rows = [dict(row) for row in connection.execute('''SELECT k.ticket_id,t.roots_json FROM tickets k
+            JOIN transactions t USING(transaction_id)
+            WHERE k.state='partially_applied' AND k.compaction_json IS NULL''')]
+    for row in rows:
+        try:
+            with engine.locked(json.loads(row['roots_json']), operation='compact', transaction=row['ticket_id']):
+                with closing(engine.connect()) as connection:
+                    removed += engine.compact_resolved(connection, row['ticket_id'])
+        except CleanupError as error:
+            if error.kind not in {'target_busy', 'state_busy', 'review_mismatch', 'invalid_state', 'ticket_mismatch'}:
+                raise
+            skipped.append(row['ticket_id'])
+    return {'removed_rows': removed, 'skipped': skipped}
+
+
 def maintain(engine, at=None):
     at = at or datetime.now(timezone.utc)
     return {'expiry_days': DAYS, 'target_files_deleted': 0,
             'windows': expire_windows(engine, at), 'legacy': expire_legacy(engine, at),
-            'android': expire_android(engine, at)}
+            'android': expire_android(engine, at), 'compaction': compact_partials(engine)}
