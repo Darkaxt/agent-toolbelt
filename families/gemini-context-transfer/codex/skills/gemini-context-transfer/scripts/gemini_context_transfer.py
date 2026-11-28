@@ -48,7 +48,7 @@ REQUIRED_SECTIONS = (
 )
 MILESTONES = ("decision", "blocker", "failed", "error", "tests passed", "verified", "commit ",
               "merged", "pushed", "released", "next action", "plan")
-COMPRESSION = ["-t7z", "-mx=9", "-m0=lzma2", "-md=256m", "-mfb=273", "-ms=on", "-mmt=on"]
+COMPRESSION = ["-t7z", "-mx=9", "-m0=lzma2", "-md=256m", "-mfb=273", "-ms=on", "-mmt=2"]  # one LZMA2 encoder (~2.7 GB at 256m dict); mmt=on scales memory per core
 FILE_ARG_KEYS = ("AbsolutePath", "TargetFile", "FilePath", "Path", "File", "path", "file_path", "DirectoryPath")
 COMMAND_ARG_KEYS = ("CommandLine", "command", "Command")
 REPO_RE = re.compile(r"github\.com[/:]([\w.-]+/[\w.-]+?)(?:\.git)?(?=[\s/\"'#)]|$)")
