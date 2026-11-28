@@ -26,10 +26,14 @@ remove --path <folder> [--path <folder2> ...] --evidence "<what created it and w
 Use `--kind disposable-repository` for a clean disposable clone or linked worktree
 there, and `--dry-run` only to resolve a real doubt (`finish` later resumes that
 ticket). The result reports per-path counts, `deleted_bytes` and `excluded`.
-`remove` refuses targets outside Temp with `use_prepare`. For a finished test-fixture
-tree (pytest `tmp_path` and similar), add `--test-fixtures`: fake `.git` markers with
-no object history and leaf links inside are removed (link targets are never touched);
-fixture repositories with real commits still need `--kind disposable-repository` each.
+`remove` refuses targets outside Temp with `use_prepare`. Below a Temp root on NTFS/ReFS
+the folder is removed whole: nested Git repositories inside it (pytest fixtures, clones
+made by the finished task, with or without commits) and leaf links/junctions are
+members, not leftovers. Link targets are never traversed or deleted. A nested repository
+stays protected only when something outside the folder depends on it (a linked worktree
+registered elsewhere, `commondir` or `objects/info/alternates` outside). Push any work you
+need before removing a folder that holds clones. `--test-fixtures` is now implied there.
+A folder that is itself a repository still takes `--kind disposable-repository`.
 An interrupted clone whose `.git` holds objects but no HEAD, packed-refs, ref file,
 index or worktree link also takes `--kind disposable-repository` at its exact root.
 

@@ -57,13 +57,12 @@ class HistorylessFixtureTests(unittest.TestCase):
         ticket = self.engine.ticket(transaction, review['manifest_sha256'])['ticket_id']
         return transaction, review, ticket
 
-    def test_fixture_markers_are_protected_without_authority(self):
-        repository = self.fixture_repository()
+    def test_fixture_markers_are_removed_by_default_below_temp(self):
+        self.fixture_repository()
         _, review, ticket = self.run_cleanup(allow=False)
-        self.engine.apply(ticket)
-        self.assertTrue((repository / '.git' / 'HEAD').exists())
-        self.assertTrue((repository / 'tracked.txt').exists())
-        self.assertTrue((self.fixtures / 'feature' / '.git').exists())
+        result = self.engine.apply(ticket)
+        self.assertEqual(result['ticket_state'], 'applied', result)
+        self.assertFalse(self.fixtures.exists())
 
     def test_historyless_fixture_markers_are_removed_with_authority(self):
         self.fixture_repository()
@@ -72,39 +71,71 @@ class HistorylessFixtureTests(unittest.TestCase):
         self.assertEqual(result['ticket_state'], 'applied', result)
         self.assertFalse(self.fixtures.exists())
 
-    def test_marker_with_object_history_stays_protected(self):
-        repository = self.fixture_repository()
-        (repository / '.git' / 'objects' / 'ab').mkdir()
-        (repository / '.git' / 'objects' / 'ab' / 'cdef').write_bytes(b'object')
-        _, review, ticket = self.run_cleanup()
-        self.engine.apply(ticket)
-        self.assertTrue((repository / '.git' / 'objects' / 'ab' / 'cdef').exists())
-        self.assertTrue((repository / 'tracked.txt').exists())
-        # The linked pointer targets a Git directory that now has history.
-        self.assertTrue((self.fixtures / 'feature' / '.git').exists())
-        self.assertFalse((self.fixtures / 'dangling').exists())
-
-    def test_objects_added_after_review_protect_members_at_apply(self):
-        repository = self.fixture_repository()
-        _, review, ticket = self.run_cleanup()
-        (repository / '.git' / 'objects' / 'pack' / 'pack-1.pack').write_bytes(b'pack')
-        self.engine.apply(ticket)
-        self.assertTrue((repository / '.git' / 'HEAD').exists())
-        self.assertTrue((repository / 'tracked.txt').exists())
-        self.assertTrue((repository / '.git' / 'objects' / 'pack' / 'pack-1.pack').exists())
-
-    def test_real_repository_stays_protected(self):
-        repository = self.fixtures / 'real'
-        repository.mkdir()
+    def committed_repository(self, repository):
+        repository.mkdir(parents=True)
         subprocess.run(['git', 'init', str(repository)], check=True, capture_output=True)
         (repository / 'file.txt').write_text('source\n', encoding='utf-8')
         subprocess.run(['git', '-C', str(repository), 'add', '.'], check=True, capture_output=True)
         subprocess.run(['git', '-C', str(repository), '-c', 'user.name=T', '-c', 'user.email=t@example.invalid',
                         'commit', '-m', 'x'], check=True, capture_output=True)
+        return repository
+
+    def test_nested_marker_with_object_history_is_removed(self):
+        repository = self.fixture_repository()
+        (repository / '.git' / 'objects' / 'ab').mkdir()
+        (repository / '.git' / 'objects' / 'ab' / 'cdef').write_bytes(b'object')
         _, review, ticket = self.run_cleanup()
+        result = self.engine.apply(ticket)
+        self.assertEqual(result['ticket_state'], 'applied', result)
+        self.assertFalse(self.fixtures.exists())
+
+    def test_nested_committed_repository_is_removed(self):
+        self.committed_repository(self.fixtures / 'pytest-0' / 'real')
+        _, review, ticket = self.run_cleanup(allow=False)
+        result = self.engine.apply(ticket)
+        self.assertEqual(result['ticket_state'], 'applied', result)
+        self.assertFalse(self.fixtures.exists())
+
+    def test_alternates_outside_scope_added_after_review_protect_members(self):
+        repository = self.committed_repository(self.fixtures / 'real')
+        _, review, ticket = self.run_cleanup()
+        (repository / '.git' / 'objects' / 'info').mkdir(exist_ok=True)
+        (repository / '.git' / 'objects' / 'info' / 'alternates').write_text(
+            str(self.root / 'elsewhere' / 'objects') + '\n', encoding='utf-8')
         self.engine.apply(ticket)
         self.assertTrue((repository / 'file.txt').exists())
         self.assertTrue((repository / '.git' / 'HEAD').exists())
+
+    def test_repository_with_worktree_outside_scope_stays_protected(self):
+        repository = self.committed_repository(self.fixtures / 'real')
+        outside = self.root / 'outside-worktree'
+        subprocess.run(['git', '-C', str(repository), 'worktree', 'add', '-q', str(outside)],
+                       check=True, capture_output=True)
+        _, review, ticket = self.run_cleanup(allow=False)
+        self.engine.apply(ticket)
+        self.assertTrue((repository / '.git' / 'HEAD').exists())
+        self.assertTrue((repository / 'file.txt').exists())
+        self.assertTrue((outside / 'file.txt').exists())
+
+    def test_registered_repository_root_still_needs_disposable_contract(self):
+        repository = self.committed_repository(self.fixtures / 'real')
+        transaction = self.engine.begin(self.work, [repository])['transaction_id']
+        with self.assertRaises(CleanupError) as raised:
+            self.engine.register(transaction, repository, 'explicit-generated-output',
+                                 'clone', regenerated=True)
+        self.assertEqual(raised.exception.kind, 'protected_path')
+
+    def test_leaf_junction_is_removed_by_default_without_touching_target(self):
+        import _winapi
+        target = self.root / 'real-target'
+        target.mkdir()
+        (target / 'keep.txt').write_text('keep\n', encoding='utf-8')
+        _winapi.CreateJunction(str(target), str(self.fixtures / 'node_modules_link'))
+        _, review, ticket = self.run_cleanup(allow=False)
+        result = self.engine.apply(ticket)
+        self.assertEqual(result['ticket_state'], 'applied', result)
+        self.assertFalse(self.fixtures.exists())
+        self.assertEqual((target / 'keep.txt').read_text(encoding='utf-8'), 'keep\n')
 
     def test_authority_requires_regenerated_and_temp_descendant(self):
         transaction = self.engine.begin(self.work, [self.fixtures])['transaction_id']

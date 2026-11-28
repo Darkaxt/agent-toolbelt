@@ -94,10 +94,8 @@ class StreamlinedCleanupTests(unittest.TestCase):
         target.mkdir()
         (target / 'keep.txt').write_text('keep\n', encoding='utf-8')
         _winapi.CreateJunction(str(target), str(fixtures / 'case0' / 'link'))
-        plain = streamlined.remove(self.engine, [fixtures], 'pytest fixtures')
-        self.assertIn('repository_root', plain['excluded_reasons'], plain)
-        self.assertTrue(git.exists())
-        result = streamlined.remove(self.engine, [fixtures], 'pytest fixtures', test_fixtures=True)
+        # Below a Temp root the plain one-step remove covers fixture markers and links.
+        result = streamlined.remove(self.engine, [fixtures], 'pytest fixtures')
         self.assertEqual(result['state'], 'applied', result)
         self.assertFalse(fixtures.exists())
         self.assertEqual((target / 'keep.txt').read_text(encoding='utf-8'), 'keep\n')
