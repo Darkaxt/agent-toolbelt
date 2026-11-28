@@ -54,6 +54,7 @@ class GeminiContextTransferTests(unittest.TestCase):
         (logs / "transcript_full.jsonl").write_text("full\n", encoding="utf-8")
         (self.home / "brain" / SRC / ".system_generated" / "subagents" / "sub-1").mkdir(parents=True)
         (self.home / "brain" / SRC / ".system_generated" / "subagents" / "sub-1" / "out.txt").write_text("child", encoding="utf-8")
+        (self.home / "brain" / SRC / ".system_generated" / "subagents" / "sub-2.json").write_text("{}", encoding="utf-8")
         (self.home / "brain" / SRC / "task-7").mkdir()
         (self.home / "brain" / SRC / "task-7" / "notes.md").write_text("task", encoding="utf-8")
         (self.home / "conversations").mkdir()
@@ -78,7 +79,7 @@ class GeminiContextTransferTests(unittest.TestCase):
     def handoff(self, manifest):
         body = "\n\n".join(f"## {name}\ncontent" for name in gct.REQUIRED_SECTIONS
                            if name != "Gemini Subagent And Task Map")
-        body += "\n\n## Gemini Subagent And Task Map\n- sub-1: child\n- task-7: notes\n"
+        body += "\n\n## Gemini Subagent And Task Map\n- sub-1: child\n- sub-2: child two\n- task-7: notes\n"
         path = self.records / "CONTEXT_TRANSFER.md"
         path.write_text(body, encoding="utf-8")
         return path
@@ -113,7 +114,7 @@ class GeminiContextTransferTests(unittest.TestCase):
         self.assertEqual(result["title"], "Doodle Work")
         self.assertEqual(result["blockers"], [])
         self.assertEqual(result["reframe_tile_references"][0]["hook_id"], "abc-agy")
-        self.assertEqual(result["subagent_ids"], ["sub-1"])
+        self.assertEqual(result["subagent_ids"], ["sub-1", "sub-2"])
         self.assertEqual(result["task_directories"], ["task-7"])
         residual = {Path(r["path"]).name for r in result["shared_index_residuals"]}
         self.assertTrue({"conversation_metadata.json", "history.jsonl", "conversation_summaries.db"} <= residual)
@@ -156,6 +157,10 @@ class GeminiContextTransferTests(unittest.TestCase):
     def test_pack_refuses_changed_source_and_missing_root(self):
         result, manifest = self.inspect()
         handoff = self.handoff(result)
+        with patch.object(gct, "running_processes", return_value=[{"Name": "agy.exe", "ProcessId": 9}]):
+            with self.assertRaises(gct.TransferError) as caught:
+                gct.pack(manifest, handoff, str(self.root / "transfer"), None)
+            self.assertEqual(caught.exception.kind, "pack_blocked")
         (self.home / "annotations" / f"{SRC}.pbtxt").write_text("changed", encoding="utf-8")
         with self.assertRaises(gct.TransferError) as caught:
             gct.pack(manifest, handoff, str(self.root / "transfer"), None)
@@ -188,6 +193,13 @@ class GeminiContextTransferTests(unittest.TestCase):
         with patch.object(gct, "running_processes", return_value=[{"Name": "language_server_windows_x64.exe"}]):
             with self.assertRaises(gct.TransferError):
                 gct.retire(manifest, handoff, acceptance, verification, True, None, None)
+        with patch.object(gct, "running_processes", return_value=[{"Name": "agy.exe", "ProcessId": 9}]):
+            with self.assertRaises(gct.TransferError) as caught:
+                gct.retire(manifest, handoff, acceptance, verification, True, None, None, "   ")
+            self.assertEqual(caught.exception.kind, "override_evidence_missing")
+            overridden = gct.retire(manifest, handoff, acceptance, verification, True, None, None,
+                                    "User confirmed the open agy window is another conversation")
+            self.assertTrue(overridden["dry_run"])
         dry = gct.retire(manifest, handoff, acceptance, verification, True, None, None)
         self.assertTrue(dry["dry_run"])
         self.assertTrue((self.home / "brain" / SRC).exists())

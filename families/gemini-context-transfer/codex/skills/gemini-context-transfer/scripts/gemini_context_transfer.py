@@ -280,7 +280,9 @@ def inspect(home: Path, source_id: str, destination_id: str, archive_root: Path,
         blockers.append("destination_transcript_missing")
     info = summary_of(home, source_id)
     transcript = home / "brain" / source_id / TRANSCRIPT
-    subagents = sorted(p.name for p in (home / "brain" / source_id / ".system_generated" / "subagents").glob("*"))
+    # agy stores each subagent as <conversation-id>.json (older layouts used a directory per id).
+    subagents = sorted(p.stem if p.is_file() and p.suffix == ".json" else p.name
+                       for p in (home / "brain" / source_id / ".system_generated" / "subagents").glob("*"))
     tasks = sorted(p.name for p in (home / "brain" / source_id).glob("task-*"))
     return {
         "schema": f"{PREFIX}.inspection.v1", "version": VERSION, "source_system": "gemini-antigravity-cli",
@@ -526,10 +528,27 @@ def recheck_members(manifest: dict[str, Any]) -> list[str]:
     return changed
 
 
-def pack(manifest_path: Path, handoff: Path, directory: str | None, binary: str | None) -> dict[str, Any]:
+def unrelated_live_record(evidence: str | None) -> dict[str, Any] | None:
+    """Explicit override for agy processes the user confirmed belong to other conversations.
+
+    agy exposes no per-process conversation id, so liveness is conservative. With an override the
+    caller states the user's confirmation; member hashes are still rechecked before every step.
+    """
+    if evidence is None:
+        return None
+    if not evidence.strip():
+        raise TransferError("override_evidence_missing", "--confirmed-unrelated-live needs the user's confirmation text.")
+    return {"evidence": evidence.strip(), "live_processes": live_processes(),
+            "recorded_at": datetime.now(timezone.utc).isoformat()}
+
+
+def pack(manifest_path: Path, handoff: Path, directory: str | None, binary: str | None,
+         unrelated_live: str | None = None) -> dict[str, Any]:
     manifest = load_json(manifest_path, "inspection")
     handoff_result = validate_handoff(manifest, handoff)
-    if manifest["source_live"] or "unsafe_members" in manifest["blockers"] or live_processes():
+    override = unrelated_live_record(unrelated_live)
+    live_blocked = (manifest["source_live"] or bool(live_processes())) and override is None
+    if live_blocked or "unsafe_members" in manifest["blockers"]:
         raise TransferError("pack_blocked", "agy is running or the source has unsafe members.",
                             blockers=manifest["blockers"])
     changed = recheck_members(manifest)
@@ -574,7 +593,8 @@ def pack(manifest_path: Path, handoff: Path, directory: str | None, binary: str 
         raise TransferError("staging_residual", "Snapshot staging could not be removed.", path=str(staging))
     return {"schema": f"{PREFIX}.pack_result.v1", "ok": True, "transfer_directory": str(root),
             "archive": str(archive), "archive_sha256": sha256(archive), "archive_bytes": archive.stat().st_size,
-            "source_bytes": manifest["total_bytes"], "member_count": manifest["member_count"], "staging_removed": True}
+            "source_bytes": manifest["total_bytes"], "member_count": manifest["member_count"], "staging_removed": True,
+            "unrelated_live_override": override}
 
 
 def extract_verified(archive: Path, binary: str | None, staging: Path) -> dict[str, Any]:
@@ -642,7 +662,8 @@ def restore(archive: Path, binary: str | None) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- retirement / completion
 
-def retirement_plan(manifest_path: Path, handoff: Path, acceptance: Path, verification_path: Path) -> dict[str, Any]:
+def retirement_plan(manifest_path: Path, handoff: Path, acceptance: Path, verification_path: Path,
+                    unrelated_live: str | None = None) -> dict[str, Any]:
     manifest = load_json(manifest_path, "inspection")
     accepted = validate_acceptance(manifest, handoff, acceptance)
     verification = load_json(verification_path, "verification")
@@ -654,8 +675,9 @@ def retirement_plan(manifest_path: Path, handoff: Path, acceptance: Path, verifi
             side["handoff_sha256"] != accepted["handoff_sha256"]:
         raise TransferError("archive_binding", "Archive is not bound to this source and accepted handoff.")
     live = live_processes()
-    if live:
-        raise TransferError("source_live", "agy/Antigravity is running; close it before retirement.", processes=live)
+    if live and unrelated_live_record(unrelated_live) is None:
+        raise TransferError("source_live", "agy/Antigravity is running; close it before retirement, or pass "
+                            "--confirmed-unrelated-live with the user's confirmation.", processes=live)
     home = Path(side["gemini_home"])
     files, unsafe = owned_members(home, side["source_conversation_id"])
     if unsafe:
@@ -675,8 +697,9 @@ def retirement_plan(manifest_path: Path, handoff: Path, acceptance: Path, verifi
 
 
 def retire(manifest_path: Path, handoff: Path, acceptance: Path, verification_path: Path, dry_run: bool,
-           plan_sha: str | None, output: Path | None) -> dict[str, Any]:
-    plan = retirement_plan(manifest_path, handoff, acceptance, verification_path)
+           plan_sha: str | None, output: Path | None, unrelated_live: str | None = None) -> dict[str, Any]:
+    plan = retirement_plan(manifest_path, handoff, acceptance, verification_path, unrelated_live)
+    override = unrelated_live_record(unrelated_live)
     digest = canonical_sha(plan)
     manifest = load_json(manifest_path, "inspection")
     home = Path(plan["gemini_home"])
@@ -712,6 +735,7 @@ def retire(manifest_path: Path, handoff: Path, acceptance: Path, verification_pa
               "failed": failed, "remaining_under_brain": remaining[:50],
               "shared_index_residuals": shared_residuals(home, plan["source_conversation_id"]),
               "reframe_tile_references": manifest.get("reframe_tile_references", []),
+              "unrelated_live_override": override,
               "note": "Shared indexes and Reframe hook directories were not edited."}
     if output:
         write_json(output, result)
@@ -783,6 +807,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--handoff", required=True)
     p.add_argument("--transfer-directory")
     p.add_argument("--seven-zip-path")
+    p.add_argument("--confirmed-unrelated-live", metavar="EVIDENCE",
+                   help="User-confirmed statement that every running agy belongs to another conversation.")
     for name in ("verify", "restore"):
         p = sub.add_parser(name)
         p.add_argument("--archive", required=True)
@@ -792,6 +818,8 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument(flag, required=True)
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--plan-sha256")
+    p.add_argument("--confirmed-unrelated-live", metavar="EVIDENCE",
+                   help="User-confirmed statement that every running agy belongs to another conversation.")
     p.add_argument("--output", help="retirement-result.json path (default Records/ beside verification.json)")
     p = sub.add_parser("validate-completion")
     p.add_argument("--transfer-directory", required=True)
@@ -837,7 +865,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.output:
                 write_json(args.output, result)
         elif args.command == "pack":
-            result = pack(Path(args.manifest), Path(args.handoff), args.transfer_directory, args.seven_zip_path)
+            result = pack(Path(args.manifest), Path(args.handoff), args.transfer_directory, args.seven_zip_path,
+                          args.confirmed_unrelated_live)
         elif args.command == "verify":
             result = verify(Path(args.archive), args.seven_zip_path)
         elif args.command == "restore":
@@ -845,7 +874,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "retire":
             output = Path(args.output) if args.output else Path(args.verification).parent / "retirement-result.json"
             result = retire(Path(args.manifest), Path(args.handoff), Path(args.acceptance), Path(args.verification),
-                            args.dry_run, args.plan_sha256, None if args.dry_run else output)
+                            args.dry_run, args.plan_sha256, None if args.dry_run else output,
+                            args.confirmed_unrelated_live)
         elif args.command == "search":
             kinds = set(args.kind) if args.kind else None
             tools = args.tools or bool(kinds and kinds & {"tool_use", "tool_result"})
