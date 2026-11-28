@@ -1,5 +1,11 @@
 # Transactional Cleanup
 
+Version 0.13.6 removes regenerated output below a Temp root whole: nested
+self-contained Git repositories (pytest fixtures with commits, finished clones) and
+leaf links/junctions no longer stay behind as protected litter. Repositories that
+serve a worktree or borrow objects outside the folder, and all link targets, stay
+protected.
+
 Version 0.13.5 stops helper state growth from partially applied tickets. When
 a ticket ends partially applied, rows it never needs again (deleted members and
 exclusions) are removed and the ticket stores an HMAC-signed checkpoint of the
@@ -223,12 +229,14 @@ name lies inside its covering registration is eligible without the flag; deletio
 re-enumerates the names through the open handle. A leaf link to a repository is a
 link object, never a repository root, and its target is not traversed.
 
-Finished test-fixture trees under a Temp root may add `--allow-historyless-git`
-(with `--regenerated`): `.git` markers with no object history (no file under any
-`objects` directory, no top-level `commondir`/`gitdir`, bounded walk) or `gitdir:`
-pointers to a missing or historyless target inside the registration are removed
-with their work trees. Real repositories and markers that gain objects before
-apply remain protected.
+A `--regenerated` ordinary-kind registration strictly below a Temp root on NTFS/ReFS
+is removed whole (this implies `--allow-historyless-git` and `--allow-leaf-reparse`):
+`.git` markers with no object history, `.git` directories nested strictly below the
+registration whose `commondir`, alternates and linked-worktree pointers all stay
+inside it (committed fixture repositories, finished clones), `gitdir:` pointers to a
+missing or covered target, and leaf link objects. A repository at the registration
+root, one serving a worktree or borrowing objects outside the registration
+(rechecked at apply) and every link target remain protected.
 
 An exact standalone Git clone created only for validation may be authorized with
 `--kind disposable-repository --regenerated --allow-disposable-repository`. The

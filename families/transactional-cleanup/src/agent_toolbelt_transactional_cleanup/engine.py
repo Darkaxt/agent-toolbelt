@@ -506,6 +506,38 @@ class Engine:
                         return False
         return True
 
+    @staticmethod
+    def _pointer_within(source, value, scope):
+        target = Path(value.strip())
+        target = fs.canonical(target if target.is_absolute() else source.parent / target)
+        return fs.within(target, scope)
+
+    def _self_contained(self, marker, scope):
+        """True when a Git directory's object store and every work tree it serves
+        lie inside scope: no commondir delegation out of scope, no alternates
+        outside scope, and no linked worktree registered outside scope."""
+        for name in ('commondir', 'gitdir'):
+            pointer = marker / name
+            if os.path.lexists(pointer):
+                if not pointer.is_file() or not self._pointer_within(
+                        pointer, pointer.read_text(encoding='utf-8'), scope if name == 'gitdir' else marker):
+                    return False
+        alternates = marker / 'objects' / 'info' / 'alternates'
+        if os.path.lexists(alternates):
+            for line in alternates.read_text(encoding='utf-8').splitlines():
+                if line.strip() and not line.startswith('#') and not self._pointer_within(
+                        marker / 'objects' / 'x', line, scope):
+                    return False
+        worktrees_dir = marker / 'worktrees'
+        if worktrees_dir.is_dir():
+            for entry in os.scandir(worktrees_dir):
+                gitdir = Path(entry.path) / 'gitdir'
+                if os.path.lexists(gitdir):
+                    target = gitdir.read_text(encoding='utf-8').strip()
+                    if target and not self._pointer_within(gitdir, target, scope):
+                        return False
+        return True
+
     def _historyless(self, marker, scope):
         """A .git marker inside scope that carries no object history: a plain
         directory with no object files, or a gitdir pointer whose target is
@@ -525,7 +557,11 @@ class Engine:
             return False
         fs.check_chain(marker)
         if marker.is_dir():
-            return self._objectless_tree(marker)
+            # A repository nested strictly inside the authority (a test fixture,
+            # a clone made by a finished task) is part of that generated output
+            # when nothing outside the scope depends on or supplies its history.
+            return self._objectless_tree(marker) or (
+                marker.parent != scope and self._self_contained(marker, scope))
         if not marker.is_file() or marker.stat().st_size > 4096:
             return False
         lines = [line for line in marker.read_text(encoding='utf-8').splitlines() if line.strip()]
@@ -690,6 +726,16 @@ class Engine:
         if os.environ.get('LOCALAPPDATA'):
             candidates.append(fs.canonical(os.environ['LOCALAPPDATA']) / 'Temp')
         return list(dict.fromkeys(fs.canonical(path) for path in candidates))
+
+    def _ntfs_scratch(self, path):
+        """A strict descendant of a recognized Temp root on NTFS/ReFS (exFAT keeps
+        regular-file-only cleanup)."""
+        if not any(path != root and fs.within(path, root) for root in self._temp_roots()):
+            return False
+        try:
+            return fs.identity(path, allow_leaf_reparse=True).get('filesystem') in {'NTFS', 'ReFS'}
+        except (OSError, ValueError):
+            return False
 
     def _validate_disposable_repository(self, path, expected_identity=None, require_git=True):
         path = fs.canonical(path)
@@ -881,6 +927,15 @@ class Engine:
                  allow_historyless_git=False):
         path = fs.canonical(path)
         reason = self.protection(path)
+        special = (kind in {'disposable-repository', 'retired-repository', 'generated-git-marker',
+                            'generated-dependency-repository'}
+                   or allow_disposable_repository or retirement_evidence or confirm_retire_repository
+                   or confirm_git_marker or dependency_evidence or confirm_dependency_repository)
+        if regenerated and not special and self._ntfs_scratch(path):
+            # Regenerated output below a Temp root is removed whole: nested
+            # self-contained fixture/clone repositories and leaf link objects
+            # (never their targets) are members, not protected leftovers.
+            allow_historyless_git = allow_leaf_reparse = True
         if allow_historyless_git:
             scope = self._historyless_scope(path)
             if (not regenerated or kind in {'disposable-repository', 'retired-repository',

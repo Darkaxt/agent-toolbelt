@@ -245,9 +245,11 @@ require a fresh begin/register/review/inspect/ticket sequence after upgrading.
 - Junctions, symlinks, hard links, tracked files and critical roots are protected.
   Tracked-file exceptions require an exact authorized disposable validation
   repository or the separately evidenced obsolete-checkout retirement contract.
-- Exact hard-link names or leaf symlink/junction objects may be enabled only on an
-  explicit registration with `--allow-hardlinks` or `--allow-leaf-reparse`. These
-  options never authorize another link name or traversal/deletion of a link target.
+- Exact hard-link names or leaf symlink/junction objects may be enabled on an
+  explicit registration with `--allow-hardlinks` or `--allow-leaf-reparse`. A
+  `--regenerated` ordinary-kind registration strictly below a Temp root on NTFS/ReFS
+  implies `--allow-leaf-reparse` and `--allow-historyless-git`. These options never
+  authorize another link name or traversal/deletion of a link target.
 - A hard-linked file whose every link name lies inside its covering registration
   (for example rustc incremental `.o` files) is eligible without `--allow-hardlinks`;
   apply re-enumerates the names through the open handle and protects the file if any
@@ -266,14 +268,17 @@ recognized Temp root, register it with:
 register --transaction <id> --path <fixture-root> --kind explicit-generated-output --regenerated --allow-historyless-git --evidence "<test run that created it and why it is spent>"
 ```
 
-A marker is historyless only when it is a plain `.git` directory with no file or
-link under any `objects` directory and no top-level `commondir`/`gitdir`, within a
-bounded 10,000-entry walk that never follows links; or a one-line `gitdir:` file
-whose target is missing or is itself historyless inside the same registration.
-Real clones, markers that gain objects after review (rechecked at apply), markers
-outside the registration and registrations that are not strict Temp descendants
-stay protected. Leaf links inside fixtures still need their own exact
-`--allow-leaf-reparse` registration. Not supported on exFAT.
+This authority is implied for every `--regenerated` ordinary-kind registration
+strictly below a Temp root on NTFS/ReFS. A marker is covered when it is a plain
+`.git` directory with no object files (bounded walk that never follows links), or a
+`.git` directory nested strictly below the registration whose `commondir`,
+`objects/info/alternates` and `worktrees/*/gitdir` pointers all stay inside the
+registration (so committed fixture repositories and finished clones are removed); or
+a one-line `gitdir:` file whose target is missing or is itself covered inside the
+same registration. A repository at the registration root itself, one that serves a
+worktree or borrows objects from outside (rechecked at apply), markers outside the
+registration and registrations that are not strict Temp descendants stay protected.
+Leaf links inside the registration are removed as link objects. Not supported on exFAT.
 - Directories are removed only when empty. No recursive directory deletion occurs.
 - USN/ETW tracking is unavailable in v2; never claim complete host coverage.
 - Cleanup authority expires after seven inactive days; the next invocation compacts

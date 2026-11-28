@@ -1107,7 +1107,11 @@ with Engine(Path(sys.argv[1])).locked([Path(sys.argv[2])], operation='review', t
     def test_nonempty_git_marker_remains_protected(self):
         out = self.work / 'cache'
         out.mkdir()
-        (out / '.git').write_text('gitdir: ../real-repository', encoding='utf-8')
+        real = self.work / 'real-repository'
+        subprocess.run(['git', 'init', str(real)], check=True, capture_output=True)
+        (real / '.git' / 'objects' / 'ab').mkdir(exist_ok=True)
+        (real / '.git' / 'objects' / 'ab' / 'cd').write_bytes(b'object')
+        (out / '.git').write_text('gitdir: ../real-repository/.git', encoding='utf-8')
         transaction = self.engine.begin(self.work, [out])['transaction_id']
         with self.assertRaises(CleanupError):
             self.engine.register(transaction, out, 'explicit-generated-output',
